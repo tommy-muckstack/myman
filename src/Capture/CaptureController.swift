@@ -38,7 +38,11 @@ final class CaptureController: SelectionOverlayDelegate {
             // Recreate per capture — screens may have changed since last time.
             overlay = SelectionOverlayCoordinator(frozenCapture: frozen)
             overlay?.delegate = self
-            NSApp.activate(ignoringOtherApps: true)
+            // Do NOT activate My Man here. Activating a menu-bar app just
+            // before a non-activating selection overlay causes AppKit to eat
+            // the user's first selection click as an app-activation click.
+            // The overlay windows are explicitly allowed to receive input
+            // without focus stealing (see SelectionOverlayWindow).
             overlay?.showAll()
         }
     }

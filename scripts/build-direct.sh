@@ -31,8 +31,8 @@ APP_NAME="My Man"
 EXEC_NAME="MyMan"
 SLUG="myman"
 BUNDLE_ID="com.muckstack.myman"
-VERSION="${RELEASE_VERSION:-1.1.28}"
-BUILD_NUMBER="${RELEASE_BUILD:-40}"
+VERSION="${RELEASE_VERSION:-1.1.29}"
+BUILD_NUMBER="${RELEASE_BUILD:-41}"
 TEAM_ID="${APPLE_TEAM_ID:-K8NAZ76CBQ}"
 NOTARY_PROFILE="mumbls-notary"
 SPARKLE_ACCOUNT="myman"
@@ -158,6 +158,10 @@ fi
 cp assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 cp scripts/myman "$APP_DIR/Contents/Resources/myman"
 chmod +x "$APP_DIR/Contents/Resources/myman"
+for chatterbox_helper in chatterbox_server.py install-chatterbox.sh run-chatterbox.sh; do
+    cp "scripts/$chatterbox_helper" "$APP_DIR/Contents/Resources/$chatterbox_helper"
+done
+chmod +x "$APP_DIR/Contents/Resources/install-chatterbox.sh" "$APP_DIR/Contents/Resources/run-chatterbox.sh"
 
 # Info.plist — keep the usage strings in lockstep with scripts/run-dev.sh;
 # TCC grants key off the signing identity + these strings.
