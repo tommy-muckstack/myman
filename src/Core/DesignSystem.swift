@@ -41,6 +41,9 @@ enum MM {
         static let danger = dynamic("mm.danger",
             light: NSColor(red: 0.86, green: 0.20, blue: 0.18, alpha: 1),
             dark: NSColor(red: 1.0, green: 0.35, blue: 0.32, alpha: 1))
+        /// The mascot's fire — vermilion #E8442A, same in both themes (it
+        /// draws over recorded screen content, not over our surfaces).
+        static let flame = Color(red: 0.910, green: 0.267, blue: 0.165)
     }
 
     // MARK: Type — Outfit everywhere (the MuckStack family font); weight IS the hierarchy
