@@ -14,18 +14,19 @@ final class CursorEffects {
     private var model = CursorEffectsModel()
     private var clickMonitors: [Any] = []
 
-    /// Cover the display that contains the recorded region (or the whole
-    /// display for full-screen recordings). Effects outside the crop are
-    /// harmless — they just aren't captured.
+    /// The panel IS the recorded region (whole display for full-screen
+    /// recordings): effects clip at its bounds, so nothing ever draws — or
+    /// distracts — outside the area being captured.
     func show(regionAppKit: CGRect?) {
         hide()
         let screen = regionAppKit.flatMap { region in
             NSScreen.screens.first { $0.frame.intersects(region) }
         } ?? NSScreen.main
         guard let screen else { return }
+        let frame = regionAppKit ?? screen.frame
 
         let panel = NSPanel(
-            contentRect: screen.frame,
+            contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
         panel.isOpaque = false
@@ -37,10 +38,10 @@ final class CursorEffects {
         panel.isMovable = false
         model = CursorEffectsModel()
         let host = NSHostingView(rootView: CursorEffectsView(
-            model: model, screenFrame: screen.frame))
-        host.frame = NSRect(origin: .zero, size: screen.frame.size)
+            model: model, screenFrame: frame))
+        host.frame = NSRect(origin: .zero, size: frame.size)
         panel.contentView = host
-        panel.setFrame(screen.frame, display: true)
+        panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
         self.panel = panel
 
@@ -139,7 +140,7 @@ struct CursorEffectsView: View {
                     canvas.fill(
                         Path(ellipseIn: CGRect(x: local.x - radius, y: local.y - radius,
                                                width: radius * 2, height: radius * 2)),
-                        with: .color(MM.Colors.accent.opacity(0.28 * fade)))
+                        with: .color(MM.Colors.flame.opacity(0.30 * fade)))
                 }
                 // Ripple: one ring expanding out from the click point.
                 for ripple in model.ripples {
@@ -152,7 +153,7 @@ struct CursorEffectsView: View {
                     canvas.stroke(
                         Path(ellipseIn: CGRect(x: local.x - radius, y: local.y - radius,
                                                width: radius * 2, height: radius * 2)),
-                        with: .color(MM.Colors.accent.opacity(0.65 * (1 - progress))),
+                        with: .color(MM.Colors.flame.opacity(0.7 * (1 - progress))),
                         lineWidth: 2.5 * (1 - progress) + 0.5)
                 }
             }
