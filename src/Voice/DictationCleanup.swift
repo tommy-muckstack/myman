@@ -31,6 +31,15 @@ enum DictationTone: String, CaseIterable, Identifiable {
 /// text passes through untouched. Guarded: if the model's output drifts too
 /// far in length from the input, we distrust it and keep the raw text.
 enum DictationCleanup {
+    /// The small default vocabulary that ships with My Man. People can add
+    /// their own names and products in Settings.
+    static let builtInVocabulary = [
+        "My Man", "MuckStack",
+    ]
+    private static let retiredBundledVocabulary: Set<String> = [
+        "snabbit", "mumbls", "whistle", "huddleup", "credo chat",
+    ]
+
     /// User-editable vocabulary at ~/MyManBrain/vocabulary.md — one term per
     /// line. The cleanup pass restores mangled versions of these exact terms.
     static func vocabulary() -> [String] {
@@ -38,24 +47,30 @@ enum DictationCleanup {
         if !FileManager.default.fileExists(atPath: url.path) {
             let seed = """
             # Vocabulary
-            My Man
-            MuckStack
-            Snabbit
-            Mumbls
-            Whistle
-            HuddleUp
-            Credo Chat
+            \(builtInVocabulary.joined(separator: "\n"))
             """
             try? seed.write(to: url, atomically: true, encoding: .utf8)
         }
-        let content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        var content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        // Remove defaults from older My Man releases. These were never meant
+        // to be a permanent product list in a person's Settings vocabulary.
+        let retainedLines = content.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !retiredBundledVocabulary.contains($0.trimmingCharacters(in: .whitespaces).lowercased()) }
+        let migrated = retainedLines.joined(separator: "\n")
+        if migrated != content {
+            content = migrated + (migrated.hasSuffix("\n") ? "" : "\n")
+            try? content.write(to: url, atomically: true, encoding: .utf8)
+        }
         var terms = content.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasPrefix("#") }
         // Teammate names + company domains from the people registry — the
         // proper nouns ASR reliably mangles until it's told the spelling.
-        let known = Set(terms.map { $0.lowercased() })
-        terms += People.vocabularyTerms().filter { !known.contains($0.lowercased()) }
+        for term in builtInVocabulary + People.vocabularyTerms() where !terms.contains(where: {
+            $0.caseInsensitiveCompare(term) == .orderedSame
+        }) {
+            terms.append(term)
+        }
         return terms
     }
 
@@ -178,6 +193,49 @@ enum DictationCleanup {
             i += 1
         }
         return result.joined(separator: " ")
+    }
+
+    /// Exact aliases observed from our ASR engines. Fuzzy matching is useful
+    /// for small typos, but these phonetic substitutions are too far away to
+    /// recover reliably with edit distance alone.
+    static func canonicalizeKnownTerms(_ text: String) -> String {
+        let aliases = [
+            ("(?i)\\bwhisper\\s*flow\\b", "Wispr Flow"),
+            ("(?i)\\bwispr\\s*flow\\b", "Wispr Flow"),
+            ("(?i)\\bevent\\s*kit\\b", "EventKit"),
+            ("(?i)\\bavantik\\b", "EventKit"),
+            ("(?i)\\bmuck\\s*stack\\b", "MuckStack"),
+            ("(?i)\\bmyman\\b", "My Man"),
+        ]
+        return aliases.reduce(text) { result, alias in
+            guard let regex = try? NSRegularExpression(pattern: alias.0) else { return result }
+            let range = NSRange(result.startIndex..., in: result)
+            return regex.stringByReplacingMatches(in: result, range: range,
+                                                  withTemplate: alias.1)
+        }
+    }
+
+    /// Preserve version numbers and remove a quote that ASR has stranded
+    /// between a word and its punctuation (for example, MuckStack\".).
+    static func normalizeDictationFormatting(_ text: String) -> String {
+        var result = text
+        let replacements = [
+            ("\\b(\\d+)\\s*\\.\\s*(\\d+)\\s*\\.\\s*(\\d+)\\b", "$1.$2.$3"),
+            ("([[:alnum:]])[\\\"”]([.!?,;:])", "$1$2"),
+        ]
+        for (pattern, template) in replacements {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: template)
+        }
+        return result
+    }
+
+    private static func deterministicCleanup(_ text: String, terms: [String]? = nil) -> String {
+        let restored = applyVocabulary(canonicalizeKnownTerms(text), terms: terms ?? vocabulary())
+        return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(
+            normalizeDictationFormatting(restored)
+        ))))
     }
 
     private static func editDistance(_ a: String, _ b: String) -> Int {
@@ -338,16 +396,20 @@ enum DictationCleanup {
     static func clean(_ raw: String, tone: DictationTone = .neutral,
                       targetBundleID: String? = nil) async -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 12 else { return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(applyVocabulary(trimmed, terms: vocabulary()))))) }
+        let terms = vocabulary()
+        guard trimmed.count > 12 else { return deterministicCleanup(trimmed, terms: terms) }
         // Long transcripts degrade the 3B model — it starts rewriting numbers
         // ($92,000 → "9,200") and paraphrasing (churn → "turnover"). Wrong
         // beats unpolished, so beyond this: deterministic cleanup only.
         guard trimmed.count < 1000 else {
-            return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(applyVocabulary(trimmed, terms: vocabulary())))))
+            return deterministicCleanup(trimmed, terms: terms)
         }
         #if canImport(FoundationModels)
-        guard #available(macOS 26.0, *) else { return trimmed }
-        guard case .available = SystemLanguageModel.default.availability else { return trimmed }
+        guard #available(macOS 26.0, *) else { return deterministicCleanup(trimmed, terms: terms) }
+        guard case .available = SystemLanguageModel.default.availability else {
+            return deterministicCleanup(trimmed, terms: terms)
+        }
+        let protectedTerms = terms.prefix(50).joined(separator: ", ")
         let session = LanguageModelSession(instructions: """
             You clean up dictated text. Rules, in order:
             1. Remove filler words (um, uh, ah, er, hmm, like, you know) \
@@ -364,7 +426,9 @@ enum DictationCleanup {
             4. NEVER add, remove, or rephrase actual content. Keep the \
             speaker's words and tone. Output ONLY the cleaned text — no \
             preamble, no quotes.
-            5. Output style: \(tone.promptRules)
+            5. Preserve these exact proper-noun spellings when they occur or
+            are clearly dictated: \(protectedTerms).
+            6. Output style: \(tone.promptRules)
             """)
         do {
             // Delimited so the model can never mistake the transcript for a
@@ -388,14 +452,14 @@ enum DictationCleanup {
                   cleaned.count > trimmed.count / 3,
                   cleaned.count < trimmed.count * 2,
                   wordOverlap(cleaned, trimmed) > 0.5 else {
-                return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(applyVocabulary(trimmed, terms: vocabulary())))))
+                return deterministicCleanup(trimmed, terms: terms)
             }
-            return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(applyVocabulary(cleaned, terms: vocabulary())))))
+            return deterministicCleanup(cleaned, terms: terms)
         } catch {
-            return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(applyVocabulary(trimmed, terms: vocabulary())))))
+            return deterministicCleanup(trimmed, terms: terms)
         }
         #else
-        return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(applyVocabulary(trimmed, terms: vocabulary())))))
+        return deterministicCleanup(trimmed, terms: terms)
         #endif
     }
 }
