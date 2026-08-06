@@ -119,6 +119,10 @@ final class SettingsStore: ObservableObject {
     @Published var autoRecordMeetings: Bool {
         didSet { UserDefaults.standard.set(autoRecordMeetings, forKey: "autoRecordMeetings") }
     }
+    /// Cursor trail + click ripple drawn into screen recordings.
+    @Published var cursorEffects: Bool {
+        didSet { UserDefaults.standard.set(cursorEffects, forKey: "cursorEffects") }
+    }
     @Published var dictationTone: DictationTone {
         didSet { UserDefaults.standard.set(dictationTone.rawValue, forKey: "dictationTone") }
     }
@@ -141,6 +145,7 @@ final class SettingsStore: ObservableObject {
             hotkeys = [:]
         }
         autoRecordMeetings = UserDefaults.standard.bool(forKey: "autoRecordMeetings")
+        cursorEffects = UserDefaults.standard.object(forKey: "cursorEffects") as? Bool ?? true
         dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
         theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "")
         screenshotFolderPath = UserDefaults.standard.string(forKey: "screenshotFolder")
@@ -316,6 +321,11 @@ struct SettingsPanelView: View {
             Divider().overlay(MM.Colors.border)
             settingSection("Meetings") {
                 Toggle("Auto record when meeting detected", isOn: $store.autoRecordMeetings)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+            }
+            Divider().overlay(MM.Colors.border)
+            settingSection("Screen Recording") {
+                Toggle("Cursor trail and click ripple", isOn: $store.cursorEffects)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
             }
             Divider().overlay(MM.Colors.border)
