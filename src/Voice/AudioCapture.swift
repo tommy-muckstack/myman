@@ -34,11 +34,51 @@ final class AudioCapture: @unchecked Sendable {
         let eng = AVAudioEngine()
         // Voice processing (AGC + noise suppression) lifts whispers for the
         // dictation model. Best-effort — plain capture if hardware refuses.
-        try? eng.inputNode.setVoiceProcessingEnabled(true)
-        vpEnabled = true
+        if !suppressVoiceProcessing {
+            try? eng.inputNode.setVoiceProcessingEnabled(true)
+            vpEnabled = true
+        } else {
+            vpEnabled = false
+        }
         _ = eng.inputNode.outputFormat(forBus: 0) // force graph configuration
         eng.prepare()
         engine = eng
+    }
+
+    /// TRUE while a screen recording runs. An INITIALIZED voice-processing
+    /// unit — even on a prepared engine that never started — flips macOS
+    /// into voice-chat mode: system audio output is ducked to near-silence
+    /// and the mic goes through AEC. In a screen recording that's a faint
+    /// system track with whistle artifacts on top, and SCK's own mic
+    /// capture loses the fight entirely (no mic track written).
+    var suppressVoiceProcessing = false {
+        didSet {
+            guard suppressVoiceProcessing != oldValue else { return }
+            if suppressVoiceProcessing {
+                releaseIfIdle()
+            } else {
+                // Re-warm off the caller's thread — VP setup blocks 100ms+.
+                DispatchQueue.global(qos: .utility).async { self.prepare() }
+            }
+        }
+    }
+
+    /// Tear the warm engine down when nothing is capturing — the only way
+    /// to fully exit voice-chat mode is to destroy the VP unit.
+    func releaseIfIdle() {
+        lock.lock()
+        let idle = buffers.isEmpty
+        lock.unlock()
+        guard idle else { return }
+        prepareLock.lock()
+        defer { prepareLock.unlock() }
+        if tapInstalled {
+            engine?.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        engine?.stop()
+        engine = nil
+        vpEnabled = false
     }
 
     /// Start a capture session. The engine starts on the first session and
@@ -102,6 +142,7 @@ final class AudioCapture: @unchecked Sendable {
     /// Any raw session (a meeting) forces voice processing OFF for everyone —
     /// the call app owns echo cancellation; ours corrupts what peers hear.
     private func desiredVoiceProcessing() -> Bool {
+        if suppressVoiceProcessing { return false }
         lock.lock()
         defer { lock.unlock() }
         return !modes.values.contains(.raw)
