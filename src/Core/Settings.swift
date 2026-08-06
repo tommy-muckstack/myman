@@ -198,6 +198,7 @@ struct SettingsPanelView: View {
     var onDismiss: () -> Void
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
+    @State private var automationCopied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -255,6 +256,41 @@ struct SettingsPanelView: View {
                 ForEach(HotkeyAction.allCases) { action in
                     hotkeyRow(action)
                 }
+            }
+            .padding(MM.Layout.paddingLarge)
+
+            Divider().overlay(MM.Colors.border)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Automation & CLI")
+                    .font(MM.Fonts.secondary)
+                    .foregroundStyle(MM.Colors.textTertiary)
+                Text("Agents and scripts can open My Man’s normal capture UI — they never bypass permissions or confirmation.")
+                    .font(MM.Fonts.metadata)
+                    .foregroundStyle(MM.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Text("myman screenshot · note · dictation · meeting · record")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(MM.Colors.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button(automationCopied ? "Copied" : "Copy setup") {
+                        copyAutomationSetup()
+                    }
+                    .buttonStyle(.plain)
+                    .clickable(minSize: 26)
+                    .font(MM.Fonts.metadata)
+                    .foregroundStyle(MM.Colors.textPrimary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(MM.Colors.surface))
+                    .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+                }
+                Text("Copy setup installs the bundled helper in ~/.local/bin. Direct URL commands also work: myman://screenshot")
+                    .font(MM.Fonts.metadata)
+                    .foregroundStyle(MM.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(MM.Layout.paddingLarge)
 
@@ -421,6 +457,18 @@ struct SettingsPanelView: View {
         dialog.directoryURL = store.screenshotFolderURL
         if dialog.runModal() == .OK, let url = dialog.url {
             store.screenshotFolderPath = url.path
+        }
+    }
+
+    private func copyAutomationSetup() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            "mkdir -p ~/.local/bin && ln -sf /Applications/My\\ Man.app/Contents/Resources/myman ~/.local/bin/myman",
+            forType: .string
+        )
+        automationCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            automationCopied = false
         }
     }
 }
