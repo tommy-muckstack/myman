@@ -152,6 +152,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     config.height = max(2, Int(filter.contentRect.height * scale) & ~1)
                 }
                 config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+                // Preserve the display's real pixels. Automatic capture can
+                // choose a nominal surface on some Retina displays, which
+                // looks soft after sharing or re-encoding.
+                config.captureResolution = .best
+                config.queueDepth = 8
                 config.showsCursor = true
                 config.capturesAudio = true
                 config.captureMicrophone = self.microphoneEnabled
@@ -169,6 +174,12 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 let recordingConfig = SCRecordingOutputConfiguration()
                 recordingConfig.outputURL = url
                 recordingConfig.outputFileType = .mov
+                // HEVC delivers materially cleaner text/UI at the same (or
+                // smaller) file size. Fall back only when a Mac cannot write
+                // it, preserving a universally playable H.264 recording.
+                if recordingConfig.availableVideoCodecTypes.contains(.hevc) {
+                    recordingConfig.videoCodecType = .hevc
+                }
                 let output = SCRecordingOutput(configuration: recordingConfig, delegate: self)
 
                 let stream = SCStream(filter: filter, configuration: config, delegate: nil)
@@ -215,6 +226,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         activeRegion = nil
         WebcamBubble.shared.preferredRegion = nil
         WebcamBubble.shared.turnOff()
+        WebcamBubble.shared.resetPosition()
         Task { @MainActor in
             try? await stream?.stopCapture()
             stream = nil
@@ -245,13 +257,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// never writes a database row, transcript, or Brain entry.
     func restart() {
         guard isRecording else { return }
+        let region = activeRegion
         isRecording = false
         dismissPill()
         borderPanel?.orderOut(nil)
         borderPanel = nil
-        activeRegion = nil
-        WebcamBubble.shared.preferredRegion = nil
-        WebcamBubble.shared.turnOff()
         let discardedURL = outputURL
         Task { @MainActor in
             try? await stream?.stopCapture()
@@ -260,8 +270,12 @@ final class ScreenRecorder: NSObject, ObservableObject {
             recordingOutput = nil
             outputURL = nil
             if let discardedURL { try? FileManager.default.removeItem(at: discardedURL) }
-            isBusy = false
-            beginRegionSelection()
+            activeRegion = nil
+            // Restart preserves the exact frame and live camera panel. The
+            // only thing discarded is the partial movie.
+            pendingRegion = region ?? .zero
+            if let region { showBorder(around: region) }
+            showCountdown(for: region ?? .zero)
         }
     }
 
@@ -401,6 +415,7 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         // before committing, while keeping the bubble inside the chosen
         // frame from the first recorded frame.
         WebcamBubble.shared.preferredRegion = rect
+        WebcamBubble.shared.resetPosition()
         if UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true,
            AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
             WebcamBubble.shared.turnOn()
@@ -433,9 +448,9 @@ extension ScreenRecorder: SelectionOverlayDelegate {
 
     private func showConfirm(for region: CGRect) {
         let view = RecordConfirmView(
+            recorder: self,
             onRecord: { [weak self] in self?.confirmRecord() },
             onCancel: { [weak self] in self?.cancelPending() },
-            microphoneEnabled: microphoneEnabled,
             onToggleMicrophone: { [weak self] in self?.toggleMicrophone() },
             onToggleCamera: { WebcamBubble.shared.toggle() })
         let panel = FloatingPanel(content: view, becomesKey: false, fixedSize: true)
@@ -483,7 +498,7 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         countdownPanel?.orderOut(nil)
         countdownPanel = nil
         // The border stays up — it is the "this is what's recording" chrome.
-        start(regionAppKit: region)
+        start(regionAppKit: region == .zero ? nil : region)
     }
 
     private func cancelPending() {
@@ -496,6 +511,7 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         borderPanel = nil
         WebcamBubble.shared.preferredRegion = nil
         WebcamBubble.shared.turnOff()
+        WebcamBubble.shared.resetPosition()
         isBusy = false
     }
 
@@ -527,6 +543,7 @@ final class WebcamBubble: ObservableObject {
     /// When a region recording is live, the bubble spawns inside it.
     var preferredRegion: CGRect?
     private var panel: NSPanel?
+    private var lastFrame: NSRect?
     private var sessionRunner: CaptureSessionRunner?
 
     func toggle() {
@@ -585,7 +602,9 @@ final class WebcamBubble: ObservableObject {
         panel.isMovableByWindowBackground = true // drag it anywhere
         panel.contentView = view
 
-        if let region {
+        if let lastFrame {
+            panel.setFrame(lastFrame, display: true)
+        } else if let region {
             panel.setFrame(
                 NSRect(x: region.minX + 14, y: region.minY + 14,
                        width: diameter, height: diameter),
@@ -613,9 +632,14 @@ final class WebcamBubble: ObservableObject {
         isOn = false
         sessionRunner?.stop()
         sessionRunner = nil
+        lastFrame = panel?.frame
         panel?.orderOut(nil)
         panel = nil
     }
+
+    /// Reset only for a new selected recording region. Camera on/off during a
+    /// take deliberately keeps the user's dragged position.
+    func resetPosition() { lastFrame = nil }
 }
 
 /// A recognizable, camera-first signature for My Man recordings. The shape is
@@ -706,9 +730,9 @@ private final class RegionBorderView: NSView {
 }
 
 private struct RecordConfirmView: View {
+    @ObservedObject var recorder: ScreenRecorder
     var onRecord: () -> Void
     var onCancel: () -> Void
-    var microphoneEnabled: Bool
     var onToggleMicrophone: () -> Void
     var onToggleCamera: () -> Void
     @ObservedObject private var webcam = WebcamBubble.shared
@@ -731,19 +755,17 @@ private struct RecordConfirmView: View {
             .buttonStyle(.plain)
             Button(action: onToggleCamera) {
                 IconView(icon: webcam.isOn ? .camera : .cameraOff, size: 14,
-                         color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                         color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.danger)
                     .clickable(minSize: 32)
             }
             .buttonStyle(.plain)
             .help(webcam.isOn ? "Camera on — click to hide" : "Camera off — click to show")
             Button(action: onToggleMicrophone) {
-                Image(systemName: microphoneEnabled ? "mic.fill" : "mic.slash")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(microphoneEnabled ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                MicrophoneToggleIcon(enabled: recorder.microphoneEnabled)
                     .clickable(minSize: 32)
             }
             .buttonStyle(.plain)
-            .help(microphoneEnabled ? "Microphone on — click to mute" : "Microphone off — click to include your voice")
+            .help(recorder.microphoneEnabled ? "Microphone on — click to mute" : "Microphone off — click to include your voice")
             IconView(icon: .close, size: 13, color: MM.Colors.textTertiary)
                 .clickable(minSize: 32)
                 .onTapGesture(perform: onCancel)
@@ -756,6 +778,17 @@ private struct RecordConfirmView: View {
                 .fill(MM.Colors.background)
                 .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
         )
+    }
+}
+
+/// The supplied My Man microphone icons, with a deliberately loud off state:
+/// red means your voice will not be included in this recording.
+private struct MicrophoneToggleIcon: View {
+    let enabled: Bool
+
+    var body: some View {
+        IconView(icon: enabled ? .mic : .micOff, size: 16,
+                 color: enabled ? MM.Colors.textPrimary : MM.Colors.danger)
     }
 }
 
@@ -809,14 +842,12 @@ private struct RecordingPillView: View {
                 .foregroundStyle(MM.Colors.textSecondary)
                 .frame(width: 42, alignment: .leading)
             IconView(icon: webcam.isOn ? .camera : .cameraOff, size: 14,
-                     color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                     color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.danger)
                 .clickable(minSize: 24)
                 .onTapGesture { webcam.toggle() }
                 .help(webcam.isOn ? "Turn webcam bubble off" : "Turn webcam bubble on")
             Button(action: { recorder.toggleMicrophone() }) {
-                Image(systemName: recorder.microphoneEnabled ? "mic.fill" : "mic.slash")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(recorder.microphoneEnabled ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                MicrophoneToggleIcon(enabled: recorder.microphoneEnabled)
                     .clickable(minSize: 32)
             }
             .buttonStyle(.plain)

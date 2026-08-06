@@ -361,9 +361,9 @@ final class VoiceController: ObservableObject {
         }
     }
 
-    func saveAsNote() {
+    func openDraft() {
         guard case .done(let text) = phase else { return }
-        notes.save(body: text, source: "dictation")
+        DictationDraftController.shared.open(text: text)
         lingerTask?.cancel()
         dismissPill()
         phase = .idle
@@ -526,11 +526,11 @@ struct VoicePillView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
                         Button {
-                            controller.saveAsNote()
+                            controller.openDraft()
                         } label: {
                             HStack(spacing: 5) {
                                 IconView(icon: .note, size: 12, color: Color(white: 0.62))
-                                Text("Save as note")
+                                Text("Open")
                             }
                             .font(MM.Fonts.secondary)
                             .foregroundStyle(Color(white: 0.62))
@@ -590,6 +590,73 @@ struct VoicePillView: View {
         }
         .frame(height: 20)
         .animation(.linear(duration: 0.08), value: controller.levels)
+    }
+}
+
+/// A dictation review surface is intentionally ephemeral: it lets someone
+/// read, edit, and copy a long result without silently creating a note.
+@MainActor
+final class DictationDraftController {
+    static let shared = DictationDraftController()
+    private var windows: [NSWindow] = []
+
+    func open(text: String) {
+        let window = NSWindow(
+            contentRect: .zero,
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false
+        )
+        window.title = "Dictation"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.setContentSize(NSSize(width: 560, height: 430))
+        window.center()
+        window.contentView = NSHostingView(rootView: DictationDraftView(text: text))
+        windows.append(window)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+}
+
+private struct DictationDraftView: View {
+    @State private var text: String
+    @State private var copied = false
+
+    init(text: String) { _text = State(initialValue: text) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Dictation")
+                        .font(MM.Fonts.title)
+                        .foregroundStyle(MM.Colors.textPrimary)
+                    Text("Review and edit — this draft is not saved.")
+                        .font(MM.Fonts.metadata)
+                        .foregroundStyle(MM.Colors.textTertiary)
+                }
+                Spacer()
+                Button(copied ? "Copied" : "Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    copied = true
+                }
+                .buttonStyle(.plain)
+                .font(MM.Fonts.secondary)
+                .foregroundStyle(MM.Colors.textPrimary)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(Capsule().fill(MM.Colors.surface))
+                .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+            }
+            TextEditor(text: $text)
+                .font(MM.Fonts.bodyInput)
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 12).fill(MM.Colors.surface))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MM.Colors.border, lineWidth: 1))
+        }
+        .padding(24)
+        .background(MM.Colors.background)
     }
 }
 
