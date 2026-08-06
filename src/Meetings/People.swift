@@ -19,6 +19,31 @@ struct Person: Identifiable, Codable, FetchableRecord, PersistableRecord {
 }
 
 enum People {
+    /// Learns only names a person explicitly placed in a transcript speaker
+    /// label (for example `**Snehith** [12:04]:`). This is per-machine data;
+    /// it never changes the bundled vocabulary for other My Man users.
+    static func learnSpeakerNames(from transcript: String) {
+        let pattern = #"\*\*([^*\n]{2,80})\*\*\s*\[\d+:\d{2}\]:"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        let range = NSRange(transcript.startIndex..., in: transcript)
+        let ignored = Set(["you", "them", "others", "speaker 1", "speaker 2", "speaker 3"])
+        let names = Set(regex.matches(in: transcript, range: range).compactMap { match -> String? in
+            guard let range = Range(match.range(at: 1), in: transcript) else { return nil }
+            let name = String(transcript[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard name.count >= 2, !ignored.contains(name.lowercased()) else { return nil }
+            return name
+        })
+        guard !names.isEmpty else { return }
+        try? Database.shared.write { db in
+            for name in names {
+                guard try Person.filter(Column("name") == name).fetchOne(db) == nil else { continue }
+                try Person(id: UUID().uuidString, name: name, email: nil,
+                           meetCount: 1, firstMetAt: Date(), lastMetAt: Date()).insert(db)
+            }
+        }
+        syncBrain()
+    }
+
     /// Record that a meeting happened with these attendees (the current
     /// user excluded upstream). Upserts by email when present, else name.
     static func noteAttendees(_ attendees: [(name: String, email: String?)]) {
