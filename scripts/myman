@@ -4,12 +4,12 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: myman {open|screenshot|note|dictation|chat|meeting|cancel-meeting|record|settings}" >&2
+    echo "Usage: myman {open|screenshot|note|dictation|meeting|cancel-meeting|record|settings}" >&2
     exit 64
 }
 
 case "${1:-}" in
-    open|screenshot|note|dictation|chat|meeting|cancel-meeting|record|settings) ;;
+    open|screenshot|note|dictation|meeting|cancel-meeting|record|settings) ;;
     *) usage ;;
 esac
 

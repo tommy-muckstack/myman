@@ -38,6 +38,7 @@ struct LauncherView: View {
     var onOpenNote: (Note) -> Void
     var onOpenScreenshot: (URL) -> Void
     var onSaveQueryAsNote: (String) -> Void
+    var onOpenChat: () -> Void
     var onDismiss: () -> Void
     var onSizeChange: (CGSize) -> Void = { _ in }
 
@@ -54,6 +55,9 @@ struct LauncherView: View {
     @State private var hoveredRowID: String?
     @State private var copiedRowID: String?
     @State private var rowsSettled = false
+    /// Chat is deliberately a quiet beta: reveal its switch from the search
+    /// icon, rather than giving it a launcher tile or a global shortcut.
+    @State private var showChatSwitch = false
     @FocusState private var focused: Bool
 
     private var searching: Bool {
@@ -130,6 +134,7 @@ struct LauncherView: View {
             results = []
             selectedAction = nil
             selectedResult = nil
+            showChatSwitch = false
             focused = true
             showAllHints = true
             Task { @MainActor in
@@ -163,30 +168,45 @@ struct LauncherView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: MM.Layout.spacing) {
-            IconView(icon: .search, size: 16, color: MM.Colors.textTertiary)
-            TextField("", text: $query, prompt: Text("My man, what can I help with?")
-                .foregroundStyle(MM.Colors.textTertiary))
-                .textFieldStyle(.plain)
-                .font(MM.Fonts.bodyInput)
-                .foregroundStyle(MM.Colors.textPrimary)
-                .focused($focused)
-                .onKeyPress(.rightArrow) { moveAction(1) }
-                .onKeyPress(.leftArrow) { moveAction(-1) }
-                .onKeyPress(.tab) { _ = moveAction(1); return .handled }
-                .onKeyPress(.downArrow) { moveResult(1); return .handled }
-                .onKeyPress(.upArrow) { moveResult(-1); return .handled }
-                .onKeyPress(.return) { execute(); return .handled }
-            IconView(icon: .settings, size: 15, color: MM.Colors.textTertiary)
-                .clickable()
-                .onTapGesture {
-                    onDismiss()
-                    SettingsController.shared.show()
+        VStack(spacing: 0) {
+            HStack(spacing: MM.Layout.spacing) {
+                IconView(icon: .search, size: 16, color: MM.Colors.textTertiary)
+                    .clickable()
+                    .onTapGesture { focused = true; showChatSwitch = true }
+                    .help("Search")
+                TextField("", text: $query, prompt: Text("My man, what can I help with?")
+                    .foregroundStyle(MM.Colors.textTertiary))
+                    .textFieldStyle(.plain)
+                    .font(MM.Fonts.bodyInput)
+                    .foregroundStyle(MM.Colors.textPrimary)
+                    .focused($focused)
+                    .onKeyPress(.rightArrow) { moveAction(1) }
+                    .onKeyPress(.leftArrow) { moveAction(-1) }
+                    .onKeyPress(.tab) { _ = moveAction(1); return .handled }
+                    .onKeyPress(.downArrow) { moveResult(1); return .handled }
+                    .onKeyPress(.upArrow) { moveResult(-1); return .handled }
+                    .onKeyPress(.return) { execute(); return .handled }
+                IconView(icon: .settings, size: 15, color: MM.Colors.textTertiary)
+                    .clickable()
+                    .onTapGesture {
+                        onDismiss()
+                        SettingsController.shared.show()
+                    }
+                    .help("Settings — hotkeys, folders")
+            }
+            .padding(.horizontal, MM.Layout.padding)
+            .padding(.vertical, 14)
+            if showChatSwitch {
+                HStack {
+                    Spacer()
+                    Button("Switch to Chat β") { onOpenChat() }
+                        .buttonStyle(.plain).font(MM.Fonts.metadata)
+                        .foregroundStyle(MM.Colors.textTertiary)
+                        .padding(.trailing, MM.Layout.padding)
                 }
-                .help("Settings — hotkeys, folders")
+                .padding(.bottom, 8)
+            }
         }
-        .padding(.horizontal, MM.Layout.padding)
-        .padding(.vertical, 14)
     }
 
     // MARK: Search results

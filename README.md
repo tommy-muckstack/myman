@@ -68,7 +68,14 @@ ln -sf /Applications/My\ Man.app/Contents/Resources/myman ~/.local/bin/myman
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
-Then call `myman screenshot`, `myman note`, `myman dictation`, `myman chat`, `myman meeting`, `myman cancel-meeting`, `myman record`, `myman settings`, or `myman open`. The app must have the normal Screen Recording, Microphone, and Accessibility permissions; this makes capture flows testable while retaining the same on-screen confirmation a person receives.
+Then call `myman screenshot`, `myman note`, `myman dictation`, `myman meeting`, `myman cancel-meeting`, `myman record`, `myman settings`, or `myman open`. The app must have the normal Screen Recording, Microphone, and Accessibility permissions; this makes capture flows testable while retaining the same on-screen confirmation a person receives.
+
+### Optional private voice replies (Chatterbox beta)
+
+Open the launcher, use the search field, then choose **Chat β**. Text chat is
+ephemeral. To hear local voice replies, run `./scripts/install-chatterbox.sh`
+once and `./scripts/run-chatterbox.sh` while using Chat. The companion binds
+only to `127.0.0.1`; no prompt, transcript, or API key is sent to a service.
 
 ## Privacy
 

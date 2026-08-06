@@ -301,7 +301,7 @@ struct SettingsPanelView: View {
                 Text("Agents and scripts can open My Man’s normal capture UI — they never bypass permissions or confirmation.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                 HStack(spacing: 8) {
-                    Text("myman screenshot · note · dictation · chat · meeting")
+                    Text("myman screenshot · note · dictation · meeting")
                         .font(.system(size: 10, design: .monospaced)).lineLimit(1)
                     Spacer(minLength: 0)
                     Button(automationCopied ? "Copied" : "Copy setup") { copyAutomationSetup() }

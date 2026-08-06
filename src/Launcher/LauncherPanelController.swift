@@ -10,15 +10,18 @@ final class LauncherPanelController {
     private let openNote: (Note) -> Void
     private let openScreenshot: (URL) -> Void
     private let saveQueryAsNote: (String) -> Void
+    private let openChat: () -> Void
 
     init(actions: @escaping () -> [LauncherAction],
          openNote: @escaping (Note) -> Void,
          openScreenshot: @escaping (URL) -> Void,
-         saveQueryAsNote: @escaping (String) -> Void) {
+         saveQueryAsNote: @escaping (String) -> Void,
+         openChat: @escaping () -> Void) {
         self.makeActions = actions
         self.openNote = openNote
         self.openScreenshot = openScreenshot
         self.saveQueryAsNote = saveQueryAsNote
+        self.openChat = openChat
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -45,6 +48,10 @@ final class LauncherPanelController {
             onOpenNote: { [weak self] note in self?.openNote(note) },
             onOpenScreenshot: { [weak self] url in self?.openScreenshot(url) },
             onSaveQueryAsNote: { [weak self] text in self?.saveQueryAsNote(text) },
+            onOpenChat: { [weak self] in
+                self?.panel?.dismiss()
+                self?.openChat()
+            },
             onDismiss: { [weak self] in self?.panel?.dismiss() },
             onSizeChange: { [weak self] size in self?.applyContentSize(size) }
         )

@@ -17,7 +17,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     private let meetings = MeetingController()
     private let calendar = CalendarWatcher()
     private let meetingDetector = MeetingDetector()
-    private let brainChat = BrainChatController.shared
     private var launcher: LauncherPanelController!
     private var updater: SPUStandardUpdaterController?
 
@@ -51,7 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             openScreenshot: { [weak self] url in self?.capture.openInEditor(fileURL: url) },
             saveQueryAsNote: { [weak self] text in
                 _ = self?.notesStore.save(body: text, source: "search_empty_state")
-            }
+            },
+            openChat: { BrainChatController.shared.show() }
         )
         setUpStatusItem()
         setUpHotkeys()
@@ -141,7 +141,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         case "screenshot": capture.beginRegionCapture()
         case "note": notesPanel.show()
         case "dictation": voice.toggle()
-        case "chat": brainChat.show()
         case "meeting": meetings.toggle()
         case "cancel-meeting": meetings.discardRecording()
         case "record": ScreenRecorder.shared.toggle()
@@ -203,11 +202,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     self?.voice.toggle()
                 }
-            },
-            LauncherAction(id: "brain-chat", icon: .chat, title: "Chat Brain",
-                           hint: "", enabled: true) { [weak self] in
-                Analytics.track("brain_chat_opened")
-                self?.brainChat.show()
             },
             LauncherAction(id: "meeting", icon: .calendar,
                            title: meetingActionTitle, hint: SettingsStore.shared.hint(for: .meeting), enabled: true,
