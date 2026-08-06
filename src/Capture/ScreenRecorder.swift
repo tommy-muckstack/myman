@@ -43,6 +43,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// tracks has produced unusable noise on some macOS audio devices.
     @Published private(set) var microphoneEnabled =
         UserDefaults.standard.object(forKey: "mm.screenRecordingMicrophone") as? Bool ?? false
+    /// Smoothed 0...1 level read from the microphone stream being saved.
+    @Published private(set) var microphoneLevel: CGFloat = 0
+    private var microphoneMeter: AnyObject?
 
     static var isSupported: Bool {
         if #available(macOS 15.0, *) { return true }
@@ -103,6 +106,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 await withCheckedContinuation { continuation in
                     AVCaptureDevice.requestAccess(for: .video) { _ in continuation.resume() }
                 }
+            }
+            if self.microphoneEnabled, !(await self.authorizeMicrophoneIfNeeded()) {
+                self.microphoneEnabled = false
+                UserDefaults.standard.set(false, forKey: "mm.screenRecordingMicrophone")
+                Toast.show("Microphone access is off — recording screen audio only", systemImage: "mic.slash")
             }
             let coordinator = SelectionOverlayCoordinator(frozenCapture: nil)
             coordinator.delegate = self
@@ -183,10 +191,17 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 let output = SCRecordingOutput(configuration: recordingConfig, delegate: self)
 
                 let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+                let microphoneMeter = MicrophoneLevelMonitor()
+                microphoneMeter.onLevel = { [weak self] level in self?.microphoneLevel = level }
+                try stream.addStreamOutput(
+                    microphoneMeter, type: .microphone,
+                    sampleHandlerQueue: DispatchQueue(label: "com.muckstack.myman.recording-mic-meter")
+                )
                 try stream.addRecordingOutput(output)
                 try await stream.startCapture()
 
                 self.stream = stream
+                self.microphoneMeter = microphoneMeter
                 self.streamConfiguration = config
                 self.recordingOutput = output
                 self.outputURL = url
@@ -227,9 +242,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
         WebcamBubble.shared.preferredRegion = nil
         WebcamBubble.shared.turnOff()
         WebcamBubble.shared.resetPosition()
+        microphoneLevel = 0
         Task { @MainActor in
             try? await stream?.stopCapture()
             stream = nil
+            microphoneMeter = nil
             streamConfiguration = nil
             recordingOutput = nil
             outputURL = nil
@@ -374,12 +391,21 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     func toggleMicrophone() {
         let enabled = !microphoneEnabled
-        microphoneEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: "mm.screenRecordingMicrophone")
-        guard #available(macOS 15.0, *) else { return }
-        guard let stream, let configuration = streamConfiguration else { return }
-        configuration.captureMicrophone = enabled
         Task { @MainActor in
+            if enabled {
+                guard await self.authorizeMicrophoneIfNeeded() else {
+                    Toast.show("Allow Microphone for My Man to record your voice", systemImage: "mic.slash")
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                        NSWorkspace.shared.open(url)
+                    }
+                    return
+                }
+            }
+            self.microphoneEnabled = enabled
+            UserDefaults.standard.set(enabled, forKey: "mm.screenRecordingMicrophone")
+            guard #available(macOS 15.0, *), let stream = self.stream,
+                  let configuration = self.streamConfiguration else { return }
+            configuration.captureMicrophone = enabled
             do {
                 try await stream.updateConfiguration(configuration)
                 Analytics.track("screen_recording_microphone", ["enabled": enabled])
@@ -389,6 +415,19 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 UserDefaults.standard.set(self.microphoneEnabled, forKey: "mm.screenRecordingMicrophone")
                 Toast.show("Couldn't change microphone during this recording", systemImage: "mic.slash")
             }
+        }
+    }
+
+    private func authorizeMicrophoneIfNeeded() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        default: return false
         }
     }
 }
@@ -519,6 +558,55 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         selection?.hideAll()
         selection = nil
         isBusy = false
+    }
+}
+
+/// Observes the ScreenCaptureKit microphone samples solely for the control
+/// indicator. Recording itself remains owned by `SCRecordingOutput`, so the
+/// meter cannot alter the audio written to disk.
+@available(macOS 15.0, *)
+private final class MicrophoneLevelMonitor: NSObject, SCStreamOutput {
+    var onLevel: (@MainActor (CGFloat) -> Void)?
+    private var smoothedLevel: CGFloat = 0
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+                of type: SCStreamOutputType) {
+        guard type == .microphone,
+              CMSampleBufferDataIsReady(sampleBuffer),
+              let format = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format),
+              asbd.pointee.mFormatID == kAudioFormatLinearPCM,
+              let block = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
+
+        var totalLength = 0
+        var data: UnsafeMutablePointer<Int8>?
+        guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil,
+                                          totalLengthOut: &totalLength, dataPointerOut: &data) == kCMBlockBufferNoErr,
+              let data, totalLength > 0 else { return }
+
+        let bits = Int(asbd.pointee.mBitsPerChannel)
+        let sampleCount = totalLength / max(1, bits / 8)
+        guard sampleCount > 0 else { return }
+        var sum: Double = 0
+        if bits == 32, (asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat) != 0 {
+            data.withMemoryRebound(to: Float.self, capacity: sampleCount) { samples in
+                for index in 0..<sampleCount { sum += Double(samples[index] * samples[index]) }
+            }
+        } else if bits == 16 {
+            data.withMemoryRebound(to: Int16.self, capacity: sampleCount) { samples in
+                for index in 0..<sampleCount {
+                    let value = Double(samples[index]) / Double(Int16.max)
+                    sum += value * value
+                }
+            }
+        } else {
+            return
+        }
+        let rms = sqrt(sum / Double(sampleCount))
+        let normalized = min(1, max(0, (rms - 0.008) * 9))
+        smoothedLevel = max(CGFloat(normalized), smoothedLevel * 0.76)
+        let level = smoothedLevel
+        Task { @MainActor [onLevel] in onLevel?(level) }
     }
 }
 
@@ -666,21 +754,6 @@ private final class WebcamBubbleView: NSView {
         previewLayer.masksToBounds = true
         layer.addSublayer(previewLayer)
 
-        let badgeSize = max(28, diameter * 0.22)
-        let badge = CALayer()
-        badge.frame = CGRect(x: 9, y: diameter - badgeSize - 9,
-                             width: badgeSize, height: badgeSize)
-        badge.cornerRadius = badgeSize / 2
-        badge.backgroundColor = NSColor.black.withAlphaComponent(0.64).cgColor
-        badge.borderWidth = 1
-        badge.borderColor = NSColor.white.withAlphaComponent(0.48).cgColor
-        let dot = CALayer()
-        dot.frame = CGRect(x: (badgeSize - 8) / 2, y: (badgeSize - 8) / 2,
-                           width: 8, height: 8)
-        dot.cornerRadius = 4
-        dot.backgroundColor = NSColor.systemRed.cgColor
-        badge.addSublayer(dot)
-        layer.addSublayer(badge)
         layer.shadowColor = NSColor.black.cgColor
         layer.shadowOpacity = 0.32
         layer.shadowRadius = 14
@@ -754,7 +827,7 @@ private struct RecordConfirmView: View {
             }
             .buttonStyle(.plain)
             Button(action: onToggleCamera) {
-                IconView(icon: webcam.isOn ? .camera : .cameraOff, size: 14,
+                IconView(icon: webcam.isOn ? .recordScreen : .cameraOff, size: 14,
                          color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.danger)
                     .clickable(minSize: 32)
             }
@@ -785,10 +858,17 @@ private struct RecordConfirmView: View {
 /// red means your voice will not be included in this recording.
 private struct MicrophoneToggleIcon: View {
     let enabled: Bool
+    @ObservedObject private var recorder = ScreenRecorder.shared
 
     var body: some View {
         IconView(icon: enabled ? .mic : .micOff, size: 16,
-                 color: enabled ? MM.Colors.textPrimary : MM.Colors.danger)
+                 color: enabled ? activeColor : MM.Colors.danger)
+            .scaleEffect(enabled ? 1 + recorder.microphoneLevel * 0.12 : 1)
+            .animation(.easeOut(duration: 0.08), value: recorder.microphoneLevel)
+    }
+
+    private var activeColor: Color {
+        recorder.microphoneLevel > 0.035 ? .green : MM.Colors.textPrimary
     }
 }
 
@@ -841,7 +921,7 @@ private struct RecordingPillView: View {
                 .font(.system(size: 11.5, weight: .medium).monospacedDigit())
                 .foregroundStyle(MM.Colors.textSecondary)
                 .frame(width: 42, alignment: .leading)
-            IconView(icon: webcam.isOn ? .camera : .cameraOff, size: 14,
+            IconView(icon: webcam.isOn ? .recordScreen : .cameraOff, size: 14,
                      color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.danger)
                 .clickable(minSize: 24)
                 .onTapGesture { webcam.toggle() }

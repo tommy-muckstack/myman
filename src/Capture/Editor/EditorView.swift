@@ -54,6 +54,7 @@ struct EditorView: View {
     @State private var selectedAnnotation: UUID?
 
     var onDone: () -> Void = {}
+    var onSaved: (NSImage, URL) -> Void = { _, _ in }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -230,6 +231,25 @@ struct EditorView: View {
                 .help("Toggle the in-place translation layer")
             }
 
+            HStack(spacing: 6) {
+                ForEach(annotationColors.indices, id: \.self) { index in
+                    let color = annotationColors[index]
+                    Button {
+                        model.annotationColor = color
+                    } label: {
+                        Circle()
+                            .fill(Color(nsColor: color))
+                            .frame(width: 16, height: 16)
+                            .overlay(Circle().strokeBorder(.white.opacity(0.8), lineWidth: 1))
+                            .overlay(Circle().strokeBorder(MM.Colors.textPrimary, lineWidth: 2)
+                                .opacity(model.annotationColor.isEqual(color) ? 1 : 0))
+                            .clickable(minSize: 26)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .help("Annotation color")
+
             Spacer()
 
             if model.didCopyText {
@@ -279,7 +299,7 @@ struct EditorView: View {
             .help("Copy image (⇧⌘C)")
 
             Button {
-                model.save()
+                if let image = model.save() { onSaved(image, model.fileURL) }
                 onDone()
             } label: {
                 Text("Save")
@@ -543,6 +563,13 @@ struct EditorView: View {
             width: model.imageSize.width * scale,
             height: model.imageSize.height * scale
         )
+    }
+
+    private var annotationColors: [NSColor] {
+        [
+            NSColor(red: 1.0, green: 0.22, blue: 0.36, alpha: 1),
+            .systemOrange, .systemYellow, .systemGreen, .systemBlue, .systemPurple, .white,
+        ]
     }
 
     private func draw(_ annotation: Annotation, in context: inout GraphicsContext,

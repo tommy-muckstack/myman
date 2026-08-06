@@ -178,9 +178,15 @@ enum DictationCleanup {
                 }).reversed())
                 for term in normalizedTerms {
                     let exact = key == term.key
-                    let fuzzy = term.key.count >= 6
-                        && key.first == term.key.first
-                        && editDistance(key, term.key) <= 2
+                    let distance = editDistance(key, term.key)
+                    // Most fuzzy repairs retain the first letter, which keeps
+                    // ordinary prose safe. A single-edit substitution is safe
+                    // even when that first letter is wrong (Luxstack →
+                    // MuckStack; Chetana → Chethana).
+                    let fuzzy = term.key.count >= 6 && (
+                        (key.first == term.key.first && distance <= 2)
+                        || (abs(key.count - term.key.count) <= 1 && distance <= 1)
+                    )
                     if exact || fuzzy {
                         result.replaceSubrange(i..<(i + windowSize),
                                                with: [term.canonical + punctuation])
