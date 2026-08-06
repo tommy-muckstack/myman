@@ -81,15 +81,7 @@ final class Qwen3Engine {
             // Qwen occasionally emits its own task-like boilerplate during
             // silence or a bad audio frame. It is not spoken text and must
             // never be pasted into the focused app.
-            let normalized = text.lowercased()
-                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-                .joined(separator: " ")
-            if normalized.contains("agnis the opera to english text")
-                || normalized.contains("agnus the opera to english text") {
-                NSLog("My Man [Qwen3] discarded English-task hallucination")
-                return ""
-            }
-            return text
+            return TranscriptionService.discardTaskHallucination(text)
         } catch {
             NSLog("My Man [Qwen3] transcription failed: \(error)")
             return ""
@@ -321,16 +313,36 @@ final class TranscriptionService {
     }
 
     func transcribe(_ samples: [Float]) async -> String {
+        let text: String
         switch kind {
-        case .parakeet: return await parakeet.transcribe(samples)
+        case .parakeet: text = await parakeet.transcribe(samples)
         case .qwen3:
-            if #available(macOS 15.0, *) { return await qwen3.transcribe(samples) }
-            return await parakeet.transcribe(samples)
+            if #available(macOS 15.0, *) { text = await qwen3.transcribe(samples) }
+            else { text = await parakeet.transcribe(samples) }
         case .apple:
             #if compiler(>=6.2)
-            if #available(macOS 26.0, *) { return await apple.transcribe(samples) }
+            if #available(macOS 26.0, *) { text = await apple.transcribe(samples) }
+            else { text = "" }
+            #else
+            text = ""
             #endif
-            return ""
         }
+        return Self.discardTaskHallucination(text)
+    }
+
+    /// Some ASR decoders occasionally emit their own translation task label
+    /// instead of speech. Run this after *every* engine, not just Qwen, so a
+    /// model fallback cannot paste the phrase into another app.
+    static func discardTaskHallucination(_ text: String) -> String {
+        let normalized = text.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .joined(separator: " ")
+        let taskFragments = [
+            "opera to english text", "opera into english text",
+            "audio to english text", "audio into english text",
+        ]
+        guard taskFragments.contains(where: normalized.contains) else { return text }
+        NSLog("My Man [ASR] discarded English-task hallucination")
+        return ""
     }
 }
