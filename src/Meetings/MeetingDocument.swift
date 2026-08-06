@@ -499,20 +499,55 @@ private struct SpeakerChip: View {
 
 enum MeetingSummarizer {
     /// Granola-style smart notes in markdown, generated on-device.
+    ///
+    /// Long meetings are summarized map-reduce style: the transcript is
+    /// windowed on turn boundaries, each window compressed to dense notes,
+    /// then a final pass writes the document. The old single-pass version
+    /// read only the first 8,000 characters — a 44-minute meeting's summary
+    /// knew nothing past minute ten, which is where the decisions live.
     static func summarize(_ transcript: String) async -> String {
         #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else { return "" }
         guard case .available = SystemLanguageModel.default.availability else { return "" }
-        let session = LanguageModelSession(instructions: """
-            You write concise meeting notes in markdown from a transcript with \
-            "You:" (the user) and "Others:" (other participants) sections. \
-            Structure: "## Summary" (2-3 sentences), "## Key points" (bullets), \
-            and "## Action items" (bullets, only real commitments) — omit any \
-            section with nothing to say. Plain, specific language. No preamble.
-            """)
+        let windowSize = 7000
+        let finalInstructions = """
+            You write concise meeting notes in markdown from a transcript \
+            where lines look like "**Name** [minute:second]: what they said" \
+            ("You" is the user). Structure: "## Summary" (2-3 sentences), \
+            "## Key points" (bullets), and "## Action items" (bullets, only \
+            real commitments, with the owner's name) — omit any section with \
+            nothing to say. Keep concrete decisions, numbers, and names; \
+            plain, specific language. No preamble.
+            """
         do {
-            let response = try await session.respond(to: String(transcript.prefix(8000)))
-            Analytics.track("meeting_summarized")
+            if transcript.count <= windowSize {
+                let session = LanguageModelSession(instructions: finalInstructions)
+                let response = try await session.respond(to: transcript)
+                Analytics.track("meeting_summarized", ["windows": 1])
+                return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            var notes: [String] = []
+            for window in windows(of: transcript, size: windowSize).prefix(12) {
+                // Fresh session per window — context does not accumulate.
+                let session = LanguageModelSession(instructions: """
+                    Compress this slice of a meeting transcript (lines are \
+                    "**Name** [minute:second]: what they said"; "You" is the \
+                    user) into dense bullet notes. Keep every decision, \
+                    commitment, number, and name exactly; drop filler. \
+                    Bullets only, no headings, no preamble.
+                    """)
+                if let response = try? await session.respond(to: window) {
+                    notes.append(response.content)
+                }
+            }
+            guard !notes.isEmpty else { return "" }
+            let session = LanguageModelSession(instructions: finalInstructions + """
+                 The input is sequential bullet notes covering the whole \
+                meeting, not raw transcript lines.
+                """)
+            let response = try await session.respond(
+                to: String(notes.joined(separator: "\n").prefix(windowSize)))
+            Analytics.track("meeting_summarized", ["windows": notes.count])
             return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             NSLog("My Man [Summary] failed: \(error)")
@@ -521,5 +556,20 @@ enum MeetingSummarizer {
         #else
         return ""
         #endif
+    }
+
+    /// Split on turn boundaries (blank lines) so no utterance is cut mid-way.
+    private static func windows(of transcript: String, size: Int) -> [String] {
+        var result: [String] = []
+        var current = ""
+        for block in transcript.components(separatedBy: "\n\n") {
+            if current.count + block.count + 2 > size, !current.isEmpty {
+                result.append(current)
+                current = ""
+            }
+            current += current.isEmpty ? block : "\n\n" + block
+        }
+        if !current.isEmpty { result.append(current) }
+        return result
     }
 }

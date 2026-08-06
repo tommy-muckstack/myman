@@ -604,12 +604,19 @@ final class MeetingController: ObservableObject {
     /// decoded, and holding two full meetings' worth in RAM is exactly how
     /// transcription dies on long recordings. Peak memory here is one chunk.
     private static func transcribeWavFile(atPath path: String) async -> String {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return "" }
+        await transcribeWavChunks(atPath: path).map(\.text).joined(separator: " ")
+    }
+
+    /// 60s chunk transcriptions with their start offsets — the coarse
+    /// fallback shape when turn detection fails on a track.
+    private static func transcribeWavChunks(atPath path: String)
+        async -> [(start: Double, text: String)] {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
         let headerBytes: UInt64 = 44
         let chunkBytes = 16000 * 60 * 2 // 60s of mono Int16
         var offset = headerBytes
-        var parts: [String] = []
+        var parts: [(start: Double, text: String)] = []
         while true {
             try? handle.seek(toOffset: offset)
             guard let data = try? handle.read(upToCount: chunkBytes), !data.isEmpty else { break }
@@ -617,12 +624,43 @@ final class MeetingController: ObservableObject {
                 let int16 = raw.bindMemory(to: Int16.self)
                 return int16.map { Float($0) / Float(Int16.max) }
             }
+            let start = Double(offset - headerBytes) / 32000
             let text = await TranscriptionService.shared.transcribe(samples)
-            if !text.isEmpty { parts.append(text) }
+            if !text.isEmpty { parts.append((start, text)) }
             if data.count < chunkBytes { break }
             offset += UInt64(data.count)
         }
-        return parts.joined(separator: " ")
+        return parts
+    }
+
+    /// Seconds of audio in a 16k mono Int16 WAV.
+    private static func wavDuration(atPath path: String) -> Double {
+        let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? UInt64) ?? 0
+        return size > 44 ? Double(size - 44) / 32000 : 0
+    }
+
+    /// Turn detection with a safety net: when the energy gate finds little
+    /// or nothing in a track that whole-file transcription CAN read, fall
+    /// back to coarse 60s turns rather than dropping that side of the
+    /// conversation. Real failure mode: a quiet mic track losing every one
+    /// of the user's turns while the remote track came through fine.
+    private static func turnsWithFallback(atPath path: String, speaker: String)
+        async -> [(start: Double, speaker: String, text: String)] {
+        let turns = await transcribeTurns(atPath: path, speaker: speaker)
+        let duration = wavDuration(atPath: path)
+        let covered = turns.reduce(0.0) { $0 + Double($1.text.count) }
+        // Under ~2 chars of text per second of audio across a multi-minute
+        // track means the gate missed most speech (normal speech is ~12/s;
+        // one quiet side of a call still produces well above 2).
+        let sparse = duration > 120 && covered / duration < 2
+        guard turns.isEmpty || sparse else { return turns }
+        let chunks = await transcribeWavChunks(atPath: path)
+        let chunkChars = chunks.reduce(0) { $0 + $1.text.count }
+        guard chunkChars > Int(covered) * 2, chunkChars > 40 else { return turns }
+        Analytics.track("meeting_track_fallback",
+                        ["speaker": speaker, "turn_chars": Int(covered),
+                         "chunk_chars": chunkChars, "duration_s": Int(duration)])
+        return chunks.map { ($0.start, speaker, $0.text) }
     }
 
     /// Speech turns in a 16k WAV via energy gating, streamed — frame RMS at
@@ -648,8 +686,16 @@ final class MeetingController: ObservableObject {
             if data.count < frameSamples * 2 { break }
         }
         guard !energies.isEmpty else { return [] }
-        let noiseFloor = energies.sorted()[energies.count / 2]
-        let threshold = max(0.004, noiseFloor * 2.5)
+        let sorted = energies.sorted()
+        let noiseFloor = sorted[energies.count / 2]
+        let peak = sorted[Int(Double(energies.count - 1) * 0.99)] // robust peak
+        // Scale the gate to the track, never to an absolute level: a quiet
+        // mic (raw capture, no gain) can put ALL speech under a fixed 0.004
+        // floor — that silently drops one entire side of a meeting (found by
+        // diffing a real 44-min call against two other recorders). The gate
+        // must sit between this track's noise floor and its own peak.
+        guard peak > 0.0015 else { return [] } // genuinely silent track
+        let threshold = max(0.002, min(max(0.004, noiseFloor * 2.5), peak * 0.25))
         var segments: [(Double, Double)] = []
         var current: (first: Int, last: Int)?
         var silentFrames = 0
@@ -711,12 +757,20 @@ final class MeetingController: ObservableObject {
                                 candidates: [String] = []) async -> String {
         var turns: [(start: Double, speaker: String, text: String)] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
-            turns += await transcribeTurns(atPath: micPath, speaker: "You")
+            turns += await turnsWithFallback(atPath: micPath, speaker: "You")
         }
         if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
-            var sysTurns = await transcribeTurns(atPath: systemPath, speaker: "Them")
-            let diarized = await Diarization.shared.speakerSegments(forWavAtPath: systemPath)
-            sysTurns = label(turns: sysTurns, with: diarized)
+            var sysTurns = await turnsWithFallback(atPath: systemPath, speaker: "Them")
+            if candidates.count == 1, let only = candidates.first {
+                // A 1:1: exactly one person can be on the remote track.
+                // Diarization can only hurt here — echo and noise split one
+                // voice into "Speaker 1"/"Speaker 2" — so skip it and label
+                // every remote turn with the known attendee.
+                sysTurns = sysTurns.map { ($0.start, only, $0.text) }
+            } else {
+                let diarized = await Diarization.shared.speakerSegments(forWavAtPath: systemPath)
+                sysTurns = label(turns: sysTurns, with: diarized)
+            }
             turns += sysTurns
         }
         if !turns.isEmpty {
