@@ -1,15 +1,17 @@
 import Foundation
 
-/// Incremental 16kHz mono Int16 WAV writer: writes a placeholder header,
-/// appends samples as they arrive, and patches the true sizes on close.
-/// Keeps hour-long recordings off the heap.
+/// Incremental mono Int16 WAV writer (16kHz for ASR tracks by default,
+/// native-rate for narration): writes a placeholder header, appends samples
+/// as they arrive, and patches the true sizes on close. Keeps hour-long
+/// recordings off the heap.
 final class WavWriter {
     let url: URL
     private let handle: FileHandle
     private var dataBytes: UInt32 = 0
-    private let sampleRate: UInt32 = 16000
+    private let sampleRate: UInt32
 
-    init?(url: URL) {
+    init?(url: URL, sampleRate: UInt32 = 16000) {
+        self.sampleRate = sampleRate
         self.url = url
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

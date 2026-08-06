@@ -106,6 +106,23 @@ final class AudioCapture: @unchecked Sendable {
 
     /// End a session: final drain, then stop the engine only when it was the
     /// last session (a remaining session may flip processing mode back).
+    /// The input's real sample rate (engine must exist — begin() first).
+    func nativeSampleRate() -> Double {
+        engine?.inputNode.inputFormat(forBus: 0).sampleRate ?? 48000
+    }
+
+    /// Native-rate drain for LISTENING-quality consumers (screen-recording
+    /// narration): raw floats at the input's real sample rate, no resample,
+    /// no gain — normalization happens once over the whole take.
+    func drainNative(_ id: UUID) -> (samples: [Float], sampleRate: Double) {
+        let rate = engine?.inputNode.inputFormat(forBus: 0).sampleRate ?? 48000
+        lock.lock()
+        let raw = buffers[id] ?? []
+        buffers[id] = []
+        lock.unlock()
+        return (raw, rate)
+    }
+
     func end(_ id: UUID) -> [Float] {
         let rate = engine?.inputNode.inputFormat(forBus: 0).sampleRate ?? 48000
         lock.lock()
