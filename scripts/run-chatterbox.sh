@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MYMAN_CHATTERBOX_ROOT="${MYMAN_CHATTERBOX_ROOT:-$HOME/Library/Application Support/MyMan/chatterbox}"
 MYMAN_CHATTERBOX_PYTHON="$MYMAN_CHATTERBOX_ROOT/venv/bin/python"
 
