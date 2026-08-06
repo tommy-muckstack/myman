@@ -4,6 +4,11 @@ import SwiftUI
 @MainActor
 final class EditorWindowController {
     private var windows: [NSWindow] = []
+    private let onSaved: (NSImage, URL) -> Void
+
+    init(onSaved: @escaping (NSImage, URL) -> Void = { _, _ in }) {
+        self.onSaved = onSaved
+    }
 
     func open(image: NSImage, fileURL: URL) {
         let model = EditorModel(image: image, fileURL: fileURL)
@@ -23,7 +28,7 @@ final class EditorWindowController {
 
         let view = EditorView(model: model, onDone: { [weak self, weak window] in
             if let window { self?.close(window) }
-        })
+        }, onSaved: onSaved)
         window.contentView = NSHostingView(rootView: view)
 
         let target = idealSize(for: image.size)

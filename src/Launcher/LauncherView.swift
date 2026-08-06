@@ -139,7 +139,9 @@ struct LauncherView: View {
             showAllHints = true
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(2))
-                withAnimation(MM.Motion.gentle) { showAllHints = false }
+                // Shortcut labels are deliberately opacity-only. A spring here
+                // makes them look as though they rise out of the tile.
+                withAnimation(.easeInOut(duration: 0.16)) { showAllHints = false }
             }
         }
         .onChange(of: query) { _, newValue in
@@ -560,7 +562,7 @@ struct LauncherView: View {
                 .foregroundStyle(MM.Colors.textTertiary)
                 .lineLimit(1)
                 .opacity(hintVisible ? 1 : 0)
-                .animation(.easeInOut(duration: 0.16), value: hintVisible)
+                .transaction { $0.animation = .easeInOut(duration: 0.16) }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)

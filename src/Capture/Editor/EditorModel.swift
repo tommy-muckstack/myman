@@ -78,7 +78,8 @@ final class EditorModel: ObservableObject {
     let fileURL: URL
     private var imageHistory: [NSImage] = []
 
-    var annotationColor: NSColor { NSColor(red: 1.0, green: 0.22, blue: 0.36, alpha: 1) }
+    /// Applied consistently to new arrows, boxes, text, and highlights.
+    @Published var annotationColor = NSColor(red: 1.0, green: 0.22, blue: 0.36, alpha: 1)
 
     /// Corner rounding on the image: the user's choice, or a minimum of 12
     /// whenever a backdrop is on (a hard-corner shot on a gradient looks wrong).
@@ -558,7 +559,8 @@ final class EditorModel: ObservableObject {
     }
 
     /// Overwrites the original capture file with the edited render.
-    func save() {
+    @discardableResult
+    func save() -> NSImage? {
         Analytics.track("editor_saved", [
             "annotations": annotations.count,
             "backdrop": backdrop.rawValue,
@@ -568,8 +570,9 @@ final class EditorModel: ObservableObject {
         let final = renderFinal()
         guard let tiff = final.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:]) else { return }
-        try? png.write(to: fileURL)
+              let png = rep.representation(using: .png, properties: [:]) else { return nil }
+        guard (try? png.write(to: fileURL)) != nil else { return nil }
         copyToClipboard()
+        return final
     }
 }

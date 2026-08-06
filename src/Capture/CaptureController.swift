@@ -17,7 +17,9 @@ final class CaptureController: SelectionOverlayDelegate {
     private var overlay: SelectionOverlayCoordinator?
     private var frozenCapture: CompositeCapture?
     private var thumbnail: ThumbnailPanel?
-    private let editor = EditorWindowController()
+    private lazy var editor = EditorWindowController { [weak self] image, fileURL in
+        self?.showThumbnail(image: image, fileURL: fileURL)
+    }
 
     static var saveFolder: URL {
         SettingsStore.shared.screenshotFolderURL
