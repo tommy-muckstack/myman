@@ -5,14 +5,61 @@ import GRDB
 // transcripts and screenshot OCR join the same FTS index in later phases,
 // which is what makes universal search possible.
 enum Database {
-    static var shared: DatabaseQueue = {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    /// Shown once at launch when the prior SQLite store could not be opened.
+    /// The original files are preserved in Application Support for recovery.
+    private(set) static var startupRecoveryNotice: String?
+
+    private static var directory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MyMan", isDirectory: true)
-        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let dbQueue = try! DatabaseQueue(path: dir.appendingPathComponent("myman.sqlite").path)
-        try! migrator.migrate(dbQueue)
-        return dbQueue
+    }
+
+    private static var databaseURL: URL {
+        directory.appendingPathComponent("myman.sqlite")
+    }
+
+    static var shared: DatabaseQueue = {
+        do {
+            return try openDatabase()
+        } catch {
+            // Preserve the failed store and its SQLite sidecars before making
+            // a fresh one. A corrupt database must not turn into an app crash
+            // or silently erase the only recoverable copy of a user's data.
+            do {
+                let backup = try backupFailedStore()
+                let queue = try openDatabase()
+                startupRecoveryNotice = "My Man repaired its local database. The previous files are saved in \(backup.lastPathComponent)."
+                NSLog("My Man [Database] recovered from startup error: \(error)")
+                return queue
+            } catch {
+                fatalError("My Man could not open its local database: \(error.localizedDescription)")
+            }
+        }
     }()
+
+    private static func openDatabase() throws -> DatabaseQueue {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let queue = try DatabaseQueue(path: databaseURL.path)
+        try migrator.migrate(queue)
+        return queue
+    }
+
+    private static func backupFailedStore() throws -> URL {
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let backup = directory.appendingPathComponent(
+            "Database Recovery \(formatter.string(from: Date()))", isDirectory: true)
+        try fm.createDirectory(at: backup, withIntermediateDirectories: false)
+        for suffix in ["", "-wal", "-shm"] {
+            let source = URL(fileURLWithPath: databaseURL.path + suffix)
+            guard fm.fileExists(atPath: source.path) else { continue }
+            try fm.moveItem(at: source, to: backup.appendingPathComponent(source.lastPathComponent))
+        }
+        return backup
+    }
 
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()

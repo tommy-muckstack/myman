@@ -432,7 +432,7 @@ final class WebcamBubble: ObservableObject {
     /// When a region recording is live, the bubble spawns inside it.
     var preferredRegion: CGRect?
     private var panel: NSPanel?
-    private var session: AVCaptureSession?
+    private var sessionRunner: CaptureSessionRunner?
 
     func toggle() {
         UserDefaults.standard.set(!isOn, forKey: "mm.webcamBubble")
@@ -514,8 +514,9 @@ final class WebcamBubble: ObservableObject {
         panel.orderFrontRegardless()
 
         self.panel = panel
-        self.session = session
-        DispatchQueue.global(qos: .userInitiated).async { session.startRunning() }
+        let runner = CaptureSessionRunner(session: session)
+        self.sessionRunner = runner
+        runner.start()
         isOn = true
         Analytics.track("webcam_bubble_on")
     }
@@ -523,12 +524,23 @@ final class WebcamBubble: ObservableObject {
     func turnOff() {
         guard isOn else { return }
         isOn = false
-        let stopping = session
-        DispatchQueue.global(qos: .userInitiated).async { stopping?.stopRunning() }
-        session = nil
+        sessionRunner?.stop()
+        sessionRunner = nil
         panel?.orderOut(nil)
         panel = nil
     }
+}
+
+/// AVCaptureSession start/stop can block. Keep it off the main actor while
+/// serializing calls to the session on one dedicated queue.
+private final class CaptureSessionRunner: @unchecked Sendable {
+    private let session: AVCaptureSession
+    private let queue = DispatchQueue(label: "com.muckstack.myman.webcam")
+
+    init(session: AVCaptureSession) { self.session = session }
+
+    func start() { queue.async { self.session.startRunning() } }
+    func stop() { queue.async { self.session.stopRunning() } }
 }
 
 /// 2pt red frame drawn at the panel's edge — the panel sits 3pt outside

@@ -11,11 +11,12 @@ struct CapturePanelView: View {
 
     var onDismiss: () -> Void
 
-    init(store: NotesStore, initialEditing: Note? = nil, onDismiss: @escaping () -> Void = {}) {
+    init(store: NotesStore, initialEditing: Note? = nil, initialDraft: String? = nil,
+         onDismiss: @escaping () -> Void = {}) {
         self.store = store
         self.onDismiss = onDismiss
         _editing = State(initialValue: initialEditing)
-        _draft = State(initialValue: initialEditing?.body ?? "")
+        _draft = State(initialValue: initialDraft ?? initialEditing?.body ?? "")
     }
 
     var body: some View {

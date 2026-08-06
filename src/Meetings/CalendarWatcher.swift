@@ -83,15 +83,20 @@ final class CalendarWatcher {
                   event.startDate > now.addingTimeInterval(-120)
             else { continue }
 
-            let nudgeAt = event.startDate.addingTimeInterval(-45)
+            guard let startsAt = event.startDate else { continue }
+            let nudgeAt = startsAt.addingTimeInterval(-45)
             let delay = nudgeAt.timeIntervalSince(now)
+            // Capture an immutable event snapshot for the timer. EKEvent is
+            // not Sendable and may be invalidated by a calendar refresh.
+            let title = event.title
+            let joinURL = Self.meetingURL(in: event)
             if delay <= 0 {
-                nudge(for: event)
+                nudge(id: id, title: title, joinURL: joinURL, startsAt: startsAt)
             } else {
                 let timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
                     Task { @MainActor in
                         self?.nudgeTimers[id] = nil
-                        self?.nudge(for: event)
+                        self?.nudge(id: id, title: title, joinURL: joinURL, startsAt: startsAt)
                     }
                 }
                 timer.tolerance = 15
@@ -127,11 +132,11 @@ final class CalendarWatcher {
         return nil
     }
 
-    private func nudge(for event: EKEvent) {
-        guard let id = event.eventIdentifier, !nudgedEventIDs.contains(id) else { return }
+    private func nudge(id: String, title: String?, joinURL: URL?, startsAt: Date) {
+        guard !nudgedEventIDs.contains(id) else { return }
         nudgedEventIDs.insert(id)
         Analytics.track("meeting_nudge_shown")
-        onPreMeeting(event.title, Self.meetingURL(in: event), event.startDate)
+        onPreMeeting(title, joinURL, startsAt)
     }
 }
 // (Legacy nudge pill removed — the provisional Use My Man card is the surface.)

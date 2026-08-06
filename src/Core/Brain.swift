@@ -203,18 +203,19 @@ enum Brain {
                     let analysis = await ImageAnalysis.analyze(image)
                     ocrText = analysis.searchableText
                     if !ocrText.isEmpty {
+                        let completedOCR = ocrText
                         try? await Database.shared.write { db in
                             try db.execute(sql: "UPDATE screenshot SET ocrText = ? WHERE id = ?",
-                                           arguments: [ocrText, shot.id])
+                                           arguments: [completedOCR, shot.id])
                         }
-                        if let blob = SearchService.embedding(for: ocrText) {
+                        if let blob = SearchService.embedding(for: completedOCR) {
                             try? await Database.shared.write { db in
                                 try db.execute(sql: "UPDATE screenshot SET embedding = ? WHERE id = ?",
                                                arguments: [blob, shot.id])
                             }
                         }
                         syncScreenshot(id: shot.id, filePath: shot.path,
-                                       ocrText: ocrText, createdAt: shot.createdAt)
+                                       ocrText: completedOCR, createdAt: shot.createdAt)
                         continue
                     }
                 }

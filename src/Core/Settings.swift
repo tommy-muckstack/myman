@@ -82,7 +82,6 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
     }
 }
 
-@MainActor
 enum AppTheme: String, CaseIterable, Identifiable {
     case light, dark
     var id: String { rawValue }
@@ -120,6 +119,9 @@ final class SettingsStore: ObservableObject {
     @Published var autoRecordMeetings: Bool {
         didSet { UserDefaults.standard.set(autoRecordMeetings, forKey: "autoRecordMeetings") }
     }
+    @Published var dictationTone: DictationTone {
+        didSet { UserDefaults.standard.set(dictationTone.rawValue, forKey: "dictationTone") }
+    }
     /// nil = never chosen: follow the system live. Set once, it sticks.
     @Published var theme: AppTheme? {
         didSet {
@@ -139,6 +141,7 @@ final class SettingsStore: ObservableObject {
             hotkeys = [:]
         }
         autoRecordMeetings = UserDefaults.standard.bool(forKey: "autoRecordMeetings")
+        dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
         theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "")
         screenshotFolderPath = UserDefaults.standard.string(forKey: "screenshotFolder")
             ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
@@ -191,9 +194,17 @@ extension Notification.Name {
 }
 
 struct SettingsPanelView: View {
+    private enum SettingsPage: String, CaseIterable, Identifiable {
+        case general = "General", dictation = "Dictation", shortcuts = "Shortcuts"
+        var id: String { rawValue }
+    }
+
     @ObservedObject var store = SettingsStore.shared
     var onDismiss: () -> Void
+    @State private var settingsPage: SettingsPage = .general
     @State private var recordingAction: HotkeyAction?
+    @State private var vocabularyText = ""
+    @State private var automationCopied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -209,96 +220,24 @@ struct SettingsPanelView: View {
             .padding(.horizontal, MM.Layout.paddingLarge)
             .padding(.vertical, MM.Layout.padding)
 
-            Divider().overlay(MM.Colors.border)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Hotkeys")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textTertiary)
-                    .padding(.bottom, 4)
-                ForEach(HotkeyAction.allCases) { action in
-                    hotkeyRow(action)
+            Picker("Settings page", selection: $settingsPage) {
+                ForEach(SettingsPage.allCases) { page in
+                    Text(page.rawValue).tag(page)
                 }
             }
+            .labelsHidden()
+            .pickerStyle(.segmented)
             .padding(MM.Layout.paddingLarge)
 
             Divider().overlay(MM.Colors.border)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Meetings")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textTertiary)
-                Toggle(isOn: $store.autoRecordMeetings) {
-                    Text("Auto record when meeting detected")
-                        .font(MM.Fonts.body)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                }
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .tint(MM.Colors.accent)
-            }
-            .padding(MM.Layout.paddingLarge)
-
-            Divider().overlay(MM.Colors.border)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Screenshots")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textTertiary)
-                HStack(spacing: MM.Layout.spacing) {
-                    Text(store.screenshotFolderPath.replacingOccurrences(
-                        of: NSHomeDirectory(), with: "~"))
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Button("Change…") { pickFolder() }
-                        .buttonStyle(.plain)
-                        .clickable(minSize: 26)
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(MM.Colors.surface))
-                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+            Group {
+                switch settingsPage {
+                case .general: generalPage
+                case .dictation: dictationPage
+                case .shortcuts: shortcutsPage
                 }
             }
-            .padding(MM.Layout.paddingLarge)
-
-            Divider().overlay(MM.Colors.border)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Appearance")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textTertiary)
-                HStack(spacing: 6) {
-                    let selected = store.theme ?? AppTheme.matchingSystem
-                    ForEach(AppTheme.allCases) { option in
-                        Button {
-                            store.theme = option
-                        } label: {
-                            Text(option.label)
-                                .font(MM.Fonts.secondary)
-                                .foregroundStyle(selected == option
-                                                 ? MM.Colors.background : MM.Colors.textPrimary)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 4)
-                                .background(Capsule().fill(selected == option
-                                                           ? MM.Colors.textPrimary : MM.Colors.surface))
-                                .overlay(Capsule().strokeBorder(
-                                    selected == option ? Color.clear : MM.Colors.border,
-                                    lineWidth: 1))
-                                .clickable(minSize: 26)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Spacer()
-                }
-            }
-            .padding(MM.Layout.paddingLarge)
-
-            Divider().overlay(MM.Colors.border)
 
             // Update path that never depends on the menu-bar icon — crowded
             // menu bars (notch, corporate agents) silently hide status items.
@@ -347,6 +286,102 @@ struct SettingsPanelView: View {
                 recordingAction = nil
             }
         })
+        .onAppear { vocabularyText = DictationCleanup.userVocabulary().joined(separator: "\n") }
+    }
+
+    private var generalPage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            settingSection("Automation & CLI") {
+                HStack(spacing: 6) {
+                    IconView(icon: .agent, size: 16, color: MM.Colors.accent)
+                    Text("For agents and scripts")
+                        .font(MM.Fonts.secondary)
+                        .foregroundStyle(MM.Colors.textPrimary)
+                }
+                Text("Agents and scripts can open My Man’s normal capture UI — they never bypass permissions or confirmation.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                HStack(spacing: 8) {
+                    Text("myman screenshot · note · dictation · meeting")
+                        .font(.system(size: 10, design: .monospaced)).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button(automationCopied ? "Copied" : "Copy setup") { copyAutomationSetup() }
+                        .buttonStyle(.plain).clickable(minSize: 26).font(MM.Fonts.metadata)
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(Capsule().fill(MM.Colors.surface))
+                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+                }
+                Text("Copy setup installs the helper in ~/.local/bin. Direct URL commands also work: myman://screenshot")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
+            settingSection("Meetings") {
+                Toggle("Auto record when meeting detected", isOn: $store.autoRecordMeetings)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+            }
+            Divider().overlay(MM.Colors.border)
+            settingSection("Screenshots") {
+                HStack(spacing: MM.Layout.spacing) {
+                    Text(store.screenshotFolderPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                        .font(MM.Fonts.secondary).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button("Change…") { pickFolder() }
+                        .buttonStyle(.plain).clickable(minSize: 26).font(MM.Fonts.secondary)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(MM.Colors.surface))
+                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+                }
+            }
+            Divider().overlay(MM.Colors.border)
+            settingSection("Appearance") {
+                HStack(spacing: 6) {
+                    let selected = store.theme ?? AppTheme.matchingSystem
+                    ForEach(AppTheme.allCases) { option in
+                        Button { store.theme = option } label: {
+                            Text(option.label).font(MM.Fonts.secondary)
+                                .foregroundStyle(selected == option ? MM.Colors.background : MM.Colors.textPrimary)
+                                .padding(.horizontal, 12).padding(.vertical, 4)
+                                .background(Capsule().fill(selected == option ? MM.Colors.textPrimary : MM.Colors.surface))
+                                .overlay(Capsule().strokeBorder(selected == option ? Color.clear : MM.Colors.border, lineWidth: 1))
+                                .clickable(minSize: 26)
+                        }.buttonStyle(.plain)
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private var dictationPage: some View {
+        settingSection("Dictation") {
+            Picker("Style", selection: $store.dictationTone) {
+                ForEach(DictationTone.allCases) { tone in Text(tone.label).tag(tone) }
+            }.labelsHidden().pickerStyle(.segmented)
+            Text(store.dictationTone.detail).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+            TextEditor(text: $vocabularyText).font(MM.Fonts.secondary).frame(height: 130)
+                .scrollContentBackground(.hidden).padding(6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(MM.Colors.surface))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MM.Colors.border, lineWidth: 1))
+                .onChange(of: vocabularyText) { _, text in
+                    DictationCleanup.setUserVocabulary(text.components(separatedBy: .newlines))
+                }
+            Text("Personal vocabulary — one name, product, or term per line.")
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+        }
+    }
+
+    private var shortcutsPage: some View {
+        settingSection("Hotkeys") {
+            ForEach(HotkeyAction.allCases) { action in hotkeyRow(action) }
+        }
+    }
+
+    private func settingSection<Content: View>(_ title: String,
+                                                @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textTertiary)
+            content()
+        }
+        .padding(MM.Layout.paddingLarge)
     }
 
     private func hotkeyRow(_ action: HotkeyAction) -> some View {
@@ -384,6 +419,18 @@ struct SettingsPanelView: View {
         dialog.directoryURL = store.screenshotFolderURL
         if dialog.runModal() == .OK, let url = dialog.url {
             store.screenshotFolderPath = url.path
+        }
+    }
+
+    private func copyAutomationSetup() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            "mkdir -p ~/.local/bin && ln -sf /Applications/My\\ Man.app/Contents/Resources/myman ~/.local/bin/myman",
+            forType: .string
+        )
+        automationCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            automationCopied = false
         }
     }
 }

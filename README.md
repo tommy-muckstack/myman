@@ -45,6 +45,38 @@ Plain `swift build` works for compile checks. Note: [FluidAudio](https://github.
 
 Official releases are signed, notarized, and distributed only by the maintainer — building from source produces an unsigned local copy that cannot receive auto-updates.
 
+## CLI and agent automation
+
+My Man exposes its ordinary user actions through a local URL command surface. This is deliberately UI-equivalent: it still shows selection/permission UI and cannot silently capture anything.
+
+After installing My Man, agents and shell scripts can use:
+
+```bash
+open 'myman://screenshot'     # opens the normal region picker
+open 'myman://note'
+open 'myman://dictation'      # same toggle as the dictation tile
+open 'myman://meeting'
+open 'myman://cancel-meeting'
+open 'myman://record'
+```
+
+For a shorter command, an operator can install the bundled helper once:
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf /Applications/My\ Man.app/Contents/Resources/myman ~/.local/bin/myman
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+```
+
+Then call `myman screenshot`, `myman note`, `myman dictation`, `myman meeting`, `myman cancel-meeting`, `myman record`, `myman settings`, or `myman open`. The app must have the normal Screen Recording, Microphone, and Accessibility permissions; this makes capture flows testable while retaining the same on-screen confirmation a person receives.
+
+### Optional private voice replies (Chatterbox beta)
+
+Open the launcher, use the search field, then choose **Chat β**. Text chat is
+ephemeral. To hear local voice replies, run `./scripts/install-chatterbox.sh`
+once and `./scripts/run-chatterbox.sh` while using Chat. The companion binds
+only to `127.0.0.1`; no prompt, transcript, or API key is sent to a service.
+
 ## Privacy
 
 All AI runs on-device (speech models, Vision OCR, Apple Translation, Foundation Models). Captures are stored locally. Official builds send anonymous usage analytics and crash reports (counts, kinds, and durations — never your content) and check a static feed for updates. The analytics keys are injected at release-build time and are not in this repo, so builds from source send no telemetry at all.

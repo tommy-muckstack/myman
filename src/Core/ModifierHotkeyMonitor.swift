@@ -3,19 +3,16 @@ import Carbon
 
 /// Bare-modifier hotkeys (hold Left ⌘ to dictate) — Carbon can't register
 /// these, so we watch flagsChanged via NSEvent monitors (needs Accessibility,
-/// which auto-paste already requires). Guards make a bare ⌘ safe:
-/// - any OTHER key pressed while held → onCancel (it was ⌘C, not dictation)
-/// - the caller treats short holds as taps and ignores them
+/// which auto-paste already requires). Other keys are intentionally ignored:
+/// holding ⌘ while pressing Return or clicking must not end dictation.
 @MainActor
 final class ModifierHotkeyMonitor {
     var onDown: (() -> Void)?
     var onUp: (() -> Void)?
-    var onCancel: (() -> Void)?
 
     private var monitors: [Any] = []
     private var watchedKeyCode: UInt32 = 0
     private var isPressed = false
-    private var cancelled = false
 
     /// Device-dependent modifier flag bits by virtual key code.
     nonisolated static func flagBit(for keyCode: UInt32) -> UInt64? {
@@ -45,20 +42,11 @@ final class ModifierHotkeyMonitor {
             let pressed = event.modifierFlags.rawValue & UInt(bit) != 0
             if pressed, !self.isPressed {
                 self.isPressed = true
-                self.cancelled = false
                 self.onDown?()
             } else if !pressed, self.isPressed {
                 self.isPressed = false
-                if !self.cancelled {
-                    self.onUp?()
-                }
+                self.onUp?()
             }
-        }
-        // Another key while held = a shortcut, never dictation.
-        let keyDownHandler: (NSEvent) -> Void = { [weak self] _ in
-            guard let self, self.isPressed, !self.cancelled else { return }
-            self.cancelled = true
-            self.onCancel?()
         }
 
         if let m = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: flagsHandler) {
@@ -68,19 +56,11 @@ final class ModifierHotkeyMonitor {
             flagsHandler(event)
             return event
         } as Any)
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: keyDownHandler) {
-            monitors.append(m)
-        }
-        monitors.append(NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            keyDownHandler(event)
-            return event
-        } as Any)
     }
 
     func stop() {
         monitors.forEach { NSEvent.removeMonitor($0) }
         monitors = []
         isPressed = false
-        cancelled = false
     }
 }

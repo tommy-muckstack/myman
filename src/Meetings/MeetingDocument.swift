@@ -46,10 +46,13 @@ final class MeetingDocumentController {
 
 struct MeetingDocumentView: View {
     let meeting: Meeting
+    @State private var title: String
     @State private var summary: String
+    @State private var slidePaths: [String]
     @State private var showTranscript = false
     @State private var isSummarizing = false
     @State private var saveTask: Task<Void, Never>?
+    @State private var titleSaveTask: Task<Void, Never>?
     @State private var saveState: SaveState = .idle
     @State private var linkCopied = false
     @Namespace private var tabNamespace
@@ -57,13 +60,15 @@ struct MeetingDocumentView: View {
 
     init(meeting: Meeting) {
         self.meeting = meeting
+        _title = State(initialValue: meeting.title)
         _summary = State(initialValue: meeting.summary)
+        _slidePaths = State(initialValue: meeting.slidePaths)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if !meeting.slidePaths.isEmpty {
+            if !slidePaths.isEmpty {
                 slideCarousel
             }
             Divider().overlay(MM.Colors.border)
@@ -95,7 +100,7 @@ struct MeetingDocumentView: View {
     private var slideCarousel: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(meeting.slidePaths, id: \.self) { path in
+                ForEach(slidePaths, id: \.self) { path in
                     if let image = NSImage(contentsOfFile: path) {
                         Image(nsImage: image)
                             .resizable()
@@ -108,6 +113,20 @@ struct MeetingDocumentView: View {
                             .onTapGesture {
                                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
                             }
+                            .overlay(alignment: .topTrailing) {
+                                Button {
+                                    removeSlide(path)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 17, weight: .semibold))
+                                        .foregroundStyle(MM.Colors.textPrimary)
+                                        .background(Circle().fill(MM.Colors.background))
+                                        .clickable(minSize: 24)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(4)
+                                .help("Remove screenshot from this meeting")
+                            }
                     }
                 }
             }
@@ -118,9 +137,13 @@ struct MeetingDocumentView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(meeting.title)
+            TextField("Untitled meeting", text: $title)
                 .font(MM.Fonts.outfit(24, .semiBold))
                 .foregroundStyle(MM.Colors.textPrimary)
+                .textFieldStyle(.plain)
+                .onChange(of: title) { _, newValue in
+                    debouncedSaveTitle(newValue)
+                }
             HStack(spacing: MM.Layout.spacing) {
                 Text(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
                     .font(MM.Fonts.secondary)
@@ -241,10 +264,42 @@ struct MeetingDocumentView: View {
                 try db.execute(sql: "UPDATE meeting SET summary = ? WHERE id = ?",
                                arguments: [text, id])
             }
-            Brain.syncMeeting(id: id, title: meeting.title,
+            Brain.syncMeeting(id: id, title: title,
                               startedAt: meeting.startedAt, endedAt: meeting.endedAt,
                               summary: text, transcript: meeting.transcript)
         }
+    }
+
+    private func debouncedSaveTitle(_ text: String) {
+        titleSaveTask?.cancel()
+        saveState = .pending
+        let id = meeting.id
+        titleSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.5))
+            guard !Task.isCancelled else { return }
+            try? await Database.shared.write { db in
+                try db.execute(sql: "UPDATE meeting SET title = ? WHERE id = ?",
+                               arguments: [text, id])
+            }
+            Brain.syncMeeting(id: id, title: text,
+                              startedAt: meeting.startedAt, endedAt: meeting.endedAt,
+                              summary: summary, transcript: meeting.transcript)
+            saveState = .saved
+        }
+    }
+
+    private func removeSlide(_ path: String) {
+        guard let index = slidePaths.firstIndex(of: path) else { return }
+        slidePaths.remove(at: index)
+        let encoded = (try? JSONEncoder().encode(slidePaths))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+        try? FileManager.default.trashItem(
+            at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        try? Database.shared.write { db in
+            try db.execute(sql: "UPDATE meeting SET slides = ? WHERE id = ?",
+                           arguments: [encoded, meeting.id])
+        }
+        Analytics.track("meeting_slide_removed")
     }
 
     private func generateSummaryIfMissing() {
@@ -261,7 +316,7 @@ struct MeetingDocumentView: View {
                 try db.execute(sql: "UPDATE meeting SET summary = ? WHERE id = ?",
                                arguments: [generated, id])
             }
-            Brain.syncMeeting(id: id, title: meeting.title,
+            Brain.syncMeeting(id: id, title: title,
                               startedAt: meeting.startedAt, endedAt: meeting.endedAt,
                               summary: generated, transcript: meeting.transcript)
         }

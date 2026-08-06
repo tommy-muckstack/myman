@@ -3,6 +3,7 @@ import SwiftUI
 
 @MainActor
 final class NotesPanelController {
+    static let shared = NotesPanelController()
     private let store = NotesStore()
     private var panel: FloatingPanel?
 
@@ -14,9 +15,9 @@ final class NotesPanelController {
         }
     }
 
-    func show(editing note: Note? = nil) {
+    func show(editing note: Note? = nil, draft: String? = nil) {
         // Rebuilt per show so an initial editing target can be injected.
-        let view = CapturePanelView(store: store, initialEditing: note, onDismiss: { [weak self] in
+        let view = CapturePanelView(store: store, initialEditing: note, initialDraft: draft, onDismiss: { [weak self] in
             self?.panel?.dismiss()
         })
         panel?.dismiss()

@@ -10,7 +10,7 @@ import Foundation
 /// meetings capture .raw (Zoom's processing is left alone, engine never
 /// restarts mid-recording); dictation gets voice processing only while no
 /// raw session is active. Always the system-default input.
-final class AudioCapture {
+final class AudioCapture: @unchecked Sendable {
     static let shared = AudioCapture()
 
     enum Mode { case voiceProcessed, raw }

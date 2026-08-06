@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         MM.Fonts.registerFonts()
         SettingsStore.shared.theme?.apply()
         Analytics.setup()
+        _ = Database.shared
         Brain.bootstrap()
         Brain.backfillScreenshots()
         // Crashed sessions can leave phantom aggregate audio devices behind.
@@ -49,10 +50,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             openScreenshot: { [weak self] url in self?.capture.openInEditor(fileURL: url) },
             saveQueryAsNote: { [weak self] text in
                 _ = self?.notesStore.save(body: text, source: "search_empty_state")
-            }
+            },
+            openChat: { BrainChatController.shared.show() }
         )
         setUpStatusItem()
         setUpHotkeys()
+        if let notice = Database.startupRecoveryNotice {
+            Toast.show(notice, systemImage: "externaldrive.badge.exclamationmark")
+        }
 
         // 45s before a linked calendar event: capture starts provisionally and
         // the Use My Man card appears (Join & Start when there's a link).
@@ -107,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         NotificationCenter.default.addObserver(
             forName: .mmCheckForUpdates, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.updater?.checkForUpdates(nil)
+            Task { @MainActor in self?.updater?.checkForUpdates(nil) }
         }
     }
 
@@ -118,6 +123,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         // reopen back-to-back — toggle turned that into open-then-close.
         launcher.open()
         return false
+    }
+
+    /// Small, local automation surface for the bundled `myman` command-line
+    /// helper. URL commands intentionally invoke the exact same controllers
+    /// as a launcher tile or hotkey; they never bypass permissions or capture
+    /// confirmation UI.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == "myman" {
+            performAutomationCommand(url.host?.lowercased() ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased())
+        }
+    }
+
+    private func performAutomationCommand(_ command: String) {
+        switch command {
+        case "open", "launcher": launcher.open()
+        case "screenshot": capture.beginRegionCapture()
+        case "note": notesPanel.show()
+        case "dictation": voice.toggle()
+        case "meeting": meetings.toggle()
+        case "cancel-meeting": meetings.discardRecording()
+        case "record": ScreenRecorder.shared.toggle()
+        case "settings": SettingsController.shared.show()
+        default:
+            NSLog("My Man: ignored unknown automation command: \(command)")
+        }
     }
 
     /// ⌘Tab / Dock activation with nothing on screen should land somewhere.
@@ -319,7 +349,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         if voiceCombo.isModifierOnly {
             modifierMonitor.onDown = { [weak self] in self?.voice.hotkeyDown() }
             modifierMonitor.onUp = { [weak self] in self?.voice.modifierHotkeyUp() }
-            modifierMonitor.onCancel = { [weak self] in self?.voice.modifierHotkeyCancelled() }
             modifierMonitor.start(keyCode: voiceCombo.keyCode)
         } else {
             let voiceResult = HotkeyCenter.shared.register(
