@@ -52,7 +52,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// Human name of the mic actually being recorded — shown on the pill so
     /// "why is my voice muffled" is answerable at a glance.
     @Published private(set) var microphoneName: String?
-    private var microphoneMeter: AnyObject?
+    private let narration = NarrationTrack()
+    private var micLevelTimer: Timer?
 
     static var isSupported: Bool {
         if #available(macOS 15.0, *) { return true }
@@ -201,17 +202,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 config.queueDepth = 8
                 config.showsCursor = true
                 config.capturesAudio = true
-                config.captureMicrophone = self.microphoneEnabled
-                // Pin the mic to the SYSTEM DEFAULT input. Left unset, SCK
-                // picks its own — on a Mac with a Continuity iPhone around,
-                // that's a phone on the desk: "super muffled and quiet."
-                // The default honors the user's Sound-settings choice.
-                if self.microphoneEnabled, let mic = Self.defaultInputDevice() {
-                    config.microphoneCaptureDeviceID = mic.uid
-                    self.microphoneName = mic.name
-                } else {
-                    self.microphoneName = nil
-                }
+                // The mic is deliberately NOT SCK's job: captureMicrophone
+                // echo-cancels the mic against system audio, leaving
+                // narration watery and quiet on every device we tried.
+                // NarrationTrack records it through our own raw pipeline
+                // and muxes it in after the stop.
+                config.captureMicrophone = false
+                self.microphoneName = self.microphoneEnabled
+                    ? (Self.defaultInputDevice()?.name ?? "Microphone") : nil
                 // NEVER force sampleRate/channelCount here: when the active
                 // output device runs at a different rate (AirPods, DACs,
                 // monitor speakers), the forced format comes out as loud
@@ -243,17 +241,19 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 AudioCapture.shared.suppressVoiceProcessing = true
 
                 let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-                let microphoneMeter = MicrophoneLevelMonitor()
-                microphoneMeter.onLevel = { [weak self] level in self?.microphoneLevel = level }
-                try stream.addStreamOutput(
-                    microphoneMeter, type: .microphone,
-                    sampleHandlerQueue: DispatchQueue(label: "com.muckstack.myman.recording-mic-meter")
-                )
                 try stream.addRecordingOutput(output)
                 try await stream.startCapture()
+                if self.microphoneEnabled {
+                    self.narration.start(alongside: url)
+                }
+                self.micLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        self.microphoneLevel = self.narration.currentLevel()
+                    }
+                }
 
                 self.stream = stream
-                self.microphoneMeter = microphoneMeter
                 self.streamConfiguration = config
                 self.recordingOutput = output
                 self.outputURL = url
@@ -300,15 +300,19 @@ final class ScreenRecorder: NSObject, ObservableObject {
         WebcamBubble.shared.turnOff()
         WebcamBubble.shared.resetPosition()
         CursorEffects.shared.hide()
-        AudioCapture.shared.suppressVoiceProcessing = false
+        micLevelTimer?.invalidate()
+        micLevelTimer = nil
         microphoneLevel = 0
         Task { @MainActor in
             try? await stream?.stopCapture()
             stream = nil
-            microphoneMeter = nil
             streamConfiguration = nil
             recordingOutput = nil
             outputURL = nil
+            // Fold the self-captured narration into the movie BEFORE the
+            // toast — "Open" must play the finished file.
+            if let url { await self.narration.finish(into: url) }
+            AudioCapture.shared.suppressVoiceProcessing = false
             isBusy = false
             Analytics.track("screen_recording_saved", ["duration_s": duration])
             guard let url else { return }
@@ -344,6 +348,13 @@ final class ScreenRecorder: NSObject, ObservableObject {
         dismissPill()
         borderPanel?.orderOut(nil)
         borderPanel = nil
+        // No recording, no effects: the trail must never run during the
+        // countdown/re-selection between takes.
+        CursorEffects.shared.hide()
+        narration.stopDiscarding()
+        micLevelTimer?.invalidate()
+        micLevelTimer = nil
+        microphoneLevel = 0
         let discardedURL = outputURL
         Task { @MainActor in
             try? await stream?.stopCapture()
@@ -468,18 +479,21 @@ final class ScreenRecorder: NSObject, ObservableObject {
             }
             self.microphoneEnabled = enabled
             UserDefaults.standard.set(enabled, forKey: "mm.screenRecordingMicrophone")
-            guard #available(macOS 15.0, *), let stream = self.stream,
-                  let configuration = self.streamConfiguration else { return }
-            configuration.captureMicrophone = enabled
-            do {
-                try await stream.updateConfiguration(configuration)
-                Analytics.track("screen_recording_microphone", ["enabled": enabled])
-            } catch {
-                // Keep the UI honest if macOS rejects a live reconfiguration.
-                self.microphoneEnabled.toggle()
-                UserDefaults.standard.set(self.microphoneEnabled, forKey: "mm.screenRecordingMicrophone")
-                Toast.show("Couldn't change microphone during this recording", systemImage: "mic.slash")
+            guard self.isRecording, let url = self.outputURL else { return }
+            if enabled {
+                self.microphoneName = Self.defaultInputDevice()?.name ?? "Microphone"
+                if self.narration.isActive {
+                    self.narration.setMuted(false)
+                } else if let started = self.startedAt {
+                    // Switched on mid-take: the track muxes in at the
+                    // elapsed offset so timing stays true.
+                    self.narration.start(alongside: url, videoStartedAt: started)
+                }
+            } else {
+                self.microphoneName = nil
+                self.narration.setMuted(true)
             }
+            Analytics.track("screen_recording_microphone", ["enabled": enabled])
         }
     }
 
