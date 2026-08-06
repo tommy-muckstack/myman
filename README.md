@@ -68,7 +68,7 @@ ln -sf /Applications/My\ Man.app/Contents/Resources/myman ~/.local/bin/myman
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
-Then call `myman screenshot`, `myman note`, `myman dictation`, `myman meeting`, `myman cancel-meeting`, `myman record`, `myman settings`, or `myman open`. The app must have the normal Screen Recording, Microphone, and Accessibility permissions; this makes capture flows testable while retaining the same on-screen confirmation a person receives.
+Then call `myman screenshot`, `myman note`, `myman dictation`, `myman chat`, `myman meeting`, `myman cancel-meeting`, `myman record`, `myman settings`, or `myman open`. The app must have the normal Screen Recording, Microphone, and Accessibility permissions; this makes capture flows testable while retaining the same on-screen confirmation a person receives.
 
 ## Privacy
 
