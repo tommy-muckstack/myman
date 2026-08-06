@@ -78,6 +78,17 @@ final class Qwen3Engine {
                 NSLog("My Man [Qwen3] discarded CJK-dominant hallucination")
                 return ""
             }
+            // Qwen occasionally emits its own task-like boilerplate during
+            // silence or a bad audio frame. It is not spoken text and must
+            // never be pasted into the focused app.
+            let normalized = text.lowercased()
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .joined(separator: " ")
+            if normalized.contains("agnis the opera to english text")
+                || normalized.contains("agnus the opera to english text") {
+                NSLog("My Man [Qwen3] discarded English-task hallucination")
+                return ""
+            }
             return text
         } catch {
             NSLog("My Man [Qwen3] transcription failed: \(error)")
