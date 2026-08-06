@@ -77,6 +77,14 @@ ephemeral. To hear local voice replies, run `./scripts/install-chatterbox.sh`
 once and `./scripts/run-chatterbox.sh` while using Chat. The companion binds
 only to `127.0.0.1`; no prompt, transcript, or API key is sent to a service.
 
+### Release diagnostics
+
+`scripts/build-direct.sh` uploads dSYMs for My Man and bundled Sparkle helpers
+to Sentry when `MM_SENTRY_AUTH_TOKEN` is set in gitignored `secrets.env` (or
+`SENTRY_AUTH_TOKEN` is provided in CI). Create a Sentry internal integration
+token with `org:read` and `project:releases` scopes. Symbol-upload failures do
+not block signing or publishing a release.
+
 ## Privacy
 
 All AI runs on-device (speech models, Vision OCR, Apple Translation, Foundation Models). Captures are stored locally. Official builds send anonymous usage analytics and crash reports (counts, kinds, and durations — never your content) and check a static feed for updates. The analytics keys are injected at release-build time and are not in this repo, so builds from source send no telemetry at all.
