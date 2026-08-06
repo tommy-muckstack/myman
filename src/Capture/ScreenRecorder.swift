@@ -38,6 +38,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private var recordingOutput: Any? // SCRecordingOutput, typed loosely for the 14.x floor
     private var outputURL: URL?
     private var pill: FloatingPanel?
+    private var streamConfiguration: SCStreamConfiguration?
+    /// System audio stays on; microphone capture is opt-in. Combining both
+    /// tracks has produced unusable noise on some macOS audio devices.
+    @Published private(set) var microphoneEnabled =
+        UserDefaults.standard.object(forKey: "mm.screenRecordingMicrophone") as? Bool ?? false
 
     static var isSupported: Bool {
         if #available(macOS 15.0, *) { return true }
@@ -70,6 +75,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// live INSIDE it, or it films the void.
     private(set) var activeRegion: CGRect?
     private var confirmPanel: FloatingPanel?
+    private var countdownPanel: FloatingPanel?
     private var borderPanel: NSPanel?
 
     private func beginRegionSelection() {
@@ -148,7 +154,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
                 config.showsCursor = true
                 config.capturesAudio = true
-                config.captureMicrophone = true
+                config.captureMicrophone = self.microphoneEnabled
+                config.sampleRate = 48_000
+                config.channelCount = 2
                 config.excludesCurrentProcessAudio = true
 
                 let formatter = DateFormatter()
@@ -168,6 +176,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 try await stream.startCapture()
 
                 self.stream = stream
+                self.streamConfiguration = config
                 self.recordingOutput = output
                 self.outputURL = url
                 self.startedAt = Date()
@@ -209,6 +218,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         Task { @MainActor in
             try? await stream?.stopCapture()
             stream = nil
+            streamConfiguration = nil
             recordingOutput = nil
             outputURL = nil
             isBusy = false
@@ -228,6 +238,30 @@ final class ScreenRecorder: NSObject, ObservableObject {
                            NSPasteboard.general.clearContents()
                            NSPasteboard.general.writeObjects([url as NSURL])
                        })
+        }
+    }
+
+    /// Throw away the current movie and return to selection. Unlike Stop this
+    /// never writes a database row, transcript, or Brain entry.
+    func restart() {
+        guard isRecording else { return }
+        isRecording = false
+        dismissPill()
+        borderPanel?.orderOut(nil)
+        borderPanel = nil
+        activeRegion = nil
+        WebcamBubble.shared.preferredRegion = nil
+        WebcamBubble.shared.turnOff()
+        let discardedURL = outputURL
+        Task { @MainActor in
+            try? await stream?.stopCapture()
+            stream = nil
+            streamConfiguration = nil
+            recordingOutput = nil
+            outputURL = nil
+            if let discardedURL { try? FileManager.default.removeItem(at: discardedURL) }
+            isBusy = false
+            beginRegionSelection()
         }
     }
 
@@ -307,7 +341,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         let panel = FloatingPanel(content: RecordingPillView(recorder: self), becomesKey: false, fixedSize: true)
         panel.onDismiss = { [weak self] in self?.pill = nil }
         pill = panel
-        let size = CGSize(width: 200, height: 40)
+        let size = CGSize(width: 320, height: 40)
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
         // Below where the meeting pill lives, so both can show.
@@ -322,6 +356,26 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private func dismissPill() {
         pill?.orderOut(nil)
         pill = nil
+    }
+
+    func toggleMicrophone() {
+        let enabled = !microphoneEnabled
+        microphoneEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "mm.screenRecordingMicrophone")
+        guard #available(macOS 15.0, *) else { return }
+        guard let stream, let configuration = streamConfiguration else { return }
+        configuration.captureMicrophone = enabled
+        Task { @MainActor in
+            do {
+                try await stream.updateConfiguration(configuration)
+                Analytics.track("screen_recording_microphone", ["enabled": enabled])
+            } catch {
+                // Keep the UI honest if macOS rejects a live reconfiguration.
+                self.microphoneEnabled.toggle()
+                UserDefaults.standard.set(self.microphoneEnabled, forKey: "mm.screenRecordingMicrophone")
+                Toast.show("Couldn't change microphone during this recording", systemImage: "mic.slash")
+            }
+        }
     }
 }
 
@@ -380,11 +434,14 @@ extension ScreenRecorder: SelectionOverlayDelegate {
     private func showConfirm(for region: CGRect) {
         let view = RecordConfirmView(
             onRecord: { [weak self] in self?.confirmRecord() },
-            onCancel: { [weak self] in self?.cancelPending() })
+            onCancel: { [weak self] in self?.cancelPending() },
+            microphoneEnabled: microphoneEnabled,
+            onToggleMicrophone: { [weak self] in self?.toggleMicrophone() },
+            onToggleCamera: { WebcamBubble.shared.toggle() })
         let panel = FloatingPanel(content: view, becomesKey: false, fixedSize: true)
         panel.onDismiss = { [weak self] in self?.confirmPanel = nil }
         confirmPanel = panel
-        let size = CGSize(width: 190, height: 44)
+        let size = CGSize(width: 262, height: 44)
         let screen = NSScreen.main?.visibleFrame ?? .zero
         var x = region.midX - size.width / 2
         x = max(screen.minX + 8, min(x, screen.maxX - size.width - 8))
@@ -397,10 +454,35 @@ extension ScreenRecorder: SelectionOverlayDelegate {
 
     private func confirmRecord() {
         guard #available(macOS 15.0, *), let region = pendingRegion else { return }
-        pendingRegion = nil
         confirmPanel?.orderOut(nil)
         confirmPanel = nil
-        // The border stays up — it IS the "this is what's recording" chrome.
+        showCountdown(for: region)
+    }
+
+    private func showCountdown(for region: CGRect) {
+        let view = RecordCountdownView(
+            onFinished: { [weak self] in self?.startAfterCountdown(region) },
+            onCancel: { [weak self] in self?.cancelPending() })
+        let panel = FloatingPanel(content: view, becomesKey: false, fixedSize: true)
+        panel.onDismiss = { [weak self] in self?.countdownPanel = nil }
+        countdownPanel = panel
+        let size = CGSize(width: 262, height: 44)
+        let screen = NSScreen.main?.visibleFrame ?? .zero
+        var x = region.midX - size.width / 2
+        x = max(screen.minX + 8, min(x, screen.maxX - size.width - 8))
+        var y = region.minY - size.height - 10
+        if y < screen.minY + 8 { y = region.maxY + 10 }
+        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        panel.orderFrontRegardless()
+    }
+
+    private func startAfterCountdown(_ region: CGRect) {
+        guard #available(macOS 15.0, *) else { return }
+        guard pendingRegion != nil else { return }
+        pendingRegion = nil
+        countdownPanel?.orderOut(nil)
+        countdownPanel = nil
+        // The border stays up — it is the "this is what's recording" chrome.
         start(regionAppKit: region)
     }
 
@@ -408,6 +490,8 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         pendingRegion = nil
         confirmPanel?.orderOut(nil)
         confirmPanel = nil
+        countdownPanel?.orderOut(nil)
+        countdownPanel = nil
         borderPanel?.orderOut(nil)
         borderPanel = nil
         WebcamBubble.shared.preferredRegion = nil
@@ -486,16 +570,7 @@ final class WebcamBubble: ObservableObject {
         let diameter: CGFloat = region.map {
             max(80, min(180, min($0.width, $0.height) * 0.35))
         } ?? 180
-        let layer = AVCaptureVideoPreviewLayer(session: session)
-        layer.videoGravity = .resizeAspectFill
-
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: diameter, height: diameter))
-        view.wantsLayer = true
-        layer.frame = view.bounds
-        layer.cornerRadius = diameter / 2
-        layer.masksToBounds = true
-        layer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
-        view.layer?.addSublayer(layer)
+        let view = WebcamBubbleView(diameter: diameter, session: session)
 
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: diameter, height: diameter),
@@ -523,6 +598,7 @@ final class WebcamBubble: ObservableObject {
                 display: true)
         }
         panel.orderFrontRegardless()
+        view.playEntrance()
 
         self.panel = panel
         let runner = CaptureSessionRunner(session: session)
@@ -539,6 +615,69 @@ final class WebcamBubble: ObservableObject {
         sessionRunner = nil
         panel?.orderOut(nil)
         panel = nil
+    }
+}
+
+/// A recognizable, camera-first signature for My Man recordings. The shape is
+/// a soft square rather than a generic circular webcam crop, with a tiny live
+/// mark that stays legible when the video is shared at small sizes.
+private final class WebcamBubbleView: NSView {
+    private let previewLayer: AVCaptureVideoPreviewLayer
+
+    init(diameter: CGFloat, session: AVCaptureSession) {
+        previewLayer = AVCaptureVideoPreviewLayer(session: session)
+        super.init(frame: NSRect(x: 0, y: 0, width: diameter, height: diameter))
+        wantsLayer = true
+        guard let layer else { return }
+        let radius = diameter * 0.27
+        layer.cornerRadius = radius
+        layer.masksToBounds = true
+        layer.backgroundColor = NSColor.black.cgColor
+        layer.borderWidth = 2
+        layer.borderColor = NSColor.white.withAlphaComponent(0.88).cgColor
+
+        previewLayer.videoGravity = .resizeAspectFill
+        previewLayer.frame = bounds.insetBy(dx: 3, dy: 3)
+        previewLayer.cornerRadius = max(0, radius - 3)
+        previewLayer.masksToBounds = true
+        layer.addSublayer(previewLayer)
+
+        let badgeSize = max(28, diameter * 0.22)
+        let badge = CALayer()
+        badge.frame = CGRect(x: 9, y: diameter - badgeSize - 9,
+                             width: badgeSize, height: badgeSize)
+        badge.cornerRadius = badgeSize / 2
+        badge.backgroundColor = NSColor.black.withAlphaComponent(0.64).cgColor
+        badge.borderWidth = 1
+        badge.borderColor = NSColor.white.withAlphaComponent(0.48).cgColor
+        let dot = CALayer()
+        dot.frame = CGRect(x: (badgeSize - 8) / 2, y: (badgeSize - 8) / 2,
+                           width: 8, height: 8)
+        dot.cornerRadius = 4
+        dot.backgroundColor = NSColor.systemRed.cgColor
+        badge.addSublayer(dot)
+        layer.addSublayer(badge)
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = 0.32
+        layer.shadowRadius = 14
+        layer.shadowOffset = CGSize(width: 0, height: -4)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func playEntrance() {
+        guard let layer else { return }
+        let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+        scale.values = [0.72, 1.06, 0.98, 1.0]
+        scale.keyTimes = [0, 0.58, 0.82, 1]
+        scale.duration = 0.42
+        scale.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        fade.duration = 0.2
+        layer.add(scale, forKey: "myman.camera-bloom")
+        layer.add(fade, forKey: "myman.camera-fade")
     }
 }
 
@@ -569,6 +708,10 @@ private final class RegionBorderView: NSView {
 private struct RecordConfirmView: View {
     var onRecord: () -> Void
     var onCancel: () -> Void
+    var microphoneEnabled: Bool
+    var onToggleMicrophone: () -> Void
+    var onToggleCamera: () -> Void
+    @ObservedObject private var webcam = WebcamBubble.shared
 
     var body: some View {
         HStack(spacing: 10) {
@@ -586,18 +729,69 @@ private struct RecordConfirmView: View {
                 .clickable(minSize: 28)
             }
             .buttonStyle(.plain)
+            Button(action: onToggleCamera) {
+                IconView(icon: webcam.isOn ? .camera : .cameraOff, size: 14,
+                         color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                    .clickable(minSize: 32)
+            }
+            .buttonStyle(.plain)
+            .help(webcam.isOn ? "Camera on — click to hide" : "Camera off — click to show")
+            Button(action: onToggleMicrophone) {
+                Image(systemName: microphoneEnabled ? "mic.fill" : "mic.slash")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(microphoneEnabled ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                    .clickable(minSize: 32)
+            }
+            .buttonStyle(.plain)
+            .help(microphoneEnabled ? "Microphone on — click to mute" : "Microphone off — click to include your voice")
             IconView(icon: .close, size: 13, color: MM.Colors.textTertiary)
                 .clickable(minSize: 32)
                 .onTapGesture(perform: onCancel)
                 .help("Cancel")
         }
         .padding(.horizontal, 12)
-        .frame(width: 190, height: 44)
+        .frame(width: 262, height: 44)
         .background(
             Capsule()
                 .fill(MM.Colors.background)
                 .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
         )
+    }
+}
+
+private struct RecordCountdownView: View {
+    var onFinished: () -> Void
+    var onCancel: () -> Void
+    @State private var count = 3
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Recording in")
+                .font(MM.Fonts.secondary)
+                .foregroundStyle(MM.Colors.textSecondary)
+            Text("\(count)")
+                .font(MM.Fonts.outfit(22, .bold))
+                .foregroundStyle(MM.Colors.textPrimary)
+                .contentTransition(.numericText())
+                .frame(width: 28)
+            Spacer()
+            IconView(icon: .close, size: 13, color: MM.Colors.textTertiary)
+                .clickable(minSize: 32)
+                .onTapGesture(perform: onCancel)
+                .help("Cancel recording")
+        }
+        .padding(.horizontal, 14)
+        .frame(width: 262, height: 44)
+        .background(Capsule().fill(MM.Colors.background)
+            .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1)))
+        .task {
+            for next in [2, 1] {
+                guard (try? await Task.sleep(for: .seconds(1))) != nil else { return }
+                withAnimation(MM.Motion.elastic) { count = next }
+            }
+            guard (try? await Task.sleep(for: .seconds(1))) != nil else { return }
+            onFinished()
+        }
     }
 }
 
@@ -619,6 +813,14 @@ private struct RecordingPillView: View {
                 .clickable(minSize: 24)
                 .onTapGesture { webcam.toggle() }
                 .help(webcam.isOn ? "Turn webcam bubble off" : "Turn webcam bubble on")
+            Button(action: { recorder.toggleMicrophone() }) {
+                Image(systemName: recorder.microphoneEnabled ? "mic.fill" : "mic.slash")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(recorder.microphoneEnabled ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                    .clickable(minSize: 32)
+            }
+            .buttonStyle(.plain)
+            .help(recorder.microphoneEnabled ? "Mute microphone" : "Include microphone")
             Button {
                 recorder.stop()
             } label: {
@@ -632,6 +834,14 @@ private struct RecordingPillView: View {
                     .clickable(minSize: 24)
             }
             .buttonStyle(.plain)
+            Button("Restart") {
+                recorder.restart()
+            }
+            .buttonStyle(.plain)
+            .font(MM.Fonts.secondary)
+            .foregroundStyle(MM.Colors.textSecondary)
+            .clickable(minSize: 48)
+            .help("Discard this take and record again")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -640,7 +850,7 @@ private struct RecordingPillView: View {
                 .fill(MM.Colors.background)
                 .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
         )
-        .frame(width: 200, height: 40)
+        .frame(width: 320, height: 40)
         .onReceive(clock) { now = $0 }
     }
 
