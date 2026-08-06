@@ -125,14 +125,22 @@ final class MeetingController: ObservableObject {
         provisionalTimeout?.invalidate()
         provisionalTimeout = nil
         try? Database.shared.write { try meeting.insert($0) }
-        People.noteAttendees(pendingAttendees)
-        pendingAttendees = []
         Analytics.track("meeting_started", ["has_system_audio": tap.isRunning,
                                             "from_detection": true])
     }
 
     func discardProvisional() {
         guard isProvisional else { return }
+        discardRecording()
+    }
+
+    /// Cancel an in-flight take without transcribing or retaining any audio.
+    /// Auto-recorded detections are committed immediately, so this must work
+    /// for both provisional and already-saved meeting rows.
+    func discardRecording() {
+        guard case .recording = phase else { return }
+        let wasProvisional = isProvisional
+        let discardedMeeting = meeting
         isProvisional = false
         provisionalJoinURL = nil
         endWatchTimer?.invalidate()
@@ -157,10 +165,16 @@ final class MeetingController: ObservableObject {
         systemWriter = nil
         micWriter = nil
         meeting = nil
+        pendingAttendees = []
+        if !wasProvisional, let discardedMeeting {
+            try? Database.shared.write { _ = try Meeting.deleteOne($0, key: discardedMeeting.id) }
+            Brain.deleteMeeting(id: discardedMeeting.id, startedAt: discardedMeeting.startedAt)
+        }
         resumeMusicIfPaused()
         dismissPill()
         phase = .idle
-        Analytics.track("meeting_discarded")
+        Analytics.track("meeting_discarded", ["provisional": wasProvisional])
+        Toast.show("Recording cancelled — nothing was saved", systemImage: "xmark.circle")
     }
 
     private func start(provisional: Bool = false) {
@@ -235,8 +249,6 @@ final class MeetingController: ObservableObject {
             try? Database.shared.write { [meeting] in
                 if let meeting { try meeting.insert($0) }
             }
-            People.noteAttendees(pendingAttendees)
-            pendingAttendees = []
             Analytics.track("meeting_started", ["has_system_audio": tap.isRunning])
         }
         phase = .recording(start: started)
@@ -458,8 +470,11 @@ final class MeetingController: ObservableObject {
                 if let path = record.systemAudioPath {
                     try? FileManager.default.removeItem(atPath: path)
                 }
+                self.pendingAttendees = []
             } else {
                 try? await Database.shared.write { [record] in try record.update($0) }
+                People.noteAttendees(self.pendingAttendees)
+                self.pendingAttendees = []
                 Brain.syncMeeting(id: record.id, title: record.title,
                                   startedAt: record.startedAt, endedAt: record.endedAt,
                                   summary: record.summary, transcript: record.transcript)
@@ -782,7 +797,7 @@ final class MeetingController: ObservableObject {
         // Height covers header + waveform + action row + text-only Cancel.
         if provisional { return CGSize(width: 320, height: 186) }
         if transcribing { return CGSize(width: 216, height: 40) }
-        return CGSize(width: 248, height: 40)
+        return CGSize(width: 248, height: 76)
     }
 
     func applyPillFrame() {
@@ -880,6 +895,10 @@ struct MeetingPillView: View {
         return MeetingController.pillSize(provisional: controller.isProvisional,
                                           transcribing: transcribing)
     }
+    private var isRecording: Bool {
+        if case .recording = controller.phase { return true }
+        return false
+    }
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -894,7 +913,7 @@ struct MeetingPillView: View {
         }
         .background(
             Group {
-                if controller.isProvisional {
+                if controller.isProvisional || isRecording {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(MM.Colors.background)
                         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -1010,7 +1029,8 @@ struct MeetingPillView: View {
     }
 
     private var pillRow: some View {
-        HStack(spacing: 10) {
+        VStack(spacing: 5) {
+            HStack(spacing: 10) {
             switch controller.phase {
             case .idle:
                 EmptyView()
@@ -1035,6 +1055,20 @@ struct MeetingPillView: View {
                 Text("Transcribing meeting…")
                     .font(MM.Fonts.secondary)
                     .foregroundStyle(MM.Colors.textSecondary)
+            }
+            }
+            if isRecording {
+                Button {
+                    controller.discardRecording()
+                } label: {
+                    Text("Cancel")
+                        .font(MM.Fonts.secondary)
+                        .foregroundStyle(MM.Colors.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .clickable(minSize: 24)
+                }
+                .buttonStyle(.plain)
+                .help("Discard this recording without saving or transcribing")
             }
         }
     }

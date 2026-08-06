@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         MM.Fonts.registerFonts()
         SettingsStore.shared.theme?.apply()
         Analytics.setup()
+        _ = Database.shared
         Brain.bootstrap()
         Brain.backfillScreenshots()
         // Crashed sessions can leave phantom aggregate audio devices behind.
@@ -53,6 +54,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         )
         setUpStatusItem()
         setUpHotkeys()
+        if let notice = Database.startupRecoveryNotice {
+            Toast.show(notice, systemImage: "externaldrive.badge.exclamationmark")
+        }
 
         // 45s before a linked calendar event: capture starts provisionally and
         // the Use My Man card appears (Join & Start when there's a link).
@@ -107,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         NotificationCenter.default.addObserver(
             forName: .mmCheckForUpdates, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.updater?.checkForUpdates(nil)
+            Task { @MainActor in self?.updater?.checkForUpdates(nil) }
         }
     }
 

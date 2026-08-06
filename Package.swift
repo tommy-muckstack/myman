@@ -27,5 +27,10 @@ let package = Package(
                 .copy("Resources/Fonts"),
             ]
         ),
+        .testTarget(
+            name: "MyManTests",
+            dependencies: ["MyMan"],
+            path: "Tests/MyManTests"
+        ),
     ]
 )

@@ -12,5 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Debug build
         run: swift build
+      - name: Tests
+        run: swift test
       - name: Universal release build
         run: swift build -c release --arch arm64 --arch x86_64

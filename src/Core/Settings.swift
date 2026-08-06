@@ -82,7 +82,6 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
     }
 }
 
-@MainActor
 enum AppTheme: String, CaseIterable, Identifiable {
     case light, dark
     var id: String { rawValue }
