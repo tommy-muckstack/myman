@@ -180,6 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             var capturing = false
             if case .idle = self.voice.phase {} else { capturing = true }
             if case .idle = self.meetings.phase {} else { capturing = true }
+            // A restart mid-transcription is recoverable at next launch, but
+            // never worth it — the background queue counts as busy too.
+            if self.meetings.isTranscribing { capturing = true }
             if ScreenRecorder.shared.isRecording { capturing = true }
             return capturing
         }
