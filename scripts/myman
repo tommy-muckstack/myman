@@ -1,0 +1,16 @@
+#!/bin/bash
+# Drive the installed My Man app from a shell, test runner, or coding agent.
+# Commands open the app if needed and use its local `myman://` URL interface.
+set -euo pipefail
+
+usage() {
+    echo "Usage: myman {open|screenshot|note|dictation|meeting|cancel-meeting|record|settings}" >&2
+    exit 64
+}
+
+case "${1:-}" in
+    open|screenshot|note|dictation|meeting|cancel-meeting|record|settings) ;;
+    *) usage ;;
+esac
+
+open -g "myman://$1"

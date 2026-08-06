@@ -84,15 +84,6 @@ final class VoiceController: ObservableObject {
         }
     }
 
-    /// Another key was pressed while the modifier was held (⌘C etc.) —
-    /// that was a shortcut, not dictation.
-    func modifierHotkeyCancelled() {
-        hotkeyHeld = false
-        if case .recording = phase {
-            dismiss()
-        }
-    }
-
     func hotkeyUp() {
         hotkeyHeld = false
         guard case .recording = phase,
@@ -318,7 +309,8 @@ final class VoiceController: ObservableObject {
                 phase = .idle
                 return
             }
-            let text = await DictationCleanup.clean(rawText, targetBundleID: targetApp?.bundleIdentifier)
+            let text = await DictationCleanup.clean(rawText, tone: SettingsStore.shared.dictationTone,
+                                                    targetBundleID: targetApp?.bundleIdentifier)
             pasteText(text)
             // History, not a note: dictations are throwaway-but-recoverable.
             try? await Database.shared.write { db in

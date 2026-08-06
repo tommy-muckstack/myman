@@ -18,6 +18,8 @@ mkdir -p "$APP_DIR/Contents/"{MacOS,Frameworks,Resources}
 
 cp "$BUILD_DIR/MyMan" "$APP_DIR/Contents/MacOS/"
 cp assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp scripts/myman "$APP_DIR/Contents/Resources/myman"
+chmod +x "$APP_DIR/Contents/Resources/myman"
 [ -d "$BUILD_DIR/MyMan_MyMan.bundle" ] && cp -R "$BUILD_DIR/MyMan_MyMan.bundle" "$APP_DIR/Contents/Resources/"
 
 # ALL dynamic frameworks from SPM artifacts (Sparkle, AmplitudeCore, …) —
@@ -48,6 +50,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>MMChannel</key><string>dev</string>
     <key>LSMinimumSystemVersion</key><string>14.2</string>
     <key>LSUIElement</key><false/>
+    <key>CFBundleURLTypes</key>
+    <array><dict>
+        <key>CFBundleURLName</key><string>com.muckstack.myman.command</string>
+        <key>CFBundleURLSchemes</key><array><string>myman</string></array>
+    </dict></array>
     <key>NSMicrophoneUsageDescription</key>
     <string>My Man records your voice for dictation and your side of meetings.</string>
     <key>NSAudioCaptureUsageDescription</key>

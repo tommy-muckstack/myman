@@ -124,6 +124,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         return false
     }
 
+    /// Small, local automation surface for the bundled `myman` command-line
+    /// helper. URL commands intentionally invoke the exact same controllers
+    /// as a launcher tile or hotkey; they never bypass permissions or capture
+    /// confirmation UI.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == "myman" {
+            performAutomationCommand(url.host?.lowercased() ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased())
+        }
+    }
+
+    private func performAutomationCommand(_ command: String) {
+        switch command {
+        case "open", "launcher": launcher.open()
+        case "screenshot": capture.beginRegionCapture()
+        case "note": notesPanel.show()
+        case "dictation": voice.toggle()
+        case "meeting": meetings.toggle()
+        case "cancel-meeting": meetings.discardRecording()
+        case "record": ScreenRecorder.shared.toggle()
+        case "settings": SettingsController.shared.show()
+        default:
+            NSLog("My Man: ignored unknown automation command: \(command)")
+        }
+    }
+
     /// ⌘Tab / Dock activation with nothing on screen should land somewhere.
     /// Panels are non-activating, so this only fires on deliberate switches —
     /// plus once at launch, which the grace period swallows.
@@ -323,7 +348,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         if voiceCombo.isModifierOnly {
             modifierMonitor.onDown = { [weak self] in self?.voice.hotkeyDown() }
             modifierMonitor.onUp = { [weak self] in self?.voice.modifierHotkeyUp() }
-            modifierMonitor.onCancel = { [weak self] in self?.voice.modifierHotkeyCancelled() }
             modifierMonitor.start(keyCode: voiceCombo.keyCode)
         } else {
             let voiceResult = HotkeyCenter.shared.register(

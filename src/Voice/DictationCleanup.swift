@@ -3,6 +3,28 @@ import Foundation
 import FoundationModels
 #endif
 
+enum DictationTone: String, CaseIterable, Identifiable {
+    case casual, neutral, professional, verbatim
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var detail: String {
+        switch self {
+        case .casual: "Relaxed, lowercase, light punctuation"
+        case .neutral: "Clear sentence case and normal punctuation"
+        case .professional: "Polished and formal"
+        case .verbatim: "Preserve wording; only remove obvious fillers"
+        }
+    }
+    var promptRules: String {
+        switch self {
+        case .casual: "Use lowercase; keep punctuation light; no emoji unless spoken."
+        case .neutral: "Use sentence case and normal punctuation; no emoji unless spoken."
+        case .professional: "Use polished sentence case, full punctuation, and a professional register."
+        case .verbatim: "Preserve the speaker's wording and casing; only remove clear vocal fillers."
+        }
+    }
+}
+
 /// The Wispr-Flow-style polish pass: raw ASR text in, clean writing out.
 /// Removes fillers, applies self-corrections ("no wait, Tuesday"), fixes
 /// punctuation and capitalization. On-device (macOS 26+); below that, raw
@@ -35,6 +57,28 @@ enum DictationCleanup {
         let known = Set(terms.map { $0.lowercased() })
         terms += People.vocabularyTerms().filter { !known.contains($0.lowercased()) }
         return terms
+    }
+
+    static func userVocabulary() -> [String] {
+        let url = Brain.root.appendingPathComponent("vocabulary.md")
+        _ = vocabulary() // creates the seed file if needed
+        let content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        return content.split(separator: "\n").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
+    }
+
+    static func setUserVocabulary(_ terms: [String]) {
+        let unique = terms.map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .reduce(into: [String]()) { result, term in
+                if !result.contains(where: { $0.caseInsensitiveCompare(term) == .orderedSame }) {
+                    result.append(term)
+                }
+            }
+        let content = "# Vocabulary\n" + unique.prefix(150).joined(separator: "\n") + "\n"
+        try? content.write(to: Brain.root.appendingPathComponent("vocabulary.md"),
+                           atomically: true, encoding: .utf8)
     }
 
     /// Learn distinctive terms from text the user TYPED (ground-truth
@@ -291,7 +335,8 @@ enum DictationCleanup {
             .trimmingCharacters(in: .whitespaces)
     }
 
-    static func clean(_ raw: String, targetBundleID: String? = nil) async -> String {
+    static func clean(_ raw: String, tone: DictationTone = .neutral,
+                      targetBundleID: String? = nil) async -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > 12 else { return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(applyVocabulary(trimmed, terms: vocabulary()))))) }
         // Long transcripts degrade the 3B model — it starts rewriting numbers
@@ -319,6 +364,7 @@ enum DictationCleanup {
             4. NEVER add, remove, or rephrase actual content. Keep the \
             speaker's words and tone. Output ONLY the cleaned text — no \
             preamble, no quotes.
+            5. Output style: \(tone.promptRules)
             """)
         do {
             // Delimited so the model can never mistake the transcript for a

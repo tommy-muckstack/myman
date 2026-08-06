@@ -117,6 +117,8 @@ if [[ -d "$BUNDLE_DIR" ]]; then
 fi
 
 cp assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp scripts/myman "$APP_DIR/Contents/Resources/myman"
+chmod +x "$APP_DIR/Contents/Resources/myman"
 
 # Info.plist — keep the usage strings in lockstep with scripts/run-dev.sh;
 # TCC grants key off the signing identity + these strings.
@@ -135,6 +137,11 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <key>MMChannel</key><string>release</string>
     <key>LSMinimumSystemVersion</key><string>14.2</string>
     <key>LSUIElement</key><false/>
+    <key>CFBundleURLTypes</key>
+    <array><dict>
+        <key>CFBundleURLName</key><string>com.muckstack.myman.command</string>
+        <key>CFBundleURLSchemes</key><array><string>myman</string></array>
+    </dict></array>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 MuckStack, LLC. All rights reserved.</string>

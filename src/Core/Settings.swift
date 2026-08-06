@@ -119,6 +119,9 @@ final class SettingsStore: ObservableObject {
     @Published var autoRecordMeetings: Bool {
         didSet { UserDefaults.standard.set(autoRecordMeetings, forKey: "autoRecordMeetings") }
     }
+    @Published var dictationTone: DictationTone {
+        didSet { UserDefaults.standard.set(dictationTone.rawValue, forKey: "dictationTone") }
+    }
     /// nil = never chosen: follow the system live. Set once, it sticks.
     @Published var theme: AppTheme? {
         didSet {
@@ -138,6 +141,7 @@ final class SettingsStore: ObservableObject {
             hotkeys = [:]
         }
         autoRecordMeetings = UserDefaults.standard.bool(forKey: "autoRecordMeetings")
+        dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
         theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "")
         screenshotFolderPath = UserDefaults.standard.string(forKey: "screenshotFolder")
             ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
@@ -193,6 +197,7 @@ struct SettingsPanelView: View {
     @ObservedObject var store = SettingsStore.shared
     var onDismiss: () -> Void
     @State private var recordingAction: HotkeyAction?
+    @State private var vocabularyText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -207,6 +212,38 @@ struct SettingsPanelView: View {
             }
             .padding(.horizontal, MM.Layout.paddingLarge)
             .padding(.vertical, MM.Layout.padding)
+
+            Divider().overlay(MM.Colors.border)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Dictation")
+                    .font(MM.Fonts.secondary)
+                    .foregroundStyle(MM.Colors.textTertiary)
+                Picker("Style", selection: $store.dictationTone) {
+                    ForEach(DictationTone.allCases) { tone in
+                        Text(tone.label).tag(tone)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                Text(store.dictationTone.detail)
+                    .font(MM.Fonts.metadata)
+                    .foregroundStyle(MM.Colors.textSecondary)
+                TextEditor(text: $vocabularyText)
+                    .font(MM.Fonts.secondary)
+                    .frame(height: 72)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(MM.Colors.surface))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MM.Colors.border, lineWidth: 1))
+                    .onChange(of: vocabularyText) { _, text in
+                        DictationCleanup.setUserVocabulary(text.components(separatedBy: .newlines))
+                    }
+                Text("Personal vocabulary — one name, product, or term per line.")
+                    .font(MM.Fonts.metadata)
+                    .foregroundStyle(MM.Colors.textTertiary)
+            }
+            .padding(MM.Layout.paddingLarge)
 
             Divider().overlay(MM.Colors.border)
 
@@ -346,6 +383,7 @@ struct SettingsPanelView: View {
                 recordingAction = nil
             }
         })
+        .onAppear { vocabularyText = DictationCleanup.userVocabulary().joined(separator: "\n") }
     }
 
     private func hotkeyRow(_ action: HotkeyAction) -> some View {

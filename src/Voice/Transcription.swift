@@ -24,7 +24,9 @@ enum SttEngineKind: String, CaseIterable, Identifiable {
     var isAvailable: Bool {
         switch self {
         case .apple:
+            #if compiler(>=6.2)
             if #available(macOS 26.0, *) { return true }
+            #endif
             return false
         case .qwen3:
             if #available(macOS 15.0, *) { return true }
@@ -117,6 +119,9 @@ final class ParakeetEngine {
     }
 }
 
+#if compiler(>=6.2)
+// SpeechAnalyzer is introduced by the macOS 26 SDK. Availability alone is
+// insufficient here: an older SDK cannot even type-check these symbols.
 @available(macOS 26.0, *)
 final class AppleSpeechEngine {
     private(set) var isReady = false
@@ -205,6 +210,7 @@ final class AppleSpeechEngine {
         return outBuffer
     }
 }
+#endif
 
 /// Engine facade — only the active engine loads, so users never download
 /// models they don't use. Shared by dictation and meeting transcription.
@@ -224,6 +230,7 @@ final class TranscriptionService {
         return engine
     }
 
+    #if compiler(>=6.2)
     @available(macOS 26.0, *)
     private var apple: AppleSpeechEngine {
         if let engine = appleEngine as? AppleSpeechEngine { return engine }
@@ -231,6 +238,7 @@ final class TranscriptionService {
         appleEngine = engine
         return engine
     }
+    #endif
 
     /// True once the accuracy engine is actually loaded — only then does
     /// dictation switch to it. Never blocks a dictation on a 1.5GB download.
@@ -262,7 +270,9 @@ final class TranscriptionService {
             if #available(macOS 15.0, *) { return qwen3.isReady }
             return false
         case .apple:
+            #if compiler(>=6.2)
             if #available(macOS 26.0, *) { return apple.isReady }
+            #endif
             return false
         }
     }
@@ -286,12 +296,16 @@ final class TranscriptionService {
                 await parakeet.load(progress: progress)
             }
         case .apple:
+            #if compiler(>=6.2)
             if #available(macOS 26.0, *) {
                 await apple.load()
+                return
             } else {
-                self.kind = .parakeet
-                await parakeet.load(progress: progress)
+                // Fall through to the portable engine below.
             }
+            #endif
+            self.kind = .parakeet
+            await parakeet.load(progress: progress)
         }
     }
 
@@ -302,7 +316,9 @@ final class TranscriptionService {
             if #available(macOS 15.0, *) { return await qwen3.transcribe(samples) }
             return await parakeet.transcribe(samples)
         case .apple:
+            #if compiler(>=6.2)
             if #available(macOS 26.0, *) { return await apple.transcribe(samples) }
+            #endif
             return ""
         }
     }

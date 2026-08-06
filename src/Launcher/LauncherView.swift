@@ -540,7 +540,7 @@ struct LauncherView: View {
                 .foregroundStyle(MM.Colors.textTertiary)
                 .lineLimit(1)
                 .opacity(hintVisible ? 1 : 0)
-                .animation(MM.Motion.gentle, value: hintVisible)
+                .animation(.easeInOut(duration: 0.16), value: hintVisible)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
