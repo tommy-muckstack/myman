@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import CoreAudio
 import GRDB
 import ScreenCaptureKit
 import SwiftUI
@@ -48,6 +49,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
         UserDefaults.standard.object(forKey: "mm.screenRecordingMicrophone") as? Bool ?? true
     /// Smoothed 0...1 level read from the microphone stream being saved.
     @Published private(set) var microphoneLevel: CGFloat = 0
+    /// Human name of the mic actually being recorded — shown on the pill so
+    /// "why is my voice muffled" is answerable at a glance.
+    @Published private(set) var microphoneName: String?
     private var microphoneMeter: AnyObject?
 
     static var isSupported: Bool {
@@ -122,6 +126,33 @@ final class ScreenRecorder: NSObject, ObservableObject {
         }
     }
 
+    /// The system-default input device — UID for SCK, name for the pill.
+    private static func defaultInputDevice() -> (uid: String, name: String)? {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
+        ) == noErr, deviceID != kAudioObjectUnknown else { return nil }
+
+        func stringProperty(_ selector: AudioObjectPropertySelector) -> String? {
+            var value: CFString = "" as CFString
+            var valueSize = UInt32(MemoryLayout<CFString>.size)
+            var addr = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &valueSize, &value) == noErr
+            else { return nil }
+            return value as String
+        }
+        guard let uid = stringProperty(kAudioDevicePropertyDeviceUID) else { return nil }
+        return (uid, stringProperty(kAudioObjectPropertyName) ?? "Microphone")
+    }
+
     /// AppKit global rect (bottom-left origin) → CG global (top-left).
     private static func cgRect(from appKitRect: CGRect) -> CGRect {
         let primaryHeight = NSScreen.screens
@@ -171,6 +202,16 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 config.showsCursor = true
                 config.capturesAudio = true
                 config.captureMicrophone = self.microphoneEnabled
+                // Pin the mic to the SYSTEM DEFAULT input. Left unset, SCK
+                // picks its own — on a Mac with a Continuity iPhone around,
+                // that's a phone on the desk: "super muffled and quiet."
+                // The default honors the user's Sound-settings choice.
+                if self.microphoneEnabled, let mic = Self.defaultInputDevice() {
+                    config.microphoneCaptureDeviceID = mic.uid
+                    self.microphoneName = mic.name
+                } else {
+                    self.microphoneName = nil
+                }
                 // NEVER force sampleRate/channelCount here: when the active
                 // output device runs at a different rate (AirPods, DACs,
                 // monitor speakers), the forced format comes out as loud
@@ -955,7 +996,9 @@ private struct RecordingPillView: View {
                     .clickable(minSize: 32)
             }
             .buttonStyle(.plain)
-            .help(recorder.microphoneEnabled ? "Mute microphone" : "Include microphone")
+            .help(recorder.microphoneEnabled
+                  ? "Recording \(recorder.microphoneName ?? "microphone") — click to mute"
+                  : "Include microphone")
             Button {
                 recorder.stop()
             } label: {
