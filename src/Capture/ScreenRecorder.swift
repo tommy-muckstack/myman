@@ -342,6 +342,15 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         // Region chosen: outline it and wait for the explicit Record click.
         pendingRegion = rect
         showBorder(around: rect)
+        // Make the webcam placement part of the selection state, not the
+        // recording state. This lets people see and position themselves
+        // before committing, while keeping the bubble inside the chosen
+        // frame from the first recorded frame.
+        WebcamBubble.shared.preferredRegion = rect
+        if UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true,
+           AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
+            WebcamBubble.shared.turnOn()
+        }
         showConfirm(for: rect)
     }
 
@@ -401,6 +410,8 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         confirmPanel = nil
         borderPanel?.orderOut(nil)
         borderPanel = nil
+        WebcamBubble.shared.preferredRegion = nil
+        WebcamBubble.shared.turnOff()
         isBusy = false
     }
 
@@ -576,7 +587,7 @@ private struct RecordConfirmView: View {
             }
             .buttonStyle(.plain)
             IconView(icon: .close, size: 13, color: MM.Colors.textTertiary)
-                .clickable(minSize: 24)
+                .clickable(minSize: 32)
                 .onTapGesture(perform: onCancel)
                 .help("Cancel")
         }

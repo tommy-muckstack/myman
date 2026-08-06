@@ -106,7 +106,7 @@ struct CapturePanelView: View {
             Text("esc dismiss")
             Spacer()
             IconView(icon: .close, size: 12, color: MM.Colors.textTertiary)
-                .clickable(minSize: 22)
+                .clickable(minSize: 32)
                 .onTapGesture { onDismiss() }
                 .help("Close without saving")
             if editing != nil {

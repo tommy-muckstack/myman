@@ -326,7 +326,7 @@ private struct ThumbnailView: View {
             .font(.system(size: 15))
             .symbolRenderingMode(.palette)
             .foregroundStyle(.white, .black.opacity(0.6))
-            .clickable(minSize: 22)
+            .clickable(minSize: 32)
             .onTapGesture { onDismiss() }
             .opacity(hovering ? 1 : 0)
     }

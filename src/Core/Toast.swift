@@ -138,7 +138,7 @@ private struct ToastView: View {
                 .buttonStyle(.plain)
             }
             IconView(icon: .close, size: 14, color: MM.Colors.textTertiary)
-                .clickable(minSize: 22)
+                .clickable(minSize: 32)
                 .onTapGesture { onClose() }
                 .opacity(hovering ? 1 : 0.4)
         }

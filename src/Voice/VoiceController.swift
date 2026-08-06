@@ -515,7 +515,7 @@ struct VoicePillView: View {
                             .foregroundStyle(Color(white: 0.75))
                             .frame(width: 24, height: 24)
                             .background(Circle().strokeBorder(Color(white: 0.35), lineWidth: 1))
-                            .clickable(minSize: 26)
+                            .clickable(minSize: 32)
                             .onTapGesture { controller.dismiss() }
                     }
                     Text(text)

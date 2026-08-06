@@ -214,7 +214,7 @@ struct SettingsPanelView: View {
                     .foregroundStyle(MM.Colors.textPrimary)
                 Spacer()
                 IconView(icon: .close, size: 16, color: MM.Colors.textTertiary)
-                    .clickable()
+                    .clickable(minSize: 32)
                     .onTapGesture { onDismiss() }
             }
             .padding(.horizontal, MM.Layout.paddingLarge)
