@@ -33,10 +33,17 @@ final class MeetingController: ObservableObject {
     enum Phase: Equatable {
         case idle
         case recording(start: Date)
-        case transcribing
     }
 
     @Published var phase: Phase = .idle
+    /// Meetings whose audio is still being transcribed in the background.
+    /// Transcription never occupies the recorder: stopping a meeting returns
+    /// the phase to .idle immediately, so a back-to-back call can start while
+    /// the previous transcript is still being built. Jobs run one at a time —
+    /// the ASR models aren't safe to share across concurrent transcriptions.
+    @Published private(set) var transcribingTitles: [String] = []
+    private var transcriptionChain: Task<Void, Never>?
+    var isTranscribing: Bool { !transcribingTitles.isEmpty }
     /// Quill-style detection capture: recording is already running, but
     /// NOTHING persists unless the user clicks Save. Discard (or the safety
     /// timeout) deletes the audio with no database row, no transcription.
@@ -108,7 +115,6 @@ final class MeetingController: ObservableObject {
         // The meeting hotkey during a provisional take means "yes, record
         // this" — convert and keep rolling, don't stop.
         case .recording: isProvisional ? keepProvisional() : stop()
-        case .transcribing: break
         }
     }
 
@@ -175,8 +181,8 @@ final class MeetingController: ObservableObject {
             Brain.deleteMeeting(id: discardedMeeting.id, startedAt: discardedMeeting.startedAt)
         }
         resumeMusicIfPaused()
-        dismissPill()
         phase = .idle
+        if isTranscribing { applyPillFrame() } else { dismissPill() }
         Analytics.track("meeting_discarded", ["provisional": wasProvisional])
         Toast.show("Recording cancelled — nothing was saved", systemImage: "xmark.circle")
     }
@@ -463,8 +469,8 @@ final class MeetingController: ObservableObject {
         resumeMusicIfPaused()
 
         guard var finished = meeting else {
-            dismissPill()
             phase = .idle
+            if isTranscribing { applyPillFrame() } else { dismissPill() }
             return
         }
         finished.endedAt = Date()
@@ -475,44 +481,81 @@ final class MeetingController: ObservableObject {
         Analytics.track("meeting_stopped",
                         ["duration_s": Int(Date().timeIntervalSince(finished.startedAt)),
                          "slide_count": finished.slidePaths.count])
+        // Everything the transcription needs travels with the job — the
+        // controller's per-take state resets NOW so the next meeting can
+        // start while this one transcribes.
+        let job = TranscriptionJob(
+            record: finished,
+            micPath: micURL?.path, systemPath: systemURL?.path,
+            candidates: sessionAttendeeNames, attendees: pendingAttendees)
         meeting = nil
-        phase = .transcribing
+        pendingAttendees = []
+        sessionAttendeeNames = []
+        phase = .idle
+        enqueueTranscription(job)
         applyPillFrame()
+    }
 
-        Task { @MainActor in
-            var record = finished
-            // Meetings favor Parakeet: hour-long audio needs its speed.
-            if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .parakeet {
-                await TranscriptionService.shared.load(kind: .parakeet)
+    // MARK: Background transcription queue
+
+    private struct TranscriptionJob {
+        var record: Meeting
+        let micPath: String?
+        let systemPath: String?
+        let candidates: [String]
+        let attendees: [(name: String, email: String?)]
+    }
+
+    private func enqueueTranscription(_ job: TranscriptionJob) {
+        transcribingTitles.append(job.record.title)
+        Analytics.track("meeting_transcription_queued",
+                        ["queue_depth": transcribingTitles.count])
+        let previous = transcriptionChain
+        transcriptionChain = Task { @MainActor in
+            await previous?.value
+            await self.runTranscription(job)
+            if let index = self.transcribingTitles.firstIndex(of: job.record.title) {
+                self.transcribingTitles.remove(at: index)
             }
-            record.transcript = await Self.buildTranscript(
-                micPath: micURL?.path, systemPath: systemURL?.path,
-                candidates: self.sessionAttendeeNames)
-            Analytics.track("meeting_transcribed", ["transcript_chars": record.transcript.count])
-            if record.transcript.isEmpty {
-                // Nothing was said — keep nothing, but say so plainly.
-                try? await Database.shared.write { [record] in
-                    _ = try Meeting.deleteOne($0, key: record.id)
-                }
-                if let path = record.micAudioPath {
-                    try? FileManager.default.removeItem(atPath: path)
-                }
-                if let path = record.systemAudioPath {
-                    try? FileManager.default.removeItem(atPath: path)
-                }
-                self.pendingAttendees = []
+            // The pill outlives the job only if something else needs it:
+            // another queued transcript, or a recording that started meanwhile.
+            if case .idle = self.phase, !self.isTranscribing {
+                self.dismissPill()
             } else {
-                try? await Database.shared.write { [record] in try record.update($0) }
-                People.noteAttendees(self.pendingAttendees)
-                self.pendingAttendees = []
-                Brain.syncMeeting(id: record.id, title: record.title,
-                                  startedAt: record.startedAt, endedAt: record.endedAt,
-                                  summary: record.summary, transcript: record.transcript)
+                self.applyPillFrame()
             }
-            self.dismissPill()
-            self.phase = .idle
-            self.notifyDone(record)
         }
+    }
+
+    private func runTranscription(_ job: TranscriptionJob) async {
+        var record = job.record
+        // Meetings favor Parakeet: hour-long audio needs its speed.
+        if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .parakeet {
+            await TranscriptionService.shared.load(kind: .parakeet)
+        }
+        record.transcript = await Self.buildTranscript(
+            micPath: job.micPath, systemPath: job.systemPath,
+            candidates: job.candidates)
+        Analytics.track("meeting_transcribed", ["transcript_chars": record.transcript.count])
+        if record.transcript.isEmpty {
+            // Nothing was said — keep nothing, but say so plainly.
+            try? await Database.shared.write { [record] in
+                _ = try Meeting.deleteOne($0, key: record.id)
+            }
+            if let path = record.micAudioPath {
+                try? FileManager.default.removeItem(atPath: path)
+            }
+            if let path = record.systemAudioPath {
+                try? FileManager.default.removeItem(atPath: path)
+            }
+        } else {
+            try? await Database.shared.write { [record] in try record.update($0) }
+            People.noteAttendees(job.attendees)
+            Brain.syncMeeting(id: record.id, title: record.title,
+                              startedAt: record.startedAt, endedAt: record.endedAt,
+                              summary: record.summary, transcript: record.transcript)
+        }
+        notifyDone(record)
     }
 
     /// The calendar event happening right now (±10 min), if any — its name
@@ -780,7 +823,11 @@ final class MeetingController: ObservableObject {
     /// failure): audio on disk + empty transcript. Finish the job at launch —
     /// a recording must never quietly rot into the 30-day sweep.
     func recoverOrphanedTranscriptions() {
-        Task { @MainActor in
+        // Ride the same serial chain as live transcription jobs — the ASR
+        // models can't take interleaved calls from two transcriptions.
+        let previous = transcriptionChain
+        transcriptionChain = Task { @MainActor in
+            await previous?.value
             let orphans: [Meeting] = (try? await Database.shared.read { db in
                 try Meeting.filter(Column("transcript") == "").fetchAll(db)
             }) ?? []
@@ -865,10 +912,16 @@ final class MeetingController: ObservableObject {
         return CGSize(width: 248, height: 76)
     }
 
+    /// The pill shows the transcribing spinner only when nothing is being
+    /// recorded — a new meeting takes the pill over while jobs finish behind it.
+    var pillShowsTranscribing: Bool {
+        if case .idle = phase { return isTranscribing }
+        return false
+    }
+
     func applyPillFrame() {
         guard let panel, let screen = NSScreen.main else { return }
-        let transcribing: Bool = { if case .transcribing = phase { return true }; return false }()
-        let size = Self.pillSize(provisional: isProvisional, transcribing: transcribing)
+        let size = Self.pillSize(provisional: isProvisional, transcribing: pillShowsTranscribing)
         let visible = screen.visibleFrame
         let frame = NSRect(x: visible.maxX - size.width - 24,
                            y: visible.maxY - size.height - 24,
@@ -886,8 +939,7 @@ final class MeetingController: ObservableObject {
         panel = pill
         // Top-right, out of the way — a meeting indicator, not a dialog.
         // Frame comes from the fixed size table, never from measurement.
-        let transcribing: Bool = { if case .transcribing = phase { return true }; return false }()
-        let size = Self.pillSize(provisional: isProvisional, transcribing: transcribing)
+        let size = Self.pillSize(provisional: isProvisional, transcribing: pillShowsTranscribing)
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
             pill.setFrame(
@@ -953,12 +1005,8 @@ struct MeetingPillView: View {
     @State private var now = Date()
 
     private var fixedSize: CGSize {
-        let transcribing: Bool = {
-            if case .transcribing = controller.phase { return true }
-            return false
-        }()
-        return MeetingController.pillSize(provisional: controller.isProvisional,
-                                          transcribing: transcribing)
+        MeetingController.pillSize(provisional: controller.isProvisional,
+                                   transcribing: controller.pillShowsTranscribing)
     }
     private var isRecording: Bool {
         if case .recording = controller.phase { return true }
@@ -1098,7 +1146,16 @@ struct MeetingPillView: View {
             HStack(spacing: 10) {
             switch controller.phase {
             case .idle:
-                EmptyView()
+                if controller.isTranscribing {
+                    ProgressView().controlSize(.small)
+                    Text(controller.transcribingTitles.count > 1
+                         ? "Transcribing \(controller.transcribingTitles.count) meetings…"
+                         : "Transcribing meeting…")
+                        .font(MM.Fonts.secondary)
+                        .foregroundStyle(MM.Colors.textSecondary)
+                } else {
+                    EmptyView()
+                }
             case .recording(let start):
                 Circle().fill(.red).frame(width: 8, height: 8)
                 waveform
@@ -1115,11 +1172,6 @@ struct MeetingPillView: View {
                         .clickable(minSize: 26)
                 }
                 .buttonStyle(.plain)
-            case .transcribing:
-                ProgressView().controlSize(.small)
-                Text("Transcribing meeting…")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textSecondary)
             }
             }
             if isRecording {
