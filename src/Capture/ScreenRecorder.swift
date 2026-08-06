@@ -39,10 +39,13 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private var outputURL: URL?
     private var pill: FloatingPanel?
     private var streamConfiguration: SCStreamConfiguration?
-    /// System audio stays on; microphone capture is opt-in. Combining both
-    /// tracks has produced unusable noise on some macOS audio devices.
+    /// A Loom-style recording without the narrator's voice is missing the
+    /// point — the microphone records by default, and the pill toggle
+    /// remembers an explicit opt-out. (The "unusable noise" that once made
+    /// this opt-in traced to forcing sampleRate/channelCount on the stream,
+    /// not to combining the tracks — see start(regionAppKit:).)
     @Published private(set) var microphoneEnabled =
-        UserDefaults.standard.object(forKey: "mm.screenRecordingMicrophone") as? Bool ?? false
+        UserDefaults.standard.object(forKey: "mm.screenRecordingMicrophone") as? Bool ?? true
     /// Smoothed 0...1 level read from the microphone stream being saved.
     @Published private(set) var microphoneLevel: CGFloat = 0
     private var microphoneMeter: AnyObject?
@@ -168,8 +171,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 config.showsCursor = true
                 config.capturesAudio = true
                 config.captureMicrophone = self.microphoneEnabled
-                config.sampleRate = 48_000
-                config.channelCount = 2
+                // NEVER force sampleRate/channelCount here: when the active
+                // output device runs at a different rate (AirPods, DACs,
+                // monitor speakers), the forced format comes out as loud
+                // tonal noise in the recording. SCK's native format is
+                // always correct for the device.
                 config.excludesCurrentProcessAudio = true
 
                 let formatter = DateFormatter()
@@ -209,7 +215,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 self.isRecording = true
                 self.activeRegion = regionAppKit
                 WebcamBubble.shared.preferredRegion = regionAppKit
-                Analytics.track("screen_recording_started")
+                if SettingsStore.shared.cursorEffects {
+                    CursorEffects.shared.show(regionAppKit: regionAppKit)
+                }
+                Analytics.track("screen_recording_started",
+                                ["cursor_effects": SettingsStore.shared.cursorEffects])
                 self.showPill()
                 // The bubble comes on with the recording (prompting for
                 // camera the first time); the pill toggle remembers your
@@ -242,6 +252,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         WebcamBubble.shared.preferredRegion = nil
         WebcamBubble.shared.turnOff()
         WebcamBubble.shared.resetPosition()
+        CursorEffects.shared.hide()
         microphoneLevel = 0
         Task { @MainActor in
             try? await stream?.stopCapture()
