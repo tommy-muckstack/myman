@@ -148,7 +148,10 @@ struct CalendarPanelView: View {
     struct EventLite: Identifiable {
         let id: String
         let start: Date
+        let end: Date
         let title: String
+        let notes: String
+        let attendeeNames: [String]
         let hasMeetingLink: Bool
         /// A My Man recording whose time overlaps this event → entry point.
         var meetingID: String?
@@ -337,7 +340,8 @@ struct CalendarPanelView: View {
     }
 
     private func eventCard(_ event: EventLite) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        @State var hovering = false
+        return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 4) {
                 if event.hasMeetingLink {
                     Circle().fill(MM.Colors.accent).frame(width: 5, height: 5)
@@ -361,6 +365,17 @@ struct CalendarPanelView: View {
                         }
                     }
                 }
+                if hovering {
+                    Button("Brief") { openBrief(event) }
+                        .buttonStyle(.plain)
+                        .font(MM.Fonts.metadata)
+                        .foregroundStyle(MM.Colors.accent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(MM.Colors.background))
+                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+                        .help("Prepare meeting brief")
+                }
             }
             Text(event.title)
                 .font(MM.Fonts.secondary)
@@ -374,11 +389,21 @@ struct CalendarPanelView: View {
                 .fill(MM.Colors.surface)
         )
         .contentShape(Rectangle())
-        .onHover { hovering in
-            hovering ? NSCursor.pointingHand.set() : NSCursor.arrow.set()
+        .onHover { isHovering in
+            withAnimation(.easeInOut(duration: 0.14)) { hovering = isHovering }
+            isHovering ? NSCursor.pointingHand.set() : NSCursor.arrow.set()
         }
         .onTapGesture {
             openInGoogleCalendar(event)
+        }
+    }
+
+    private func openBrief(_ event: EventLite) {
+        Analytics.track("meeting_brief_requested")
+        Toast.show("Preparing your brief…", systemImage: "sparkles")
+        Task { @MainActor in
+            let brief = await MeetingBrief.make(for: event)
+            NotesPanelController.shared.show(draft: brief)
         }
     }
 
@@ -445,7 +470,11 @@ struct CalendarPanelView: View {
                     return EventLite(
                         id: event.eventIdentifier ?? UUID().uuidString,
                         start: event.startDate,
+                        end: event.endDate ?? event.startDate.addingTimeInterval(1800),
                         title: event.title ?? "Untitled",
+                        notes: event.notes ?? "",
+                        attendeeNames: (event.attendees ?? []).filter { !$0.isCurrentUser }
+                            .compactMap(\.name),
                         hasMeetingLink: CalendarWatcher.meetingLink(in: event) != nil,
                         meetingID: matched?.id
                     )
