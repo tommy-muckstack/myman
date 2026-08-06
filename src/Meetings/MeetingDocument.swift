@@ -90,9 +90,84 @@ struct MeetingDocumentView: View {
         .onAppear(perform: generateSummaryIfMissing)
     }
 
+    /// One centralized rename spot: every speaker in the transcript, as an
+    /// editable chip. Renaming rewrites every transcript line, the summary,
+    /// the person registry, and the brain file in one go.
+    private var speakerLegend: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Text("Speakers")
+                    .font(MM.Fonts.metadata)
+                    .foregroundStyle(MM.Colors.textTertiary)
+                ForEach(speakerLabels, id: \.self) { label in
+                    SpeakerChip(label: label) { old, new in
+                        renameSpeaker(from: old, to: new)
+                    }
+                    .id(label)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    /// Distinct speaker labels in first-appearance order, from the
+    /// interleaved `**Name** [m:ss]:` transcript form.
+    private var speakerLabels: [String] {
+        let pattern = #"\*\*([^*\n]{1,80})\*\*\s*\[\d+:\d{2}\]:"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for match in regex.matches(in: transcript,
+                                   range: NSRange(transcript.startIndex..., in: transcript)) {
+            guard let range = Range(match.range(at: 1), in: transcript) else { continue }
+            let label = String(transcript[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if seen.insert(label).inserted { ordered.append(label) }
+        }
+        return ordered
+    }
+
+    private func renameSpeaker(from old: String, to newRaw: String) {
+        let new = newRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !new.isEmpty, new != old, !new.contains("*") else { return }
+        transcript = transcript.replacingOccurrences(of: "**\(old)**", with: "**\(new)**")
+        // The summary was written against the old label — keep it in step.
+        if !summary.isEmpty, summary.contains(old) {
+            summary = summary.replacingOccurrences(of: old, with: new)
+        }
+        People.renameSpeaker(from: old, to: new)
+        saveEverything()
+        Analytics.track("meeting_speaker_renamed", ["was_email": old.contains("@")])
+    }
+
+    /// One explicit write for renames: the summary editor's onChange only
+    /// exists while the Summary tab is showing, so a rename made from the
+    /// Transcript tab must not rely on the debounced per-field saves.
+    private func saveEverything() {
+        saveTask?.cancel()
+        saveState = .pending
+        let id = meeting.id
+        let transcript = transcript
+        let summary = summary
+        saveTask = Task { @MainActor in
+            try? await Database.shared.write { db in
+                try db.execute(sql: "UPDATE meeting SET transcript = ?, summary = ? WHERE id = ?",
+                               arguments: [transcript, summary, id])
+            }
+            People.learnSpeakerNames(from: transcript)
+            Brain.syncMeeting(id: id, title: title,
+                              startedAt: meeting.startedAt, endedAt: meeting.endedAt,
+                              summary: summary, transcript: transcript)
+            saveState = .saved
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                if saveState == .saved { saveState = .idle }
+            }
+        }
+    }
+
     private var transcriptEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Rename **Them** or **Speaker 1** to teach My Man who they are.")
+            Text("Rename speakers above — every line updates everywhere.")
                 .font(MM.Fonts.secondary)
                 .foregroundStyle(MM.Colors.textTertiary)
                 .padding(.horizontal, 24)
@@ -185,6 +260,9 @@ struct MeetingDocumentView: View {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(MM.Colors.surface)
                 )
+            }
+            if !speakerLabels.isEmpty {
+                speakerLegend
             }
         }
         .padding(.horizontal, 24)
@@ -355,6 +433,67 @@ struct MeetingDocumentView: View {
                               startedAt: meeting.startedAt, endedAt: meeting.endedAt,
                               summary: generated, transcript: meeting.transcript)
         }
+    }
+}
+
+/// An editable speaker name. Click to edit in place; ⏎ or clicking away
+/// commits, Esc cancels. `.id(label)` upstream resets state after a rename.
+private struct SpeakerChip: View {
+    let label: String
+    let onRename: (String, String) -> Void
+    @State private var text = ""
+    @State private var editing = false
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Group {
+            if editing {
+                TextField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(MM.Fonts.secondary)
+                    .foregroundStyle(MM.Colors.textPrimary)
+                    .frame(width: max(64, CGFloat(text.count) * 7.5 + 20))
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onChange(of: focused) { _, isFocused in
+                        if !isFocused, editing { commit() }
+                    }
+                    .onExitCommand {
+                        editing = false
+                    }
+            } else {
+                HStack(spacing: 4) {
+                    Text(label)
+                        .font(MM.Fonts.secondary)
+                        .foregroundStyle(MM.Colors.textPrimary)
+                        .lineLimit(1)
+                    IconView(icon: .write, size: 10,
+                             color: hovering ? MM.Colors.textSecondary : MM.Colors.textTertiary)
+                }
+                .clickable(minSize: 24)
+                .onTapGesture {
+                    text = label
+                    editing = true
+                    focused = true
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 3)
+        .background(
+            Capsule().fill(MM.Colors.surface)
+                .overlay(Capsule().strokeBorder(
+                    editing ? MM.Colors.accent : MM.Colors.border, lineWidth: 1))
+        )
+        .onHover { hovering = $0 }
+        .help("Rename this speaker — updates every line, the summary, and your people list")
+    }
+
+    private func commit() {
+        guard editing else { return }
+        editing = false
+        onRename(label, text)
     }
 }
 

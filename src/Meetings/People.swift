@@ -44,6 +44,46 @@ enum People {
         syncBrain()
     }
 
+    /// A rename made in a meeting document's speaker legend: fix the person
+    /// row too, so people.md and future speaker matching use the real name.
+    static func renameSpeaker(from old: String, to new: String) {
+        let generic = Set(["you", "them", "others"])
+        guard !generic.contains(new.lowercased()) else { return }
+        try? Database.shared.write { db in
+            if old.contains("@") {
+                // The old label was an email — attach the name to that person.
+                if var person = try Person.filter(Column("email") == old.lowercased()).fetchOne(db) {
+                    person.name = new
+                    try person.update(db)
+                } else if var person = try Person.filter(Column("name") == old).fetchOne(db) {
+                    person.name = new
+                    if person.email == nil { person.email = old.lowercased() }
+                    try person.update(db)
+                } else {
+                    try Person(id: UUID().uuidString, name: new, email: old.lowercased(),
+                               meetCount: 1, firstMetAt: Date(), lastMetAt: Date()).insert(db)
+                }
+            } else if var person = try Person.filter(Column("name") == old).fetchOne(db) {
+                person.name = new
+                try person.update(db)
+            }
+        }
+        syncBrain()
+    }
+
+    /// Calendars without a display name hand back the raw address as the
+    /// "name". Never show an email where a name belongs — derive a readable
+    /// one from the local part instead ("james.whitfield" → "James Whitfield").
+    static func displayName(name: String?, email: String?) -> String? {
+        if let name, !name.isEmpty, !name.contains("@") { return name }
+        let address = (name?.contains("@") == true ? name : nil) ?? email
+        guard let local = address?.split(separator: "@").first else { return name }
+        let words = local.split(whereSeparator: { "._-".contains($0) })
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .filter { $0.rangeOfCharacter(from: .letters) != nil }
+        return words.isEmpty ? String(local) : words.joined(separator: " ")
+    }
+
     /// Record that a meeting happened with these attendees (the current
     /// user excluded upstream). Upserts by email when present, else name.
     static func noteAttendees(_ attendees: [(name: String, email: String?)]) {
@@ -64,8 +104,15 @@ enum People {
                     person.meetCount += 1
                     person.lastMetAt = now
                     if person.email == nil { person.email = attendee.email?.lowercased() }
-                    // Prefer the fuller name variant ("James Whitfield" over "James").
-                    if name.count > person.name.count { person.name = name }
+                    // Prefer the fuller name variant ("James Whitfield" over
+                    // "James") — but an email-shaped name loses to any real
+                    // name, no matter how long the address is.
+                    let existingIsEmail = person.name.contains("@")
+                    let newIsEmail = name.contains("@")
+                    if (existingIsEmail && !newIsEmail)
+                        || (existingIsEmail == newIsEmail && name.count > person.name.count) {
+                        person.name = name
+                    }
                     try person.update(db)
                 } else {
                     try Person(id: UUID().uuidString, name: name,
@@ -129,7 +176,7 @@ enum People {
                 let email = participant.url.absoluteString.hasPrefix("mailto:")
                     ? String(participant.url.absoluteString.dropFirst("mailto:".count))
                     : nil
-                let name = participant.name ?? email?.split(separator: "@").first.map(String.init)
+                let name = displayName(name: participant.name, email: email)
                 guard let name, !name.isEmpty else { return nil }
                 return (name, email)
             }

@@ -34,6 +34,14 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(DictationCleanup.builtInVocabulary, ["My Man", "MuckStack"])
     }
 
+    func testAttendeeDisplayNameNeverShowsAnEmail() {
+        XCTAssertEqual(People.displayName(name: "james.whitfield@acme.com", email: nil),
+                       "James Whitfield")
+        XCTAssertEqual(People.displayName(name: nil, email: "amy_chen@startup.io"), "Amy Chen")
+        XCTAssertEqual(People.displayName(name: "James Whitfield", email: "jw@acme.com"),
+                       "James Whitfield")
+    }
+
     func testDictationKeepsVersionNumbersAndRemovesStrandedQuote() {
         XCTAssertEqual(
             DictationCleanup.normalizeDictationFormatting("Ship 1 . 1 . 29 for MuckStack\"."),
