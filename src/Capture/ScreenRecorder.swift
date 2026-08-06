@@ -196,6 +196,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 }
                 let output = SCRecordingOutput(configuration: recordingConfig, delegate: self)
 
+                // Our warm dictation engine's voice-processing unit ducks
+                // system audio + AECs the mic machine-wide — release it for
+                // the duration or the recording comes out faint and whistly.
+                AudioCapture.shared.suppressVoiceProcessing = true
+
                 let stream = SCStream(filter: filter, configuration: config, delegate: nil)
                 let microphoneMeter = MicrophoneLevelMonitor()
                 microphoneMeter.onLevel = { [weak self] level in self?.microphoneLevel = level }
@@ -230,6 +235,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 }
             } catch {
                 NSLog("My Man [Record] start failed: \(error)")
+                AudioCapture.shared.suppressVoiceProcessing = false
                 self.isBusy = false
                 self.borderPanel?.orderOut(nil)
                 self.borderPanel = nil
@@ -253,6 +259,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         WebcamBubble.shared.turnOff()
         WebcamBubble.shared.resetPosition()
         CursorEffects.shared.hide()
+        AudioCapture.shared.suppressVoiceProcessing = false
         microphoneLevel = 0
         Task { @MainActor in
             try? await stream?.stopCapture()
@@ -275,8 +282,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
                        action: { NSWorkspace.shared.open(url) },
                        secondaryLabel: "Copy",
                        secondaryAction: {
+                           // One item, two faces: plain text (a bare NSURL
+                           // pastes as NOTHING in most text fields) plus the
+                           // file URL for Finder-style paste targets.
+                           let item = NSPasteboardItem()
+                           item.setString(url.path, forType: .string)
+                           item.setString(url.absoluteString, forType: .fileURL)
                            NSPasteboard.general.clearContents()
-                           NSPasteboard.general.writeObjects([url as NSURL])
+                           NSPasteboard.general.writeObjects([item])
                        })
         }
     }
