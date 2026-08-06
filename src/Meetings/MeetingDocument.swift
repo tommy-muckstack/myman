@@ -48,6 +48,7 @@ struct MeetingDocumentView: View {
     let meeting: Meeting
     @State private var title: String
     @State private var summary: String
+    @State private var transcript: String
     @State private var slidePaths: [String]
     @State private var showTranscript = false
     @State private var isSummarizing = false
@@ -62,6 +63,7 @@ struct MeetingDocumentView: View {
         self.meeting = meeting
         _title = State(initialValue: meeting.title)
         _summary = State(initialValue: meeting.summary)
+        _transcript = State(initialValue: meeting.transcript)
         _slidePaths = State(initialValue: meeting.slidePaths)
     }
 
@@ -73,14 +75,7 @@ struct MeetingDocumentView: View {
             }
             Divider().overlay(MM.Colors.border)
             if showTranscript {
-                ScrollView {
-                    Text(meeting.transcript)
-                        .font(MM.Fonts.body)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(24)
-                }
+                transcriptEditor
             } else if summary.isEmpty {
                 summaryEmptyState
             } else {
@@ -93,6 +88,25 @@ struct MeetingDocumentView: View {
         .background(MM.Colors.background)
         .frame(minWidth: 560, minHeight: 420)
         .onAppear(perform: generateSummaryIfMissing)
+    }
+
+    private var transcriptEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Rename **Them** or **Speaker 1** to teach My Man who they are.")
+                .font(MM.Fonts.secondary)
+                .foregroundStyle(MM.Colors.textTertiary)
+                .padding(.horizontal, 24)
+                .padding(.top, 14)
+            TextEditor(text: $transcript)
+                .font(MM.Fonts.body)
+                .foregroundStyle(MM.Colors.textPrimary)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
+                .onChange(of: transcript) { _, newValue in
+                    debouncedSaveTranscript(newValue)
+                }
+        }
     }
 
     /// What was on screen during the call — deduped captures of the meeting
@@ -284,6 +298,27 @@ struct MeetingDocumentView: View {
             Brain.syncMeeting(id: id, title: text,
                               startedAt: meeting.startedAt, endedAt: meeting.endedAt,
                               summary: summary, transcript: meeting.transcript)
+            saveState = .saved
+        }
+    }
+
+    private func debouncedSaveTranscript(_ text: String) {
+        saveTask?.cancel()
+        saveState = .pending
+        let id = meeting.id
+        saveTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.7))
+            guard !Task.isCancelled else { return }
+            try? await Database.shared.write { db in
+                try db.execute(sql: "UPDATE meeting SET transcript = ? WHERE id = ?",
+                               arguments: [text, id])
+            }
+            // This only extracts explicit transcript speaker labels. It never
+            // mines arbitrary spoken text for names.
+            People.learnSpeakerNames(from: text)
+            Brain.syncMeeting(id: id, title: title,
+                              startedAt: meeting.startedAt, endedAt: meeting.endedAt,
+                              summary: summary, transcript: text)
             saveState = .saved
         }
     }

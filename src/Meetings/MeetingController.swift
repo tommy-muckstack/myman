@@ -44,6 +44,9 @@ final class MeetingController: ObservableObject {
     @Published var levels: [Float] = []
     private var provisionalTimeout: Timer?
     private var lastAudibleAt = Date()
+    /// Remote/system audio is a stronger end-of-call clue than our own mic:
+    /// the user may keep speaking or typing after everyone else leaves.
+    private var lastRemoteAudibleAt = Date()
     private var slideTimer: Timer?
     private var slidePaths: [String] = []
     private var lastSlideFingerprint: [Float]?
@@ -70,6 +73,7 @@ final class MeetingController: ObservableObject {
     private var endWatchTimer: Timer?
     private var callAppSeenOnMic = false
     private var callAppMissingPolls = 0
+    private var endNudgeShown = false
     /// Meeting link for the provisional card's Join & Start button.
     @Published var provisionalJoinURL: URL?
 
@@ -187,6 +191,9 @@ final class MeetingController: ObservableObject {
     }
 
     private func startAuthorized(provisional: Bool = false) {
+        // Permission callbacks can arrive more than once when a calendar
+        // nudge and a manual click race. Only the first one may create a row.
+        guard case .idle = phase else { return }
         guard SystemAudioTap.hasPermission() || promptForSystemAudio() else { return }
 
         let id = UUID().uuidString
@@ -199,7 +206,11 @@ final class MeetingController: ObservableObject {
             // Cheap RMS of this chunk feeds the pill waveform.
             guard !samples.isEmpty else { return }
             let rms = sqrt(samples.reduce(Float(0)) { $0 + $1 * $1 } / Float(samples.count))
-            Task { @MainActor in self?.systemLevel = max(self?.systemLevel ?? 0, rms) }
+            Task { @MainActor in
+                guard let self else { return }
+                self.systemLevel = max(self.systemLevel, rms)
+                if rms > 0.012 { self.lastRemoteAudibleAt = Date() }
+            }
         }
         do {
             try tap.start()
@@ -236,9 +247,8 @@ final class MeetingController: ObservableObject {
             transcript: "", summary: ""
         )
         pendingAttendees = People.currentEventAttendees()
-        sessionAttendeeNames = pendingAttendees.compactMap {
-            $0.name.split(separator: " ").first.map(String.init)
-        }
+        sessionAttendeeNames = Self.speakerCandidates(
+            eventTitle: title, attendees: pendingAttendees.map(\.name))
         if provisional {
             isProvisional = true
             // Unclaimed for 90 minutes = not wanted. Quietly clean up.
@@ -255,6 +265,8 @@ final class MeetingController: ObservableObject {
         applyPillFrame()
         levels = Array(repeating: 0, count: 16)
         lastAudibleAt = started
+        lastRemoteAudibleAt = started
+        endNudgeShown = false
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, case .recording = self.phase else { return }
@@ -298,6 +310,7 @@ final class MeetingController: ObservableObject {
     private func startEndWatch() {
         callAppSeenOnMic = false
         callAppMissingPolls = 0
+        endNudgeShown = false
         endWatchTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollForMeetingEnd() }
         }
@@ -316,22 +329,39 @@ final class MeetingController: ObservableObject {
             callAppMissingPolls = 0
             return
         }
-        // Only meaningful if a call app was ever actually on the mic —
-        // in-person recordings (no call app) keep manual stop + timeout.
-        guard callAppSeenOnMic else { return }
-        callAppMissingPolls += 1
-        guard callAppMissingPolls >= 3 else { return } // ~30s after hang-up
-        endWatchTimer?.invalidate()
-        endWatchTimer = nil
-        if isProvisional {
-            // Never opted in — the ended call takes its audio with it.
-            Analytics.track("meeting_auto_discarded")
-            discardProvisional()
-        } else {
-            Analytics.track("meeting_auto_stopped")
-            Toast.show("Meeting ended — transcribing", systemImage: "checkmark.circle")
-            stop()
+        // When macOS did attribute the call app, three missing polls is a
+        // high-confidence hang-up and can end the recording automatically.
+        if callAppSeenOnMic {
+            callAppMissingPolls += 1
+            guard callAppMissingPolls >= 3 else { return } // ~30s after hang-up
+            endWatchTimer?.invalidate()
+            endWatchTimer = nil
+            if isProvisional {
+                // Never opted in — the ended call takes its audio with it.
+                Analytics.track("meeting_auto_discarded")
+                discardProvisional()
+            } else {
+                Analytics.track("meeting_auto_stopped")
+                Toast.show("Meeting ended — transcribing", systemImage: "checkmark.circle")
+                stop()
+            }
+            return
         }
+
+        // Attribution is unavailable for many browser calls and Bluetooth
+        // devices. In that case do not silently stop a meeting on quiet; give
+        // the user an accurate, reversible end-of-call nudge instead.
+        let quietFor = Date().timeIntervalSince(lastAudibleAt)
+        let remoteQuietFor = Date().timeIntervalSince(lastRemoteAudibleAt)
+        guard !endNudgeShown, !isProvisional,
+              quietFor > 45, remoteQuietFor > 45 else { return }
+        endNudgeShown = true
+        Analytics.track("meeting_end_nudged", ["source": "quiet_call"])
+        Toast.show("Looks like you just ended a call", systemImage: "phone.down.fill",
+                   actionLabel: "Stop & save", action: { [weak self] in self?.stop() },
+                   secondaryLabel: "Keep recording", secondaryAction: { [weak self] in
+                       self?.endNudgeShown = false
+                   }, duration: 14)
     }
 
     // MARK: Slides — periodic captures of the call window, deduped
@@ -498,6 +528,33 @@ final class MeetingController: ObservableObject {
             .filter { !$0.isAllDay && $0.startDate <= now.addingTimeInterval(600) }
             .sorted { $0.startDate > $1.startDate }
             .first?.title
+    }
+
+    /// Calendar attendees are the best source of real speaker names. For a
+    /// personal one-on-one titled like "Tommy Neith Weekly", calendars often
+    /// omit attendees entirely; use the single non-owner name in that exact
+    /// title pattern as equally bounded evidence.
+    private static func speakerCandidates(eventTitle: String?, attendees: [String]) -> [String] {
+        var names = attendees.compactMap { $0.split(separator: " ").first.map(String.init) }
+        let uniqueAttendees = Array(Set(names)).sorted()
+        guard uniqueAttendees.isEmpty, let eventTitle else { return uniqueAttendees }
+
+        let titleWords = eventTitle.components(separatedBy: CharacterSet.letters.inverted)
+            .filter { !$0.isEmpty }
+        let ownerWords = NSFullUserName().components(separatedBy: CharacterSet.letters.inverted)
+            .filter { $0.count >= 2 }
+        guard let ownerFirst = ownerWords.first,
+              titleWords.contains(where: { $0.caseInsensitiveCompare(ownerFirst) == .orderedSame })
+        else { return uniqueAttendees }
+
+        let generic = Set(["weekly", "sync", "meeting", "call", "catch", "up", "with", "and"])
+        let candidate = titleWords.filter { word in
+            !ownerWords.contains(where: { $0.caseInsensitiveCompare(word) == .orderedSame })
+                && !generic.contains(word.lowercased())
+                && word.count >= 3
+        }
+        if candidate.count == 1 { names.append(candidate[0]) }
+        return Array(Set(names)).sorted()
     }
 
     /// Stream the WAV from disk in 60s slices — an hour of audio is ~230MB
@@ -677,6 +734,14 @@ final class MeetingController: ObservableObject {
     ) -> [(start: Double, speaker: String, text: String)] {
         let names = Array(Set(candidates.filter { $0.count >= 3 }))
         guard !names.isEmpty else { return turns }
+        // A two-person call has a single remote audio stream, which is
+        // intentionally left as "Them" by diarization. If the calendar gives
+        // exactly one non-owner candidate, that label is evidence-based.
+        if names.count == 1, turns.contains(where: { $0.speaker == "Them" }) {
+            return turns.map { turn in
+                (turn.start, turn.speaker == "Them" ? names[0] : turn.speaker, turn.text)
+            }
+        }
         var votes: [String: [String: Int]] = [:]
         for (index, turn) in turns.enumerated() {
             let lower = turn.text.lowercased()
