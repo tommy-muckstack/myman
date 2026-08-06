@@ -949,7 +949,7 @@ struct MeetingPillView: View {
                 }
                 Spacer()
                 IconView(icon: .close, size: 13, color: MM.Colors.textTertiary)
-                    .clickable(minSize: 24)
+                    .clickable(minSize: 32)
                     .onTapGesture { controller.discardProvisional() }
                     .help("Dismiss — nothing is saved")
             }
