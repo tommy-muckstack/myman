@@ -83,6 +83,12 @@ fi
 echo "==> Signing identity: $DEV_ID_IDENTITY"
 echo "==> Version: $VERSION (build $BUILD_NUMBER)"
 
+# Local release-only credentials live in this gitignored file. CI supplies
+# the same values as environment variables instead.
+if [[ -f "$SCRIPT_DIR/secrets.env" ]]; then
+    set -a; source "$SCRIPT_DIR/secrets.env"; set +a
+fi
+
 echo "==> Building $EXEC_NAME (release, universal)..."
 # Universal so Intel Macs can run it; --arch flags move output to .build/apple/.
 swift build -c release --arch arm64 --arch x86_64
@@ -92,6 +98,39 @@ if [[ ! -f "$BINARY" ]]; then
     echo "ERROR: Binary not found at $BINARY"
     exit 1
 fi
+
+# Sentry needs the exact dSYMs produced alongside the universal executable to
+# turn crash and app-hang addresses back into Swift symbols. Keep this outside
+# the app bundle and never make a customer release depend on diagnostics.
+#
+# Create a Sentry internal integration token with org:read + project:releases
+# (or org:ci) and put it in the gitignored secrets.env as
+# MM_SENTRY_AUTH_TOKEN=..., or export SENTRY_AUTH_TOKEN in CI.
+upload_sentry_debug_symbols() {
+    local token="${SENTRY_AUTH_TOKEN:-${MM_SENTRY_AUTH_TOKEN:-}}"
+    local products_dir="$SCRIPT_DIR/.build/apple/Products/Release"
+    if [[ -z "$token" ]]; then
+        echo "WARNING: MM_SENTRY_AUTH_TOKEN not set — skipping Sentry dSYM upload"
+        return 0
+    fi
+    if ! command -v sentry-cli >/dev/null 2>&1; then
+        echo "WARNING: sentry-cli not installed — skipping Sentry dSYM upload"
+        return 0
+    fi
+    if [[ ! -d "$BINARY.dSYM" ]]; then
+        echo "WARNING: MyMan.dSYM missing — skipping Sentry dSYM upload"
+        return 0
+    fi
+    echo "==> Uploading release dSYMs to Sentry..."
+    # Upload the Products directory, not only MyMan.dSYM: Sparkle's updater
+    # helpers can also appear in hang/crash stacks and need their own symbols.
+    if ! SENTRY_AUTH_TOKEN="$token" sentry-cli debug-files upload \
+        --org muckstack --project myman "$products_dir"; then
+        echo "WARNING: Sentry dSYM upload failed — continuing with release"
+    fi
+}
+
+upload_sentry_debug_symbols
 
 echo "==> Assembling $APP_NAME.app..."
 APP_DIR="$SCRIPT_DIR/.build/dist/$APP_NAME.app"
@@ -167,11 +206,8 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
 PLIST
 
 # Telemetry keys: injected into the plist here (never committed to source).
-# Local: scripts read secrets.env at repo root. CI: MM_* env vars.
+# Local credentials were loaded above; CI provides MM_* environment variables.
 # Missing keys are skipped — the app detects their absence and sends nothing.
-if [[ -f "$SCRIPT_DIR/secrets.env" ]]; then
-    set -a; source "$SCRIPT_DIR/secrets.env"; set +a
-fi
 inject_plist_key() {
     local key="$1" value="$2"
     if [[ -n "$value" ]]; then
