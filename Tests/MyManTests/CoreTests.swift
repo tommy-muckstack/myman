@@ -2,6 +2,12 @@ import XCTest
 @testable import MyMan
 
 final class CoreTests: XCTestCase {
+
+    func testTranscriptionDiscardsEnglishTaskHallucinationVariants() {
+        XCTAssertEqual(TranscriptionService.discardTaskHallucination("Agnis the Opera to English text"), "")
+        XCTAssertEqual(TranscriptionService.discardTaskHallucination("is the Opera into English text"), "")
+        XCTAssertEqual(TranscriptionService.discardTaskHallucination("A real dictated sentence."), "A real dictated sentence.")
+    }
     func testCosineSimilarityIdenticalVectorsIsOne() {
         XCTAssertEqual(SearchService.cosine([1, 2, 3], [1, 2, 3]), 1, accuracy: 0.0001)
     }
