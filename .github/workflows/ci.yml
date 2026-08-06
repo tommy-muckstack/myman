@@ -1,0 +1,14 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (debug)
+        run: swift build
+      - name: Build (release, universal)
+        run: swift build -c release --arch arm64 --arch x86_64

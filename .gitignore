@@ -1,0 +1,12 @@
+.build/
+.swiftpm/
+.DS_Store
+*.dmg
+*.app
+.env
+.env.*
+.vercel/
+secrets.env
+ci-cert.p12
+ci-build.keychain-db
+.sparkle_ed_key

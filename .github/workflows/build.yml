@@ -1,0 +1,16 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Debug build
+        run: swift build
+      - name: Universal release build
+        run: swift build -c release --arch arm64 --arch x86_64

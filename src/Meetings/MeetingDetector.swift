@@ -1,0 +1,204 @@
+import AppKit
+import CoreAudio
+import Foundation
+
+// Meeting auto-detection, the Muesli pattern: a CoreAudio listener on the
+// default input device's "is running somewhere" flag fires the moment ANY app
+// opens the mic. If a known meeting app is running (Zoom, FaceTime, Teams,
+// Webex) — or a browser likely hosting a call — we offer to record, or start
+// automatically when the setting says so. Event-driven; no polling.
+
+@MainActor
+final class MeetingDetector {
+    /// Called with the detected app's name when a meeting seems to start.
+    var onMeetingDetected: ((String) -> Void)?
+    /// The detector must stay quiet while My Man itself uses the mic.
+    var isOwnAudioActive: () -> Bool = { false }
+
+    private var listeningDeviceID = AudioObjectID(kAudioObjectUnknown)
+    private var lastNudge = Date.distantPast
+    private var wasRunning = false
+    private var suppressedUntil = Date.distantPast
+    private var browserRecheckPending = false
+
+    /// Post this when My Man itself sends the user somewhere (opening a
+    /// calendar event in the browser, a meeting link, …) — the detector must
+    /// never mistake its own navigation for a meeting starting.
+    static let suppressNotification = Notification.Name("mm.suppressMeetingDetection")
+
+    static let strongApps: [String: String] = [
+        "us.zoom.xos": "Zoom",
+        "com.apple.FaceTime": "FaceTime",
+        "com.microsoft.teams2": "Teams",
+        "com.microsoft.teams": "Teams",
+        "com.cisco.webexmeetingsapp": "Webex",
+        "com.webex.meetingmanager": "Webex",
+        // Mic use in these means a call/huddle in practice; provisional
+        // capture makes an occasional voice-clip false positive harmless.
+        "com.tinyspeck.slackmacgap": "Slack",
+        "com.hnc.Discord": "Discord",
+    ]
+    static let browserBundles = [
+        "com.google.Chrome", "com.apple.Safari", "company.thebrowser.Browser",
+        "com.brave.Browser", "com.microsoft.edgemac",
+    ]
+    /// Apps that live in the Dock/menu bar all day (Slack, Discord). "It's
+    /// running" means nothing for these — they may only fire a nudge when mic
+    /// ATTRIBUTION names them, never from the merely-running fallback. That
+    /// fallback is how Wispr Flow's dictation kept surfacing a "Slack meeting":
+    /// Wispr grabs the mic, attribution comes back empty, Slack happens to be
+    /// running.
+    static let residentApps: Set<String> = [
+        "com.tinyspeck.slackmacgap", "com.hnc.Discord",
+    ]
+    /// Known dictation utilities — them holding the mic is NEVER a meeting,
+    /// even if attribution also lists other apps.
+    static let dictationApps: Set<String> = [
+        "com.electron.wispr-flow",        // Wispr Flow
+        "com.superduper.superwhisper",    // superwhisper
+        "com.goodsnooze.macwhisper",      // MacWhisper
+        "com.muckstack.mumbls",           // Mumbls
+    ]
+
+    func start() {
+        installDefaultDeviceListener()
+        installRunningListener()
+        NotificationCenter.default.addObserver(
+            forName: Self.suppressNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.suppressedUntil = Date().addingTimeInterval(15)
+            }
+        }
+    }
+
+    // MARK: CoreAudio listeners
+
+    private func installDefaultDeviceListener() {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &address, .main
+        ) { [weak self] _, _ in
+            Task { @MainActor in self?.installRunningListener() }
+        }
+    }
+
+    private func installRunningListener() {
+        let deviceID = Self.defaultInputDevice()
+        guard deviceID != kAudioObjectUnknown, deviceID != listeningDeviceID else { return }
+        listeningDeviceID = deviceID
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(deviceID, &address, .main) { [weak self] _, _ in
+            Task { @MainActor in self?.micStateChanged() }
+        }
+    }
+
+    private static func defaultInputDevice() -> AudioObjectID {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID)
+        return deviceID
+    }
+
+    private func micIsRunning() -> Bool {
+        guard listeningDeviceID != kAudioObjectUnknown else { return false }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var running: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        AudioObjectGetPropertyData(listeningDeviceID, &address, 0, nil, &size, &running)
+        return running != 0
+    }
+
+    // MARK: Decision
+
+    private func micStateChanged() {
+        let running = micIsRunning()
+        defer { wasRunning = running }
+        // Only rising edges: mic just turned ON.
+        guard running, !wasRunning else { return }
+        guard !isOwnAudioActive() else { return }
+        guard Date() > suppressedUntil else { return }
+        guard Date().timeIntervalSince(lastNudge) > 300 else { return }
+
+        // Attribute the mic to its owner when the OS can tell us. A dictation
+        // utility (Wispr, etc.) holding the mic is NOT a meeting — bail
+        // unless the owner is a meeting app or a browser.
+        let allOwners = AudioCapture.processesUsingMic()
+        let owners = allOwners.filter { $0 != Bundle.main.bundleIdentifier }
+        // A dictation tool on the mic is dictation, full stop.
+        guard !owners.contains(where: { Self.dictationApps.contains($0) }) else { return }
+        if !owners.isEmpty {
+            if let strong = owners.first(where: { Self.strongApps.keys.contains($0) }) {
+                lastNudge = Date()
+                onMeetingDetected?(Self.strongApps[strong] ?? "a meeting app")
+            } else if owners.contains(where: { Self.browserBundles.contains($0) }) {
+                scheduleBrowserRecheck()
+            }
+            return
+        }
+        // Attribution worked and the ONLY mic user is us (dictation, screen
+        // recording spin-up) — that is never a meeting. Without this, the
+        // fallback heuristic sees a merely-RUNNING Zoom and fires.
+        if !allOwners.isEmpty { return }
+
+        // No attribution available — old heuristics. Strong signal: a
+        // dedicated meeting app is running. Resident apps (Slack, Discord)
+        // are excluded here — always-running is not evidence of a call.
+        let apps = NSWorkspace.shared.runningApplications
+        if let meeting = apps.first(where: {
+            let id = $0.bundleIdentifier ?? ""
+            return Self.strongApps.keys.contains(id) && !Self.residentApps.contains(id)
+        }) {
+            let name = Self.strongApps[meeting.bundleIdentifier ?? ""] ?? "a meeting app"
+            lastNudge = Date()
+            onMeetingDetected?(name)
+            return
+        }
+        // Weaker: the FRONTMOST app is a browser using the mic.
+        if let front = NSWorkspace.shared.frontmostApplication,
+           Self.browserBundles.contains(front.bundleIdentifier ?? "") {
+            scheduleBrowserRecheck()
+        }
+    }
+
+    /// A blip isn't a meeting — believe the browser only if the mic is STILL
+    /// live 4s later (and, when attribution works, still owned by a browser).
+    private func scheduleBrowserRecheck() {
+        guard !browserRecheckPending else { return }
+        browserRecheckPending = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            self.browserRecheckPending = false
+            guard self.micIsRunning(),
+                  !self.isOwnAudioActive(),
+                  Date() > self.suppressedUntil else { return }
+            let owners = AudioCapture.processesUsingMic().filter { $0 != Bundle.main.bundleIdentifier }
+            if !owners.isEmpty {
+                guard owners.contains(where: { Self.browserBundles.contains($0) }) else { return }
+            } else {
+                guard let front = NSWorkspace.shared.frontmostApplication,
+                      Self.browserBundles.contains(front.bundleIdentifier ?? "") else { return }
+            }
+            self.lastNudge = Date()
+            self.onMeetingDetected?("your browser")
+        }
+    }
+}
