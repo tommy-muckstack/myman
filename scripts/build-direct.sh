@@ -386,13 +386,13 @@ APPCAST
     if [[ -n "${BLOB_READ_WRITE_TOKEN:-}" ]]; then
         echo "==> Uploading to Vercel Blob..."
         vercel blob put "$DMG_PATH" --pathname "$VERSIONED_DMG_NAME" \
-            --force true --content-type application/x-apple-diskimage \
+            --access public --allow-overwrite true --content-type application/x-apple-diskimage \
             --cache-control-max-age 31536000
         vercel blob put "$DMG_PATH" --pathname "$SLUG.dmg" \
-            --force true --content-type application/x-apple-diskimage \
+            --access public --allow-overwrite true --content-type application/x-apple-diskimage \
             --cache-control-max-age 300
         vercel blob put "$APPCAST_PATH" --pathname "$SLUG-appcast.xml" \
-            --force true --content-type application/rss+xml \
+            --access public --allow-overwrite true --content-type application/rss+xml \
             --cache-control-max-age 300
     else
         echo "==> Skipping upload (no BLOB_READ_WRITE_TOKEN)"
