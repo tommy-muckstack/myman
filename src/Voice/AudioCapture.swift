@@ -27,6 +27,15 @@ final class AudioCapture: @unchecked Sendable {
     /// between hotkey and pill that Wispr doesn't have.
     private let prepareLock = NSLock()
 
+    /// How long a voice-processing engine may sit idle before we tear it
+    /// down. It has to be SHORT: an idle VP unit ducks the whole machine's
+    /// output (see `suppressVoiceProcessing`), so a warm engine kept "for
+    /// next time" means Spotify stays quiet forever. Long enough that
+    /// back-to-back dictation takes still start instantly.
+    private static let idleReleaseGrace: TimeInterval = 8
+    private var idleRelease: DispatchWorkItem?
+    private let idleLock = NSLock()
+
     func prepare() {
         prepareLock.lock()
         defer { prepareLock.unlock() }
@@ -43,6 +52,26 @@ final class AudioCapture: @unchecked Sendable {
         _ = eng.inputNode.outputFormat(forBus: 0) // force graph configuration
         eng.prepare()
         engine = eng
+        if vpEnabled { scheduleIdleRelease() }
+    }
+
+    /// Arm the teardown that gets the machine out of voice-chat mode. Cheap
+    /// to re-arm; any new session cancels it.
+    private func scheduleIdleRelease() {
+        idleLock.lock()
+        idleRelease?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.releaseIfIdle() }
+        idleRelease = work
+        idleLock.unlock()
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + Self.idleReleaseGrace, execute: work)
+    }
+
+    private func cancelIdleRelease() {
+        idleLock.lock()
+        idleRelease?.cancel()
+        idleRelease = nil
+        idleLock.unlock()
     }
 
     /// TRUE while a screen recording runs. An INITIALIZED voice-processing
@@ -84,6 +113,7 @@ final class AudioCapture: @unchecked Sendable {
     /// Start a capture session. The engine starts on the first session and
     /// reconfigures only when the required processing mode changes.
     func begin(_ mode: Mode) throws -> UUID {
+        cancelIdleRelease()
         let id = UUID()
         lock.lock()
         buffers[id] = []
@@ -135,7 +165,11 @@ final class AudioCapture: @unchecked Sendable {
                 engine?.inputNode.removeTap(onBus: 0)
                 tapInstalled = false
             }
-            engine?.stop() // engine object stays warm for the next take
+            engine?.stop() // engine object stays warm for the next take…
+            // …but only briefly: a stopped engine still holds an initialized
+            // voice-processing unit, and that alone keeps every other app's
+            // audio ducked. Hand the machine back.
+            if vpEnabled { scheduleIdleRelease() }
         } else {
             try? reconfigureAndRun()
         }
@@ -244,12 +278,39 @@ final class AudioCapture: @unchecked Sendable {
             var pidSize = UInt32(MemoryLayout<pid_t>.size)
             guard AudioObjectGetPropertyData(object, &pidAddress, 0, nil, &pidSize, &pid) == noErr
             else { continue }
-            if let app = NSRunningApplication(processIdentifier: pid),
-               let bundle = app.bundleIdentifier {
+            if let bundle = owningBundleID(of: pid) {
                 ids.append(bundle)
             }
         }
         return ids
+    }
+
+    /// The bundle ID of the APP a mic-holding process belongs to.
+    ///
+    /// Electron and Chromium apps never open the mic from their main process —
+    /// it's a helper nested inside the bundle
+    /// (`Wispr Flow.app/Contents/Frameworks/Wispr Flow Helper (Renderer).app`).
+    /// `NSRunningApplication` describes that helper, not the app, so asking it
+    /// alone answers "nil" or some helper ID for every Electron app there is:
+    /// Wispr Flow, Slack, Discord, Teams, and Chrome's audio service included.
+    /// Walking the executable path out to the OUTERMOST `.app` gets the real
+    /// owner, which is what the denylists and meeting detection are written
+    /// against.
+    static func owningBundleID(of pid: pid_t) -> String? {
+        var buf = [CChar](repeating: 0, count: 4 * 1024)
+        if proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 {
+            let path = String(cString: buf)
+            // …/Foo.app/Contents/Frameworks/Foo Helper.app/Contents/MacOS/x
+            // → the FIRST ".app" component is the outermost bundle.
+            let parts = path.components(separatedBy: "/")
+            if let appIndex = parts.firstIndex(where: { $0.hasSuffix(".app") }) {
+                let appPath = parts[...appIndex].joined(separator: "/")
+                if let bundle = Bundle(path: appPath)?.bundleIdentifier {
+                    return bundle
+                }
+            }
+        }
+        return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
     }
 
     /// Peak-normalize up to a healthy level (this is what makes a whispered
