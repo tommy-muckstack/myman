@@ -361,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         if voiceCombo.isModifierOnly {
             modifierMonitor.onDown = { [weak self] in self?.voice.hotkeyDown() }
             modifierMonitor.onUp = { [weak self] in self?.voice.modifierHotkeyUp() }
+            modifierMonitor.onAbort = { [weak self] in self?.voice.modifierHotkeyAborted() }
             modifierMonitor.start(keyCode: voiceCombo.keyCode)
         } else {
             let voiceResult = HotkeyCenter.shared.register(
