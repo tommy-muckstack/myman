@@ -337,9 +337,13 @@ final class TranscriptionService {
         let normalized = text.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .joined(separator: " ")
+        // Match on the TAIL alone. The decoder garbles the words in front of
+        // it differently every time ("opera", "oper", "agnis the oper"), and
+        // an earlier list of full phrases let those variants through into
+        // real documents. Nobody dictates this phrase on purpose.
         let taskFragments = [
-            "opera to english text", "opera into english text",
-            "audio to english text", "audio into english text",
+            "to english text", "into english text",
+            "to english language", "into english language",
         ]
         guard taskFragments.contains(where: normalized.contains) else { return text }
         NSLog("My Man [ASR] discarded English-task hallucination")

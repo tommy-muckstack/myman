@@ -43,12 +43,11 @@ final class AudioCapture: @unchecked Sendable {
         let eng = AVAudioEngine()
         // Voice processing (AGC + noise suppression) lifts whispers for the
         // dictation model. Best-effort — plain capture if hardware refuses.
-        if !suppressVoiceProcessing {
+        let wantVP = desiredVoiceProcessing()
+        if wantVP {
             try? eng.inputNode.setVoiceProcessingEnabled(true)
-            vpEnabled = true
-        } else {
-            vpEnabled = false
         }
+        vpEnabled = wantVP
         _ = eng.inputNode.outputFormat(forBus: 0) // force graph configuration
         eng.prepare()
         engine = eng
@@ -153,10 +152,17 @@ final class AudioCapture: @unchecked Sendable {
         return (raw, rate)
     }
 
+    /// Loudest sample of the most recently ended take, BEFORE normalization.
+    /// Dictation needs this: after `finalize` peak-normalizes, a silent room
+    /// and a spoken sentence look identical. Written by `end` only, and
+    /// dictation takes are serialized, so there is one meaningful reader.
+    private(set) var lastTakeRawPeak: Float = 0
+
     func end(_ id: UUID) -> [Float] {
         let rate = engine?.inputNode.inputFormat(forBus: 0).sampleRate ?? 48000
         lock.lock()
         let raw = buffers.removeValue(forKey: id) ?? []
+        lastTakeRawPeak = raw.map(abs).max() ?? 0
         modes.removeValue(forKey: id)
         let remaining = buffers.count
         lock.unlock()
@@ -194,6 +200,11 @@ final class AudioCapture: @unchecked Sendable {
     /// the call app owns echo cancellation; ours corrupts what peers hear.
     private func desiredVoiceProcessing() -> Bool {
         if suppressVoiceProcessing { return false }
+        // Opt-in only. An active voice-processing unit ducks every other
+        // app's output for as long as it lives — dictating shouldn't turn
+        // the music down. Read straight from defaults: this is called off
+        // the main actor, and SettingsStore is main-only.
+        guard UserDefaults.standard.bool(forKey: "enhanceMicrophone") else { return false }
         lock.lock()
         defer { lock.unlock() }
         return !modes.values.contains(.raw)

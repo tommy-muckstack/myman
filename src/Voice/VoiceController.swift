@@ -71,17 +71,15 @@ final class VoiceController: ObservableObject {
         toggle()
     }
 
-    /// Bare-modifier hold: release always ends it — a short hold (a normal
-    /// ⌘-tap) cancels silently instead of toggling into hands-free mode.
+    /// Bare-modifier hold: release ends it and transcribes. The monitor only
+    /// reports a key-down once the modifier has been held ALONE past its arm
+    /// delay, so by the time we're recording the intent is already proven —
+    /// a ⌘-tap or any ⌘-shortcut never reaches here at all.
     func modifierHotkeyUp() {
         hotkeyHeld = false
         guard case .recording = phase else { return }
-        if let began = pressBegan, Date().timeIntervalSince(began) > 0.4 {
-            endReason = "release"
-            stopAndTranscribe()
-        } else {
-            dismiss()
-        }
+        endReason = "release"
+        stopAndTranscribe()
     }
 
     func hotkeyUp() {
@@ -256,6 +254,19 @@ final class VoiceController: ObservableObject {
         session = nil
 
         guard samples.count > 3200 else { // < 0.2s — nothing said
+            dismissPill()
+            phase = .idle
+            return
+        }
+
+        // Loud enough to BE speech? Room tone peaks around 0.001-0.003; even
+        // a whisper clears this comfortably. Without the check, `finalize`
+        // normalizes near-silence up by three orders of magnitude and the
+        // model obligingly invents a sentence out of the hiss — which is how
+        // "…to English text" ends up pasted into whatever was focused.
+        guard audio.lastTakeRawPeak > 0.01 else {
+            NSLog("My Man [dictation] no speech in take (peak \(audio.lastTakeRawPeak)) — discarded")
+            Analytics.track("dictation_discarded_silence")
             dismissPill()
             phase = .idle
             return

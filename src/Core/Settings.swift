@@ -126,6 +126,14 @@ final class SettingsStore: ObservableObject {
     @Published var dictationTone: DictationTone {
         didSet { UserDefaults.standard.set(dictationTone.rawValue, forKey: "dictationTone") }
     }
+    /// Noise suppression + AGC on the dictation mic. OFF by default: the only
+    /// way macOS offers it is a voice-processing unit, and an active one puts
+    /// the whole machine in voice-chat mode — every other app's audio ducks
+    /// while you dictate. Takes are peak-normalized at stop either way, which
+    /// is what carries a whisper; this only adds suppression on top.
+    @Published var enhanceMicrophone: Bool {
+        didSet { UserDefaults.standard.set(enhanceMicrophone, forKey: "enhanceMicrophone") }
+    }
     /// nil = never chosen: follow the system live. Set once, it sticks.
     @Published var theme: AppTheme? {
         didSet {
@@ -147,6 +155,7 @@ final class SettingsStore: ObservableObject {
         autoRecordMeetings = UserDefaults.standard.bool(forKey: "autoRecordMeetings")
         cursorEffects = UserDefaults.standard.object(forKey: "cursorEffects") as? Bool ?? true
         dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
+        enhanceMicrophone = UserDefaults.standard.bool(forKey: "enhanceMicrophone")
         theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "")
         screenshotFolderPath = UserDefaults.standard.string(forKey: "screenshotFolder")
             ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
@@ -367,6 +376,10 @@ struct SettingsPanelView: View {
                 ForEach(DictationTone.allCases) { tone in Text(tone.label).tag(tone) }
             }.labelsHidden().pickerStyle(.segmented)
             Text(store.dictationTone.detail).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+            Toggle("Noise suppression on the mic", isOn: $store.enhanceMicrophone)
+                .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+            Text("Turns down other apps' audio while you dictate — macOS only offers this by putting the whole machine in call mode.")
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             TextEditor(text: $vocabularyText).font(MM.Fonts.secondary).frame(height: 130)
                 .scrollContentBackground(.hidden).padding(6)
                 .background(RoundedRectangle(cornerRadius: 8).fill(MM.Colors.surface))
