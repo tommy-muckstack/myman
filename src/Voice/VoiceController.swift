@@ -75,6 +75,15 @@ final class VoiceController: ObservableObject {
     /// reports a key-down once the modifier has been held ALONE past its arm
     /// delay, so by the time we're recording the intent is already proven —
     /// a ⌘-tap or any ⌘-shortcut never reaches here at all.
+    /// A click landed while the bare modifier was held. That's a ⌘-click, not
+    /// speech: drop the take without transcribing, so nothing is pasted.
+    func modifierHotkeyAborted() {
+        hotkeyHeld = false
+        guard case .recording = phase else { return }
+        Analytics.track("dictation_discarded_click")
+        dismiss()
+    }
+
     func modifierHotkeyUp() {
         hotkeyHeld = false
         guard case .recording = phase else { return }

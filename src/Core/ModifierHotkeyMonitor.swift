@@ -9,6 +9,9 @@ import Carbon
 final class ModifierHotkeyMonitor {
     var onDown: (() -> Void)?
     var onUp: (() -> Void)?
+    /// A click arrived after we'd already started. The user is ⌘-clicking,
+    /// not talking — throw the take away rather than transcribe it.
+    var onAbort: (() -> Void)?
 
     /// How long the modifier must be held ALONE before this counts as a
     /// hotkey. ⌘ is half of every keyboard shortcut on the machine, so
@@ -74,12 +77,24 @@ final class ModifierHotkeyMonitor {
         }
 
         // Any other key or click during the arming window means this is a
-        // shortcut, not a hold. Disarm — but only BEFORE we've started; once
-        // dictation is live, ⌘-Return and clicks must not disturb it.
-        let abortHandler: (NSEvent) -> Void = { [weak self] _ in
-            guard let self, self.isPressed, !self.didFireDown else { return }
-            self.armTask?.cancel()
-            self.armTask = nil
+        // shortcut, not a hold. Disarm before we ever touch the mic.
+        //
+        // Clicks additionally abort AFTER arming. ⌘-click is normally a slow
+        // gesture — hold ⌘, aim, click — so the hold alone clears the arm
+        // delay and dictation is already live by the time the click lands.
+        // Keys don't get this treatment: ⌘-Return mid-dictation is a real
+        // thing, and a keystroke can't be a ⌘-click.
+        let abortHandler: (NSEvent) -> Void = { [weak self] event in
+            guard let self, self.isPressed else { return }
+            guard self.didFireDown else {
+                self.armTask?.cancel()
+                self.armTask = nil
+                return
+            }
+            let isClick = event.type != .keyDown
+            guard isClick else { return }
+            self.didFireDown = false // release must not also report an onUp
+            self.onAbort?()
         }
         let abortMask: NSEvent.EventTypeMask = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
         if let m = NSEvent.addGlobalMonitorForEvents(matching: abortMask, handler: abortHandler) {
