@@ -24,6 +24,11 @@ enum Analytics {
             // "release" only in build-direct.sh bundles — filter dashboards to
             // channel=release so dev runs never pollute install/upgrade counts.
             "channel": info?["MMChannel"] as? String ?? "dev",
+            // Which Mac. One person running two machines looks like two users
+            // otherwise, and every "is this a real user or just me?" question
+            // needs telling them apart.
+            "machine": machineName,
+            "device_model": deviceModel,
         ]
         commonProps = common
 
@@ -39,6 +44,29 @@ enum Analytics {
             amp.identify(identify: identify)
             amplitude = amp
         }
+    }
+
+    /// A human-recognisable name for this Mac. `localizedName` is documented
+    /// as optional and does come back empty in practice, so fall back to the
+    /// host name rather than collapsing every such machine into "unknown" —
+    /// two machines both called "unknown" are indistinguishable, which is the
+    /// exact failure this property exists to prevent.
+    private static var machineName: String {
+        if let name = Host.current().localizedName, !name.isEmpty { return name }
+        let host = ProcessInfo.processInfo.hostName
+        let trimmed = host.hasSuffix(".local") ? String(host.dropLast(6)) : host
+        return trimmed.isEmpty ? "unknown" : trimmed
+    }
+
+    /// The hardware identifier, e.g. "Mac16,8". Always present, never renamed
+    /// by the user, and the SAME string Sentry reports — which is what lets a
+    /// crash be lined up against its analytics.
+    private static var deviceModel: String {
+        var size = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return "unknown" }
+        var chars = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &chars, &size, nil, 0) == 0 else { return "unknown" }
+        return String(cString: chars)
     }
 
     static func track(_ event: String, _ properties: [String: Any] = [:]) {
