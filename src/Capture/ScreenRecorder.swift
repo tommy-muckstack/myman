@@ -127,8 +127,21 @@ final class ScreenRecorder: NSObject, ObservableObject {
         }
     }
 
+    /// Reading the default input device is a blocking round-trip to
+    /// coreaudiod that can stall for seconds while it switches devices
+    /// (MYMAN-4: a 3s main-thread hang). Never call the sync version from the
+    /// main actor — use `defaultInputDeviceOffMain()`.
+    private nonisolated static let halQueue =
+        DispatchQueue(label: "com.muckstack.myman.screenrecorder.hal")
+
+    private nonisolated static func defaultInputDeviceOffMain() async -> (uid: String, name: String)? {
+        await withCheckedContinuation { continuation in
+            halQueue.async { continuation.resume(returning: defaultInputDevice()) }
+        }
+    }
+
     /// The system-default input device — UID for SCK, name for the pill.
-    private static func defaultInputDevice() -> (uid: String, name: String)? {
+    private nonisolated static func defaultInputDevice() -> (uid: String, name: String)? {
         var deviceID = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         var address = AudioObjectPropertyAddress(
@@ -209,7 +222,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // and muxes it in after the stop.
                 config.captureMicrophone = false
                 self.microphoneName = self.microphoneEnabled
-                    ? (Self.defaultInputDevice()?.name ?? "Microphone") : nil
+                    ? ((await Self.defaultInputDeviceOffMain())?.name ?? "Microphone") : nil
                 // NEVER force sampleRate/channelCount here: when the active
                 // output device runs at a different rate (AirPods, DACs,
                 // monitor speakers), the forced format comes out as loud
@@ -481,7 +494,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
             UserDefaults.standard.set(enabled, forKey: "mm.screenRecordingMicrophone")
             guard self.isRecording, let url = self.outputURL else { return }
             if enabled {
-                self.microphoneName = Self.defaultInputDevice()?.name ?? "Microphone"
+                self.microphoneName = (await Self.defaultInputDeviceOffMain())?.name ?? "Microphone"
                 if self.narration.isActive {
                     self.narration.setMuted(false)
                 } else if let started = self.startedAt {

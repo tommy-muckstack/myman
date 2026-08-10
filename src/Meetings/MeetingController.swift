@@ -25,7 +25,32 @@ struct Meeting: Codable, FetchableRecord, PersistableRecord {
 
 // Meeting recording v1: system audio (CoreAudio process tap) + mic, each to
 // its own 16kHz WAV, with a floating recording pill. On stop, both tracks
-// transcribe on-device (Parakeet) into a "You" / "Others" transcript stored
+/// One utterance: who said it, and the window it occupies. Turns carry their
+/// END as well as their start so overlapping speech can be ordered, and so
+/// fragments of one sentence can be recognised by the gap between them.
+struct MeetingTurn: Sendable, Equatable {
+    var start: Double
+    var end: Double
+    var speaker: String
+    var text: String
+}
+
+/// Who the far side might be — and how much that is worth.
+///
+/// Attendee lists are evidence. A name inferred from an event title is a
+/// guess, and the two must never be treated alike: a recording that spans two
+/// calendar slots picks up the wrong title, and a guess stamped onto every
+/// remote turn misfiles the whole conversation against a real person.
+struct SpeakerCandidates: Sendable, Equatable {
+    var names: [String] = []
+    /// True only when these came from an actual attendee list.
+    var fromAttendees = false
+
+    static let none = SpeakerCandidates()
+    var isEmpty: Bool { names.isEmpty }
+}
+
+// transcribe on-device (Parakeet) into a "You" / "Speaker 2" transcript stored
 // in the shared database. Music auto-pauses while recording.
 
 @MainActor
@@ -74,7 +99,7 @@ final class MeetingController: ObservableObject {
     private var pendingAttendees: [(name: String, email: String?)] = []
     /// First names of this session's attendees — candidates for turning
     /// "Speaker 2" into "Amy" from conversational context.
-    private var sessionAttendeeNames: [String] = []
+    private var sessionAttendeeNames = SpeakerCandidates.none
     /// End-of-meeting watch: once a call app has been seen on the mic,
     /// its sustained absence means everyone hung up.
     private var endWatchTimer: Timer?
@@ -490,7 +515,7 @@ final class MeetingController: ObservableObject {
             candidates: sessionAttendeeNames, attendees: pendingAttendees)
         meeting = nil
         pendingAttendees = []
-        sessionAttendeeNames = []
+        sessionAttendeeNames = .none
         phase = .idle
         enqueueTranscription(job)
         applyPillFrame()
@@ -502,7 +527,7 @@ final class MeetingController: ObservableObject {
         var record: Meeting
         let micPath: String?
         let systemPath: String?
-        let candidates: [String]
+        let candidates: SpeakerCandidates
         let attendees: [(name: String, email: String?)]
     }
 
@@ -573,14 +598,32 @@ final class MeetingController: ObservableObject {
             .first?.title
     }
 
+    /// A usable first name from one attendee entry. A calendar attendee is
+    /// often a bare email address, and `"michael.bird@amplitude.com"` has no
+    /// space — taking its "first word" put a raw address in the transcript as
+    /// a speaker label. Derive a name from the local part instead, or nothing.
+    nonisolated static func firstName(fromAttendee raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard trimmed.contains("@") else {
+            return trimmed.split(separator: " ").first.map(String.init)
+        }
+        let local = trimmed.split(separator: "@").first.map(String.init) ?? ""
+        let token = local.split(whereSeparator: { !$0.isLetter }).first.map(String.init)
+        guard let token, token.count >= 2 else { return nil }
+        return token.prefix(1).uppercased() + token.dropFirst().lowercased()
+    }
+
     /// Calendar attendees are the best source of real speaker names. For a
     /// personal one-on-one titled like "Tommy Neith Weekly", calendars often
     /// omit attendees entirely; use the single non-owner name in that exact
     /// title pattern as equally bounded evidence.
-    private static func speakerCandidates(eventTitle: String?, attendees: [String]) -> [String] {
-        var names = attendees.compactMap { $0.split(separator: " ").first.map(String.init) }
+    nonisolated static func speakerCandidates(eventTitle: String?, attendees: [String]) -> SpeakerCandidates {
+        var names = attendees.compactMap(firstName(fromAttendee:))
         let uniqueAttendees = Array(Set(names)).sorted()
-        guard uniqueAttendees.isEmpty, let eventTitle else { return uniqueAttendees }
+        guard uniqueAttendees.isEmpty, let eventTitle else {
+            return SpeakerCandidates(names: uniqueAttendees, fromAttendees: true)
+        }
 
         let titleWords = eventTitle.components(separatedBy: CharacterSet.letters.inverted)
             .filter { !$0.isEmpty }
@@ -588,7 +631,7 @@ final class MeetingController: ObservableObject {
             .filter { $0.count >= 2 }
         guard let ownerFirst = ownerWords.first,
               titleWords.contains(where: { $0.caseInsensitiveCompare(ownerFirst) == .orderedSame })
-        else { return uniqueAttendees }
+        else { return SpeakerCandidates(names: uniqueAttendees, fromAttendees: true) }
 
         let generic = Set(["weekly", "sync", "meeting", "call", "catch", "up", "with", "and"])
         let candidate = titleWords.filter { word in
@@ -597,7 +640,11 @@ final class MeetingController: ObservableObject {
                 && word.count >= 3
         }
         if candidate.count == 1 { names.append(candidate[0]) }
-        return Array(Set(names)).sorted()
+        // A name pulled out of an event title is a GUESS, not an attendee
+        // list. Titles drift when a recording spans two calendar slots, and
+        // stamping a guess on every remote turn is how a 1:1 was filed
+        // against someone who was never in the room.
+        return SpeakerCandidates(names: Array(Set(names)).sorted(), fromAttendees: false)
     }
 
     /// Stream the WAV from disk in 60s slices — an hour of audio is ~230MB
@@ -645,7 +692,7 @@ final class MeetingController: ObservableObject {
     /// conversation. Real failure mode: a quiet mic track losing every one
     /// of the user's turns while the remote track came through fine.
     private static func turnsWithFallback(atPath path: String, speaker: String)
-        async -> [(start: Double, speaker: String, text: String)] {
+        async -> [MeetingTurn] {
         let turns = await transcribeTurns(atPath: path, speaker: speaker)
         let duration = wavDuration(atPath: path)
         let covered = turns.reduce(0.0) { $0 + Double($1.text.count) }
@@ -660,7 +707,9 @@ final class MeetingController: ObservableObject {
         Analytics.track("meeting_track_fallback",
                         ["speaker": speaker, "turn_chars": Int(covered),
                          "chunk_chars": chunkChars, "duration_s": Int(duration)])
-        return chunks.map { ($0.start, speaker, $0.text) }
+        return chunks.map {
+            MeetingTurn(start: $0.start, end: $0.start + 60, speaker: speaker, text: $0.text)
+        }
     }
 
     /// Speech turns in a 16k WAV via energy gating, streamed — frame RMS at
@@ -717,15 +766,38 @@ final class MeetingController: ObservableObject {
         if let c = current {
             segments.append((Double(c.first) * 0.1, Double(c.last + 1) * 0.1))
         }
-        return segments.filter { $0.1 - $0.0 >= 0.4 }
+        return mergeSegments(segments.filter { $0.1 - $0.0 >= 0.4 })
+    }
+
+    /// Glue segments separated by a short pause back into one utterance.
+    ///
+    /// The energy gate closes a turn after 1s of silence, but a person
+    /// pausing mid-sentence — "You'd have a PM… a designer… four to six
+    /// engineers" — trips it repeatedly. That produced one transcript line
+    /// per fragment AND, worse, handed the recognizer 1-2 second clips with
+    /// no surrounding context, which is how "four to six engineers" came back
+    /// as the single word "Six". Feeding the whole phrase as one slice fixes
+    /// both the shredding and the accuracy.
+    nonisolated static func mergeSegments(_ segments: [(Double, Double)])
+        -> [(start: Double, end: Double)] {
+        let maxGap = 2.0
+        var merged: [(start: Double, end: Double)] = []
+        for segment in segments {
+            if let last = merged.last, segment.0 - last.end <= maxGap {
+                merged[merged.count - 1].end = segment.1
+            } else {
+                merged.append((segment.0, segment.1))
+            }
+        }
+        return merged
     }
 
     /// Transcribe each speech turn of one track, tagged with speaker + start.
     private static func transcribeTurns(atPath path: String, speaker: String)
-        async -> [(start: Double, speaker: String, text: String)] {
+        async -> [MeetingTurn] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
-        var turns: [(start: Double, speaker: String, text: String)] = []
+        var turns: [MeetingTurn] = []
         for segment in speechSegments(atPath: path) {
             var offset = segment.start
             var texts: [String] = []
@@ -743,39 +815,50 @@ final class MeetingController: ObservableObject {
                 offset = sliceEnd
             }
             let joined = texts.joined(separator: " ")
-            if !joined.isEmpty { turns.append((segment.start, speaker, joined)) }
+            if !joined.isEmpty {
+                turns.append(MeetingTurn(start: segment.start, end: segment.end,
+                                         speaker: speaker, text: joined))
+            }
         }
         return turns
     }
 
     /// The interleaved conversation — both tracks' turns merged by time:
     ///   **You** [3:12]: …
-    ///   **Them** [3:19]: …
+    ///   **Speaker 2** [3:19]: …
     /// Falls back to the old two-block format when turn detection finds
     /// nothing but whole-file transcription would (very quiet audio).
     static func buildTranscript(micPath: String?, systemPath: String?,
-                                candidates: [String] = []) async -> String {
-        var turns: [(start: Double, speaker: String, text: String)] = []
+                                candidates: SpeakerCandidates = .none) async -> String {
+        var turns: [MeetingTurn] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
-            turns += await turnsWithFallback(atPath: micPath, speaker: "You")
+            turns += await turnsWithFallback(atPath: micPath, speaker: Self.ownerLabel)
         }
         if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
-            var sysTurns = await turnsWithFallback(atPath: systemPath, speaker: "Them")
-            if candidates.count == 1, let only = candidates.first {
-                // A 1:1: exactly one person can be on the remote track.
-                // Diarization can only hurt here — echo and noise split one
-                // voice into "Speaker 1"/"Speaker 2" — so skip it and label
-                // every remote turn with the known attendee.
-                sysTurns = sysTurns.map { ($0.start, only, $0.text) }
+            var sysTurns = await turnsWithFallback(atPath: systemPath, speaker: Self.remoteLabel)
+            if candidates.fromAttendees, candidates.names.count == 1,
+               let only = candidates.names.first {
+                // A 1:1 with a KNOWN attendee: exactly one person can be on
+                // the remote track. Diarization can only hurt here — echo and
+                // noise split one voice into "Speaker 1"/"Speaker 2" — so
+                // skip it and label every remote turn with that attendee.
+                // Only ever on attendee-list evidence: a name guessed from an
+                // event title is not enough to put on someone's words.
+                sysTurns = sysTurns.map {
+                    MeetingTurn(start: $0.start, end: $0.end, speaker: only, text: $0.text)
+                }
             } else {
                 let diarized = await Diarization.shared.speakerSegments(forWavAtPath: systemPath)
-                sysTurns = label(turns: sysTurns, with: diarized)
+                sysTurns = label(turns: sysTurns, with: collapsePhantomSpeakers(in: diarized))
             }
             turns += sysTurns
         }
         if !turns.isEmpty {
-            turns.sort { $0.start < $1.start }
+            // Strictly chronological, and a turn that starts with another
+            // resolves by which one finishes first.
+            turns.sort { ($0.start, $0.end) < ($1.start, $1.end) }
             turns = nameSpeakers(in: turns, candidates: candidates)
+            turns = mergeConsecutive(turns)
             return turns.map { turn in
                 let m = Int(turn.start) / 60
                 let s = Int(turn.start) % 60
@@ -785,39 +868,105 @@ final class MeetingController: ObservableObject {
         var sections: [String] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
             let text = await transcribeWavFile(atPath: micPath)
-            if !text.isEmpty { sections.append("You:\n\(text)") }
+            if !text.isEmpty { sections.append("\(Self.ownerLabel):\n\(text)") }
         }
         if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
             let text = await transcribeWavFile(atPath: systemPath)
-            if !text.isEmpty { sections.append("Others:\n\(text)") }
+            if !text.isEmpty { sections.append("\(Self.remoteLabel):\n\(text)") }
         }
         return sections.joined(separator: "\n\n")
     }
 
-    /// Rename "Them" turns to "Speaker N" (first-appearance order) by max
+    /// The user's own track. The far side, before identification.
+    nonisolated static let ownerLabel = "You"
+    /// Never "Them" or "Others": those read as a group, so a two-person call
+    /// looked like three people once a real name was resolved alongside them.
+    /// One positional format, used everywhere, or a real name.
+    nonisolated static let remoteLabel = "Speaker 2"
+
+    /// Fold a diarized voice that is almost certainly an artefact back into
+    /// the speaker it was split from.
+    ///
+    /// On one remote stream, echo of the user's own voice and brief
+    /// backchannel ("yeah", "mm-hmm") routinely come back as a second
+    /// speaker id holding a few seconds of audio. Labeling that as its own
+    /// participant invented a third person in a 1:1. A voice is real if it
+    /// holds a meaningful share of the conversation.
+    nonisolated static func collapsePhantomSpeakers(
+        in segments: [(speaker: String, start: Double, end: Double)]
+    ) -> [(speaker: String, start: Double, end: Double)] {
+        var total: [String: Double] = [:]
+        for segment in segments {
+            total[segment.speaker, default: 0] += max(0, segment.end - segment.start)
+        }
+        guard let dominant = total.max(by: { $0.value < $1.value }) else { return segments }
+        // Under a tenth of the leading voice, or under 8 seconds all told, is
+        // backchannel and echo — not a participant.
+        let phantoms = Set(total.filter { $0.key != dominant.key &&
+            ($0.value < dominant.value * 0.10 || $0.value < 8) }.keys)
+        guard !phantoms.isEmpty else { return segments }
+        Analytics.track("meeting_phantom_speaker_collapsed", ["count": phantoms.count])
+        return segments.map {
+            phantoms.contains($0.speaker)
+                ? (dominant.key, $0.start, $0.end) : $0
+        }
+    }
+
+    /// Rename remote turns to "Speaker N" (first-appearance order) by max
     /// time-overlap with the diarizer's segments. One distinct voice — or no
-    /// diarization at all — keeps the plain "Them", which reads better.
-    private static func label(
-        turns: [(start: Double, speaker: String, text: String)],
+    /// diarization at all — keeps the single remote label.
+    nonisolated private static func label(
+        turns: [MeetingTurn],
         with segments: [(speaker: String, start: Double, end: Double)]
-    ) -> [(start: Double, speaker: String, text: String)] {
+    ) -> [MeetingTurn] {
         let distinct = Set(segments.map(\.speaker))
         guard distinct.count >= 2 else { return turns }
         var order: [String: Int] = [:]
         for segment in segments.sorted(by: { $0.start < $1.start }) where order[segment.speaker] == nil {
-            order[segment.speaker] = order.count + 1
+            // The user is Speaker 1 by convention, so the far side starts at 2.
+            order[segment.speaker] = order.count + 2
         }
-        return turns.enumerated().map { index, turn in
-            let turnEnd = index + 1 < turns.count ? turns[index + 1].start : turn.start + 30
+        return turns.map { turn in
             var overlap: [String: Double] = [:]
             for segment in segments {
-                let shared = min(turnEnd, segment.end) - max(turn.start, segment.start)
+                let shared = min(turn.end, segment.end) - max(turn.start, segment.start)
                 if shared > 0 { overlap[segment.speaker, default: 0] += shared }
             }
             guard let best = overlap.max(by: { $0.value < $1.value })?.key,
                   let n = order[best] else { return turn }
-            return (turn.start, "Speaker \(n)", turn.text)
+            return MeetingTurn(start: turn.start, end: turn.end,
+                               speaker: "Speaker \(n)", text: turn.text)
         }
+    }
+
+    /// One utterance per thought, not one per pause. Consecutive turns from
+    /// the same speaker close together are the same utterance broken up by
+    /// the energy gate; joining them is what turns four stranded fragments
+    /// back into a sentence.
+    nonisolated static func mergeConsecutive(_ turns: [MeetingTurn]) -> [MeetingTurn] {
+        let maxGap = 6.0
+        var merged: [MeetingTurn] = []
+        for turn in turns {
+            guard var last = merged.last, last.speaker == turn.speaker,
+                  turn.start - last.end <= maxGap else {
+                merged.append(turn)
+                continue
+            }
+            last.end = max(last.end, turn.end)
+            last.text = joinUtterance(last.text, turn.text)
+            merged[merged.count - 1] = last
+        }
+        return merged
+    }
+
+    /// Join two halves of a broken-up utterance without inventing punctuation
+    /// the speaker did not use, and without doubling what is already there.
+    nonisolated private static func joinUtterance(_ lhs: String, _ rhs: String) -> String {
+        let left = lhs.trimmingCharacters(in: .whitespaces)
+        let right = rhs.trimmingCharacters(in: .whitespaces)
+        if left.isEmpty { return right }
+        if right.isEmpty { return left }
+        return left + " " + right
     }
 
     /// Turn "Speaker N" into real names from conversational evidence:
@@ -825,18 +974,23 @@ final class MeetingController: ObservableObject {
     /// addressing someone ("Amy, what do you think?") votes for the NEXT
     /// different speaker. Candidates come from calendar attendees only —
     /// this can mislabel, never invent. One name per speaker, ≥2 votes.
-    static func nameSpeakers(
-        in turns: [(start: Double, speaker: String, text: String)],
-        candidates: [String]
-    ) -> [(start: Double, speaker: String, text: String)] {
-        let names = Array(Set(candidates.filter { $0.count >= 3 }))
+    nonisolated static func nameSpeakers(
+        in turns: [MeetingTurn],
+        candidates: SpeakerCandidates
+    ) -> [MeetingTurn] {
+        let names = Array(Set(candidates.names.filter { $0.count >= 3 }))
         guard !names.isEmpty else { return turns }
-        // A two-person call has a single remote audio stream, which is
-        // intentionally left as "Them" by diarization. If the calendar gives
-        // exactly one non-owner candidate, that label is evidence-based.
-        if names.count == 1, turns.contains(where: { $0.speaker == "Them" }) {
+        // A two-person call has a single remote audio stream, which
+        // diarization intentionally leaves under one label. One candidate
+        // from the attendee LIST is evidence enough to name it; one guessed
+        // from an event title is not, and stays positional.
+        if names.count == 1, candidates.fromAttendees,
+           turns.contains(where: { $0.speaker == Self.remoteLabel }) {
             return turns.map { turn in
-                (turn.start, turn.speaker == "Them" ? names[0] : turn.speaker, turn.text)
+                turn.speaker == Self.remoteLabel
+                    ? MeetingTurn(start: turn.start, end: turn.end,
+                                  speaker: names[0], text: turn.text)
+                    : turn
             }
         }
         var votes: [String: [String: Int]] = [:]
@@ -869,7 +1023,9 @@ final class MeetingController: ObservableObject {
         }
         guard !assignment.isEmpty else { return turns }
         return turns.map { turn in
-            (turn.start, assignment[turn.speaker] ?? turn.speaker, turn.text)
+            guard let named = assignment[turn.speaker] else { return turn }
+            return MeetingTurn(start: turn.start, end: turn.end,
+                               speaker: named, text: turn.text)
         }
     }
 
@@ -905,9 +1061,13 @@ final class MeetingController: ObservableObject {
                 }
                 orphan.transcript = await Self.buildTranscript(
                     micPath: orphan.micAudioPath, systemPath: orphan.systemAudioPath,
-                    candidates: People.all().prefix(25).compactMap {
-                        $0.name.split(separator: " ").first.map(String.init)
-                    })
+                    // Known people, not this meeting's attendee list —
+                    // usable as naming hints, never as proof of who spoke.
+                    candidates: SpeakerCandidates(
+                        names: People.all().prefix(25).compactMap {
+                            $0.name.split(separator: " ").first.map(String.init)
+                        },
+                        fromAttendees: false))
                 if orphan.transcript.isEmpty {
                     try? await Database.shared.write { [orphan] in
                         _ = try Meeting.deleteOne($0, key: orphan.id)
