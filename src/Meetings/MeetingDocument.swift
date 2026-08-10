@@ -421,7 +421,8 @@ struct MeetingDocumentView: View {
         let transcript = meeting.transcript
         let id = meeting.id
         Task { @MainActor in
-            let generated = await MeetingSummarizer.summarize(transcript)
+            let generated = await MeetingSummarizer.summarize(
+                transcript, meetingDate: meeting.startedAt)
             isSummarizing = false
             guard !generated.isEmpty else { return }
             summary = generated
@@ -505,50 +506,53 @@ enum MeetingSummarizer {
     /// then a final pass writes the document. The old single-pass version
     /// read only the first 8,000 characters — a 44-minute meeting's summary
     /// knew nothing past minute ten, which is where the decisions live.
-    static func summarize(_ transcript: String) async -> String {
+    static func summarize(_ transcript: String, meetingDate: Date = Date()) async -> String {
         #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else { return "" }
         guard case .available = SystemLanguageModel.default.availability else { return "" }
-        let windowSize = 7000
         let finalInstructions = """
             You write concise meeting notes in markdown from a transcript \
             where lines look like "**Name** [minute:second]: what they said" \
-            ("You" is the user). Structure: "## Summary" (2-3 sentences), \
-            "## Key points" (bullets), and "## Action items" (bullets, only \
-            real commitments, with the owner's name) — omit any section with \
-            nothing to say. Keep concrete decisions, numbers, and names; \
-            plain, specific language. No preamble.
+            ("You" is the user). Structure: "## Summary" (2-3 sentences) and \
+            "## Key points" (bullets). Do NOT write an action items section. \
+            Cover the WHOLE meeting: the later half of a conversation carries \
+            the decisions, and a summary that stops early is wrong. \
+            Greetings, weekend and family chat, scheduling, and audio checks \
+            are noise — they usually open a meeting, and they never belong in \
+            the notes. Keep concrete decisions, numbers, and names; plain, \
+            specific language. No preamble.
             """
         do {
+            let body: String
+            var windowCount = 1
             if transcript.count <= windowSize {
-                let session = LanguageModelSession(instructions: finalInstructions)
-                let response = try await session.respond(to: transcript)
-                Analytics.track("meeting_summarized", ["windows": 1])
-                return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                body = transcript
+            } else {
+                let notes = await compress(transcript)
+                guard !notes.isEmpty else { return "" }
+                windowCount = notes.count
+                body = await reduceToFit(notes)
             }
-            var notes: [String] = []
-            for window in windows(of: transcript, size: windowSize).prefix(12) {
-                // Fresh session per window — context does not accumulate.
-                let session = LanguageModelSession(instructions: """
-                    Compress this slice of a meeting transcript (lines are \
-                    "**Name** [minute:second]: what they said"; "You" is the \
-                    user) into dense bullet notes. Keep every decision, \
-                    commitment, number, and name exactly; drop filler. \
-                    Bullets only, no headings, no preamble.
-                    """)
-                if let response = try? await session.respond(to: window) {
-                    notes.append(response.content)
-                }
-            }
-            guard !notes.isEmpty else { return "" }
-            let session = LanguageModelSession(instructions: finalInstructions + """
-                 The input is sequential bullet notes covering the whole \
-                meeting, not raw transcript lines.
-                """)
-            let response = try await session.respond(
-                to: String(notes.joined(separator: "\n").prefix(windowSize)))
-            Analytics.track("meeting_summarized", ["windows": notes.count])
-            return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let session = LanguageModelSession(
+                instructions: transcript.count <= windowSize ? finalInstructions
+                    : finalInstructions + """
+                         The input is sequential bullet notes covering the \
+                        whole meeting start to finish, not raw transcript \
+                        lines. Represent the end as fully as the beginning.
+                        """)
+            let response = try await session.respond(to: body)
+            // The write-up pass is told not to produce action items, but a
+            // model that ignores that would reintroduce exactly the invented
+            // topic-restatements this replaced. Only the extractor's list ships.
+            var document = stripActionItems(
+                response.content.trimmingCharacters(in: .whitespacesAndNewlines))
+            let actions = await ActionItemExtractor.extract(
+                from: transcript, meetingDate: meetingDate)
+            if !actions.isEmpty { document += "\n\n## Action items\n\n" + actions }
+            Analytics.track("meeting_summarized",
+                            ["windows": windowCount,
+                             "has_action_items": !actions.isEmpty])
+            return document
         } catch {
             NSLog("My Man [Summary] failed: \(error)")
             return ""
@@ -557,6 +561,89 @@ enum MeetingSummarizer {
         return ""
         #endif
     }
+
+    private static let windowSize = 7000
+
+    /// Drop any "## Action items" heading and everything under it, up to the
+    /// next heading.
+    static func stripActionItems(_ markdown: String) -> String {
+        var kept: [String] = []
+        var skipping = false
+        for line in markdown.components(separatedBy: "\n") {
+            let heading = line.trimmingCharacters(in: .whitespaces)
+            if heading.hasPrefix("#") {
+                skipping = heading.lowercased()
+                    .contains("action item") || heading.lowercased().contains("next step")
+            }
+            if !skipping { kept.append(line) }
+        }
+        return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    #if canImport(FoundationModels)
+    /// Dense bullet notes for every window of the transcript, in order.
+    @available(macOS 26.0, *)
+    private static func compress(_ transcript: String) async -> [String] {
+        var notes: [String] = []
+        let all = windows(of: transcript, size: windowSize)
+        for (index, window) in all.enumerated() {
+            // Fresh session per window — context does not accumulate.
+            let session = LanguageModelSession(instructions: """
+                Compress this slice of a meeting transcript (lines are \
+                "**Name** [minute:second]: what they said"; "You" is the \
+                user) into dense bullet notes. Keep every decision, \
+                commitment, number, name, and deadline exactly; drop \
+                greetings, small talk and filler. Bullets only, no headings, \
+                no preamble.
+                """)
+            if let response = try? await session.respond(to: window) {
+                notes.append(response.content)
+            } else {
+                // A dropped window is a hole in the middle of the meeting —
+                // worth knowing about, since the summary will read as if
+                // that stretch never happened.
+                Analytics.track("meeting_window_compression_failed",
+                                ["window": index, "of": all.count])
+            }
+        }
+        return notes
+    }
+
+    /// Fold notes down until they fit the model's window — by summarizing
+    /// again, never by cutting.
+    ///
+    /// This used to be `prefix(windowSize)`. On any meeting long enough to
+    /// need windowing, that silently threw away the tail before the write-up
+    /// pass ever saw it, which is exactly why summaries of long meetings
+    /// stopped around the halfway mark.
+    @available(macOS 26.0, *)
+    private static func reduceToFit(_ notes: [String]) async -> String {
+        var current = notes
+        var pass = 0
+        while current.joined(separator: "\n").count > windowSize, pass < 3 {
+            pass += 1
+            var folded: [String] = []
+            for group in windows(of: current.joined(separator: "\n\n"), size: windowSize) {
+                let session = LanguageModelSession(instructions: """
+                    Condense these meeting notes by about half. Keep every \
+                    decision, commitment, number, name, and deadline. Bullets \
+                    only, no headings, no preamble.
+                    """)
+                if let response = try? await session.respond(to: group) {
+                    folded.append(response.content)
+                } else {
+                    folded.append(group)
+                }
+            }
+            guard folded.joined().count < current.joined().count else { break }
+            current = folded
+        }
+        let joined = current.joined(separator: "\n")
+        // Only if condensing genuinely could not converge; keeping the END is
+        // the lesser evil, because that is where the commitments are.
+        return joined.count <= windowSize ? joined : String(joined.suffix(windowSize))
+    }
+    #endif
 
     /// Split on turn boundaries (blank lines) so no utterance is cut mid-way.
     private static func windows(of transcript: String, size: Int) -> [String] {

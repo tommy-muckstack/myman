@@ -15,7 +15,17 @@ final class MeetingDetector {
     /// The detector must stay quiet while My Man itself uses the mic.
     var isOwnAudioActive: () -> Bool = { false }
 
-    private var listeningDeviceID = AudioObjectID(kAudioObjectUnknown)
+    /// Every CoreAudio property read is a blocking IPC round-trip to
+    /// coreaudiod, and the daemon is at its slowest during exactly the device
+    /// switches that wake our listeners — a 3s main-thread freeze in
+    /// `GetDefaultDeviceIDFromServer` is what MYMAN-4 caught. So no HAL call
+    /// ever runs on the main actor: listeners are delivered here, the reads
+    /// happen here, and only the ANSWERS hop back to the main actor.
+    private nonisolated static let halQueue =
+        DispatchQueue(label: "com.muckstack.myman.meetingdetector.hal")
+
+    /// Confined to `halQueue`. Never touch it from the main actor.
+    private nonisolated(unsafe) var listeningDeviceID = AudioObjectID(kAudioObjectUnknown)
     private var lastNudge = Date.distantPast
     private var wasRunning = false
     private var suppressedUntil = Date.distantPast
@@ -62,7 +72,7 @@ final class MeetingDetector {
 
     func start() {
         installDefaultDeviceListener()
-        installRunningListener()
+        refreshRunningListener()
         NotificationCenter.default.addObserver(
             forName: Self.suppressNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -74,20 +84,30 @@ final class MeetingDetector {
 
     // MARK: CoreAudio listeners
 
-    private func installDefaultDeviceListener() {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &address, .main
-        ) { [weak self] _, _ in
-            Task { @MainActor in self?.installRunningListener() }
+    private nonisolated func installDefaultDeviceListener() {
+        Self.halQueue.async {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            AudioObjectAddPropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject), &address, Self.halQueue
+            ) { [weak self] _, _ in
+                self?.adoptDefaultInputDevice()
+            }
         }
     }
 
-    private func installRunningListener() {
+    /// Point the "is running somewhere" listener at whatever input device is
+    /// current. Safe to call from anywhere — the work lands on `halQueue`.
+    private nonisolated func refreshRunningListener() {
+        Self.halQueue.async { [weak self] in self?.adoptDefaultInputDevice() }
+    }
+
+    /// Runs on `halQueue`.
+    private nonisolated func adoptDefaultInputDevice() {
+        dispatchPrecondition(condition: .onQueue(Self.halQueue))
         let deviceID = Self.defaultInputDevice()
         guard deviceID != kAudioObjectUnknown, deviceID != listeningDeviceID else { return }
         listeningDeviceID = deviceID
@@ -96,12 +116,15 @@ final class MeetingDetector {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        AudioObjectAddPropertyListenerBlock(deviceID, &address, .main) { [weak self] _, _ in
-            Task { @MainActor in self?.micStateChanged() }
+        AudioObjectAddPropertyListenerBlock(deviceID, &address, Self.halQueue) { [weak self] _, _ in
+            guard let self else { return }
+            // Read the flag here, on the HAL queue — the main actor gets a Bool.
+            let running = self.micIsRunning()
+            Task { @MainActor in self.micStateChanged(running: running) }
         }
     }
 
-    private static func defaultInputDevice() -> AudioObjectID {
+    private nonisolated static func defaultInputDevice() -> AudioObjectID {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -114,7 +137,9 @@ final class MeetingDetector {
         return deviceID
     }
 
-    private func micIsRunning() -> Bool {
+    /// Runs on `halQueue`.
+    private nonisolated func micIsRunning() -> Bool {
+        dispatchPrecondition(condition: .onQueue(Self.halQueue))
         guard listeningDeviceID != kAudioObjectUnknown else { return false }
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
@@ -129,8 +154,7 @@ final class MeetingDetector {
 
     // MARK: Decision
 
-    private func micStateChanged() {
-        let running = micIsRunning()
+    private func micStateChanged(running: Bool) {
         defer { wasRunning = running }
         // Only rising edges: mic just turned ON.
         guard running, !wasRunning else { return }
@@ -138,10 +162,19 @@ final class MeetingDetector {
         guard Date() > suppressedUntil else { return }
         guard Date().timeIntervalSince(lastNudge) > 300 else { return }
 
-        // Attribute the mic to its owner when the OS can tell us. A dictation
-        // utility (Wispr, etc.) holding the mic is NOT a meeting — bail
-        // unless the owner is a meeting app or a browser.
-        let allOwners = AudioCapture.processesUsingMic()
+        // Attribute the mic to its owner when the OS can tell us. Walking the
+        // process objects is another pile of blocking HAL reads, so it happens
+        // on the HAL queue and comes back as a plain list of bundle IDs.
+        Self.halQueue.async { [weak self] in
+            let allOwners = AudioCapture.processesUsingMic()
+            Task { @MainActor in self?.evaluate(allOwners: allOwners) }
+        }
+    }
+
+    /// The nudge decision, given who the OS says is holding the mic. A
+    /// dictation utility (Wispr, etc.) is NOT a meeting — bail unless the
+    /// owner is a meeting app or a browser.
+    private func evaluate(allOwners: [String]) {
         let owners = allOwners.filter { $0 != Bundle.main.bundleIdentifier }
         // A dictation tool on the mic is dictation, full stop.
         guard !owners.contains(where: { Self.dictationApps.contains($0) }) else { return }
@@ -187,10 +220,10 @@ final class MeetingDetector {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(4))
             self.browserRecheckPending = false
-            guard self.micIsRunning(),
-                  !self.isOwnAudioActive(),
-                  Date() > self.suppressedUntil else { return }
-            let owners = AudioCapture.processesUsingMic().filter { $0 != Bundle.main.bundleIdentifier }
+            guard !self.isOwnAudioActive(), Date() > self.suppressedUntil else { return }
+            let snapshot = await self.micSnapshot()
+            guard snapshot.running else { return }
+            let owners = snapshot.owners.filter { $0 != Bundle.main.bundleIdentifier }
             if !owners.isEmpty {
                 guard owners.contains(where: { Self.browserBundles.contains($0) }) else { return }
             } else {
@@ -199,6 +232,18 @@ final class MeetingDetector {
             }
             self.lastNudge = Date()
             self.onMeetingDetected?("your browser")
+        }
+    }
+
+    /// Both blocking HAL reads the recheck needs, taken together off the main
+    /// actor. Owners are only worth walking when the mic is actually live.
+    private nonisolated func micSnapshot() async -> (running: Bool, owners: [String]) {
+        await withCheckedContinuation { continuation in
+            Self.halQueue.async {
+                let running = self.micIsRunning()
+                continuation.resume(
+                    returning: (running, running ? AudioCapture.processesUsingMic() : []))
+            }
         }
     }
 }

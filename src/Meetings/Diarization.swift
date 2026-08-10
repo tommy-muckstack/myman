@@ -4,9 +4,9 @@ import Foundation
 // Speaker identification for the system-audio track (the Muesli recipe):
 // post-hoc diarization over the full WAV, then meeting turns get labeled by
 // max time-overlap. Mic track is always "You"; the far side becomes
-// "Speaker 1/2/…" in first-appearance order — or stays "Them" when only one
-// voice was there. Models download once in the background; until they're
-// ready, transcripts simply keep "Them".
+// "Speaker 2/3/…" in first-appearance order — or stays the single remote
+// label when only one voice was there. Models download once in the
+// background; until they're ready, transcripts keep that single label.
 
 actor Diarization {
     static let shared = Diarization()
@@ -30,7 +30,7 @@ actor Diarization {
     }
 
     /// Speaker segments for a 16k mono WAV. Empty when models aren't ready
-    /// or diarization fails — callers keep their "Them" labels.
+    /// or diarization fails — callers keep their single remote label.
     func speakerSegments(forWavAtPath path: String) async -> [(speaker: String, start: Double, end: Double)] {
         if manager == nil { await warm() }
         guard let manager else { return [] }

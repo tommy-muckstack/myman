@@ -125,6 +125,8 @@ enum Brain {
             id: \(id)
             started: \(iso(startedAt))
             ended: \(endedAt.map(iso) ?? "")
+            participants:
+            \(yamlList(speakers(in: transcript)))
             ---
 
             # \(title)
@@ -134,6 +136,36 @@ enum Brain {
             if !transcript.isEmpty { content += "## Transcript\n\n\(transcript)\n" }
             write(content, to: "meetings/\(day(startedAt))-\(id.prefix(8)).md")
         }
+    }
+
+    /// Who spoke, in first-appearance order, read back out of the transcript
+    /// itself. Deriving it here rather than at the five call sites means the
+    /// list can never drift from the labels actually in the file — including
+    /// after a rename from the speaker legend.
+    nonisolated static func speakers(in transcript: String) -> [String] {
+        // Either the interleaved form (**Name** [m:ss]:) or the older
+        // two-block form (You:). The bare-label branch is deliberately narrow
+        // — a name, not any sentence that happens to contain a colon.
+        let pattern = #"(?m)^(?:\*\*([^*\n]{1,80})\*\*\s*\[\d+:\d{2}\]|([A-Za-z][A-Za-z0-9 .'\-]{0,39})):"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for match in regex.matches(in: transcript,
+                                   range: NSRange(transcript.startIndex..., in: transcript)) {
+            let group = match.range(at: 1).location != NSNotFound ? 1 : 2
+            guard let range = Range(match.range(at: group), in: transcript) else { continue }
+            let label = String(transcript[range]).trimmingCharacters(in: .whitespaces)
+            guard !label.isEmpty else { continue }
+            if seen.insert(label).inserted { ordered.append(label) }
+        }
+        return ordered
+    }
+
+    /// A YAML block sequence, or `[]` when there is nothing to list.
+    private static func yamlList(_ items: [String]) -> String {
+        guard !items.isEmpty else { return "  []" }
+        return items.map { "  - \($0.replacingOccurrences(of: "\"", with: "'"))" }
+            .joined(separator: "\n")
     }
 
     /// Tasks live in one checklist file, fully regenerated each sync.
