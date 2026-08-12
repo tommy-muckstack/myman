@@ -251,13 +251,13 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // Our warm dictation engine's voice-processing unit ducks
                 // system audio + AECs the mic machine-wide — release it for
                 // the duration or the recording comes out faint and whistly.
-                AudioCapture.shared.suppressVoiceProcessing = true
+                await AudioCapture.shared.setSuppressVoiceProcessing(true)
 
                 let stream = SCStream(filter: filter, configuration: config, delegate: nil)
                 try stream.addRecordingOutput(output)
                 try await stream.startCapture()
                 if self.microphoneEnabled {
-                    self.narration.start(alongside: url)
+                    await self.narration.start(alongside: url)
                 }
                 self.micLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                     Task { @MainActor in
@@ -289,7 +289,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 }
             } catch {
                 NSLog("My Man [Record] start failed: \(error)")
-                AudioCapture.shared.suppressVoiceProcessing = false
+                await AudioCapture.shared.setSuppressVoiceProcessing(false)
                 self.isBusy = false
                 self.borderPanel?.orderOut(nil)
                 self.borderPanel = nil
@@ -325,7 +325,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
             // Fold the self-captured narration into the movie BEFORE the
             // toast — "Open" must play the finished file.
             if let url { await self.narration.finish(into: url) }
-            AudioCapture.shared.suppressVoiceProcessing = false
+            await AudioCapture.shared.setSuppressVoiceProcessing(false)
             isBusy = false
             Analytics.track("screen_recording_saved", ["duration_s": duration])
             guard let url else { return }
@@ -500,7 +500,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 } else if let started = self.startedAt {
                     // Switched on mid-take: the track muxes in at the
                     // elapsed offset so timing stays true.
-                    self.narration.start(alongside: url, videoStartedAt: started)
+                    await self.narration.start(alongside: url, videoStartedAt: started)
                 }
             } else {
                 self.microphoneName = nil

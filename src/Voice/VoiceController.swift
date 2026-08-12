@@ -49,6 +49,12 @@ final class VoiceController: ObservableObject {
     private var escHotkeyID: UInt32?
     /// Why the recording ended — silence / release / toggle / pill.
     private var endReason = "unknown"
+    /// A take between "hotkey pressed" and "device actually running".
+    /// Starting the mic waits on CoreAudio, so that window is real: it keeps
+    /// a second press from opening a second session, and remembers a dismiss
+    /// that landed mid-start so the mic goes straight back.
+    private var starting = false
+    private var cancelledWhileStarting = false
     private let notes = NotesStore()
 
     func toggle() {
@@ -105,12 +111,13 @@ final class VoiceController: ObservableObject {
     /// Off the main thread: setVoiceProcessingEnabled can block for seconds
     /// on some machines, and doing that during launch was MYMAN-2's 3s hang.
     func warmUp() {
-        DispatchQueue.global(qos: .utility).async { [audio] in
-            audio.prepare()
-        }
+        audio.warm()
     }
 
     private func start() {
+        guard !starting else { return }
+        starting = true
+        cancelledWhileStarting = false
         lingerTask?.cancel()
         // Keep the starting app only as cleanup context; delivery targets
         // whichever focused control the user has when transcription finishes.
@@ -140,12 +147,14 @@ final class VoiceController: ObservableObject {
                     if granted {
                         await self.startAuthorized()
                     } else {
+                        self.starting = false
                         self.dismissPill()
                         self.phase = .idle
                     }
                 }
             }
         default:
+            starting = false
             dismissPill()
             phase = .idle
         }
@@ -163,16 +172,27 @@ final class VoiceController: ObservableObject {
         }
         // If a call app already owns the mic (Zoom, Meet, …), our voice
         // processing would corrupt what the other side hears — join raw.
-        let othersOnMic = AudioCapture.processesUsingMic()
+        let othersOnMic = await AudioCapture.processesUsingMicOffMain()
             .contains { $0 != Bundle.main.bundleIdentifier }
+        let started: UUID
         do {
-            session = try audio.begin(othersOnMic ? .raw : .voiceProcessed)
+            started = try await audio.begin(othersOnMic ? .raw : .voiceProcessed)
         } catch {
             NSLog("My Man [Voice] mic start failed: \(error)")
+            starting = false
             dismissPill()
             phase = .idle
             return
         }
+        starting = false
+        // Starting the device is a real wait; the take may have been called
+        // off while we were in it. Hand the mic straight back if so.
+        guard !cancelledWhileStarting else {
+            cancelledWhileStarting = false
+            _ = audio.end(started)
+            return
+        }
+        session = started
         phase = .recording
         recenterPill()
         // Esc finishes the take (stop → transcribe → paste). Registered only
@@ -395,6 +415,7 @@ final class VoiceController: ObservableObject {
             self.escHotkeyID = nil
         }
         lingerTask?.cancel()
+        if starting { cancelledWhileStarting = true }
         if case .recording = phase {
             if let session { _ = audio.end(session) }
             session = nil

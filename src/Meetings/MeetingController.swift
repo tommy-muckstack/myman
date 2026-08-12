@@ -61,6 +61,9 @@ final class MeetingController: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
+    /// True from the first permission callback until `phase` is set, which is
+    /// no longer the same instant: bringing the mic up awaits CoreAudio.
+    private var isStarting = false
     /// Meetings whose audio is still being transcribed in the background.
     /// Transcription never occupies the recorder: stopping a meeting returns
     /// the phase to .idle immediately, so a back-to-back call can start while
@@ -216,16 +219,20 @@ final class MeetingController: ObservableObject {
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             Task { @MainActor in
                 guard granted else { return }
-                self.startAuthorized(provisional: provisional)
+                await self.startAuthorized(provisional: provisional)
             }
         }
     }
 
-    private func startAuthorized(provisional: Bool = false) {
+    private func startAuthorized(provisional: Bool = false) async {
         // Permission callbacks can arrive more than once when a calendar
-        // nudge and a manual click race. Only the first one may create a row.
-        guard case .idle = phase else { return }
+        // nudge and a manual click race. Only the first one may create a row —
+        // and since starting the mic suspends, `phase` alone can't hold that
+        // line: the second caller would sail past before the first sets it.
+        guard case .idle = phase, !isStarting else { return }
         guard SystemAudioTap.hasPermission() || promptForSystemAudio() else { return }
+        isStarting = true
+        defer { isStarting = false }
 
         let id = UUID().uuidString
         let folder = Self.recordingsFolder
@@ -245,7 +252,7 @@ final class MeetingController: ObservableObject {
         }
         do {
             try tap.start()
-            micSession = try AudioCapture.shared.begin(.raw)
+            micSession = try await AudioCapture.shared.begin(.raw)
         } catch {
             NSLog("My Man [Meeting] start failed: \(error)")
             tap.stop()
@@ -287,7 +294,7 @@ final class MeetingController: ObservableObject {
                 Task { @MainActor in self?.discardProvisional() }
             }
         } else {
-            try? Database.shared.write { [meeting] in
+            try? await Database.shared.write { [meeting] in
                 if let meeting { try meeting.insert($0) }
             }
             Analytics.track("meeting_started", ["has_system_audio": tap.isRunning])
@@ -343,14 +350,15 @@ final class MeetingController: ObservableObject {
         callAppMissingPolls = 0
         endNudgeShown = false
         endWatchTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollForMeetingEnd() }
+            Task { @MainActor in await self?.pollForMeetingEnd() }
         }
     }
 
-    private func pollForMeetingEnd() {
+    private func pollForMeetingEnd() async {
         guard case .recording = phase else { return }
-        let owners = AudioCapture.processesUsingMic()
+        let owners = await AudioCapture.processesUsingMicOffMain()
             .filter { $0 != Bundle.main.bundleIdentifier }
+        guard case .recording = phase else { return }
         let callActive = owners.contains {
             MeetingDetector.strongApps.keys.contains($0)
                 || MeetingDetector.browserBundles.contains($0)
