@@ -22,6 +22,27 @@ final class AudioCapture: @unchecked Sendable {
     private var modes: [UUID: Mode] = [:]
     private let lock = NSLock()
 
+    /// Every AVAudioEngine and CoreAudio call that can block lives on this
+    /// queue, and the engine object is only ever touched from it. Starting or
+    /// stopping an engine waits on the HAL to spin the device up — on a busy
+    /// machine (a call already holding the mic) that is seconds of
+    /// `nanosleep`, and on the main thread that is an app hang, which is
+    /// exactly what MYMAN-5 caught. Callers get async entry points instead.
+    private static let engineQueue = DispatchQueue(
+        label: "com.muckstack.myman.audio-engine", qos: .userInitiated)
+
+    /// Blocking IPC reads to coreaudiod (process attribution) — same hazard,
+    /// but kept off the engine queue so a slow device start never delays a
+    /// "who owns the mic?" answer.
+    private static let halQueue = DispatchQueue(
+        label: "com.muckstack.myman.audio-hal", qos: .userInitiated)
+
+    /// The live input's sample rate, cached the moment the engine is built.
+    /// Meters and drains run on the main actor at 12Hz; reading it off the
+    /// engine there would both race the engine queue and reach into
+    /// CoreAudio from the main thread. Guarded by `lock`.
+    private var cachedInputRate: Double = 48000
+
     /// Build the engine once and keep it — creating AVAudioEngine and
     /// enabling voice processing costs 100-300ms, which is exactly the lag
     /// between hotkey and pill that Wispr doesn't have.
@@ -36,7 +57,15 @@ final class AudioCapture: @unchecked Sendable {
     private var idleRelease: DispatchWorkItem?
     private let idleLock = NSLock()
 
-    func prepare() {
+    /// Pre-build the engine so the first hotkey press is instant. Never on
+    /// the caller's thread: voice-processing setup alone blocks 100ms+, and
+    /// at launch it once blocked for 3s (MYMAN-2).
+    func warm() {
+        Self.engineQueue.async { [self] in prepare() }
+    }
+
+    /// MUST run on `engineQueue` (or the idle-release path that owns it).
+    private func prepare() {
         prepareLock.lock()
         defer { prepareLock.unlock() }
         guard engine == nil else { return }
@@ -51,7 +80,22 @@ final class AudioCapture: @unchecked Sendable {
         _ = eng.inputNode.outputFormat(forBus: 0) // force graph configuration
         eng.prepare()
         engine = eng
+        cacheInputRate(of: eng)
         if vpEnabled { scheduleIdleRelease() }
+    }
+
+    private func cacheInputRate(of eng: AVAudioEngine) {
+        let rate = eng.inputNode.inputFormat(forBus: 0).sampleRate
+        guard rate > 0 else { return }
+        lock.lock()
+        cachedInputRate = rate
+        lock.unlock()
+    }
+
+    private func inputRate() -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedInputRate
     }
 
     /// Arm the teardown that gets the machine out of voice-chat mode. Cheap
@@ -62,7 +106,7 @@ final class AudioCapture: @unchecked Sendable {
         let work = DispatchWorkItem { [weak self] in self?.releaseIfIdle() }
         idleRelease = work
         idleLock.unlock()
-        DispatchQueue.global(qos: .utility).asyncAfter(
+        Self.engineQueue.asyncAfter(
             deadline: .now() + Self.idleReleaseGrace, execute: work)
     }
 
@@ -79,21 +123,37 @@ final class AudioCapture: @unchecked Sendable {
     /// and the mic goes through AEC. In a screen recording that's a faint
     /// system track with whistle artifacts on top, and SCK's own mic
     /// capture loses the fight entirely (no mic track written).
-    var suppressVoiceProcessing = false {
-        didSet {
-            guard suppressVoiceProcessing != oldValue else { return }
-            if suppressVoiceProcessing {
-                releaseIfIdle()
-            } else {
-                // Re-warm off the caller's thread — VP setup blocks 100ms+.
-                DispatchQueue.global(qos: .utility).async { self.prepare() }
+    /// Engine-queue owned; read only from engine work.
+    private var suppressVoiceProcessing = false
+
+    /// Turning suppression ON is AWAITED: the recording must not start until
+    /// the voice-processing unit is actually gone, or the take comes back
+    /// faint and whistly. Turning it off returns immediately and re-warms in
+    /// the background. Either way the teardown happens on the engine queue,
+    /// never on the caller's (always main) thread.
+    func setSuppressVoiceProcessing(_ on: Bool) async {
+        await withCheckedContinuation { continuation in
+            Self.engineQueue.async { [self] in
+                guard suppressVoiceProcessing != on else {
+                    continuation.resume()
+                    return
+                }
+                suppressVoiceProcessing = on
+                if on {
+                    releaseIfIdle()
+                    continuation.resume()
+                } else {
+                    continuation.resume()
+                    Self.engineQueue.async { [self] in prepare() }
+                }
             }
         }
     }
 
     /// Tear the warm engine down when nothing is capturing — the only way
     /// to fully exit voice-chat mode is to destroy the VP unit.
-    func releaseIfIdle() {
+    /// MUST run on `engineQueue`.
+    private func releaseIfIdle() {
         lock.lock()
         let idle = buffers.isEmpty
         lock.unlock()
@@ -111,21 +171,46 @@ final class AudioCapture: @unchecked Sendable {
 
     /// Start a capture session. The engine starts on the first session and
     /// reconfigures only when the required processing mode changes.
-    func begin(_ mode: Mode) throws -> UUID {
+    ///
+    /// Async because starting the hardware BLOCKS — seconds of it when
+    /// another app already holds the device. The session is registered before
+    /// the hop so the engine sees the mode it has to satisfy.
+    func begin(_ mode: Mode) async throws -> UUID {
         cancelIdleRelease()
+        let id = register(mode)
+        do {
+            try await withCheckedThrowingContinuation { continuation in
+                Self.engineQueue.async { [self] in
+                    continuation.resume(with: Result { try reconfigureAndRun() })
+                }
+            }
+        } catch {
+            unregister(id)
+            throw error
+        }
+        return id
+    }
+
+    private func register(_ mode: Mode) -> UUID {
         let id = UUID()
         lock.lock()
         buffers[id] = []
         modes[id] = mode
         lock.unlock()
-        try reconfigureAndRun()
         return id
+    }
+
+    private func unregister(_ id: UUID) {
+        lock.lock()
+        buffers.removeValue(forKey: id)
+        modes.removeValue(forKey: id)
+        lock.unlock()
     }
 
     /// Atomically take this session's accumulated audio (processed, 16kHz)
     /// WITHOUT touching the engine — the periodic meeting drain.
     func drain(_ id: UUID) -> [Float] {
-        let rate = engine?.inputNode.inputFormat(forBus: 0).sampleRate ?? 48000
+        let rate = inputRate()
         lock.lock()
         let raw = buffers[id] ?? []
         buffers[id] = []
@@ -136,15 +221,13 @@ final class AudioCapture: @unchecked Sendable {
     /// End a session: final drain, then stop the engine only when it was the
     /// last session (a remaining session may flip processing mode back).
     /// The input's real sample rate (engine must exist — begin() first).
-    func nativeSampleRate() -> Double {
-        engine?.inputNode.inputFormat(forBus: 0).sampleRate ?? 48000
-    }
+    func nativeSampleRate() -> Double { inputRate() }
 
     /// Native-rate drain for LISTENING-quality consumers (screen-recording
     /// narration): raw floats at the input's real sample rate, no resample,
     /// no gain — normalization happens once over the whole take.
     func drainNative(_ id: UUID) -> (samples: [Float], sampleRate: Double) {
-        let rate = engine?.inputNode.inputFormat(forBus: 0).sampleRate ?? 48000
+        let rate = inputRate()
         lock.lock()
         let raw = buffers[id] ?? []
         buffers[id] = []
@@ -159,14 +242,24 @@ final class AudioCapture: @unchecked Sendable {
     private(set) var lastTakeRawPeak: Float = 0
 
     func end(_ id: UUID) -> [Float] {
-        let rate = engine?.inputNode.inputFormat(forBus: 0).sampleRate ?? 48000
+        let rate = inputRate()
         lock.lock()
         let raw = buffers.removeValue(forKey: id) ?? []
         lastTakeRawPeak = raw.map(abs).max() ?? 0
         modes.removeValue(forKey: id)
-        let remaining = buffers.count
         lock.unlock()
-        if remaining == 0 {
+        // The caller gets its audio straight back — stopping the hardware
+        // blocks on CoreAudio exactly like starting it does, so it happens on
+        // the engine queue. Whether we are the last session is decided THERE:
+        // a new take may have begun while this hop was in flight.
+        Self.engineQueue.async { [self] in
+            lock.lock()
+            let idle = buffers.isEmpty
+            lock.unlock()
+            guard idle else {
+                try? reconfigureAndRun()
+                return
+            }
             if tapInstalled {
                 engine?.inputNode.removeTap(onBus: 0)
                 tapInstalled = false
@@ -176,8 +269,6 @@ final class AudioCapture: @unchecked Sendable {
             // voice-processing unit, and that alone keeps every other app's
             // audio ducked. Hand the machine back.
             if vpEnabled { scheduleIdleRelease() }
-        } else {
-            try? reconfigureAndRun()
         }
         return Self.finalize(raw, sampleRate: rate)
     }
@@ -185,10 +276,8 @@ final class AudioCapture: @unchecked Sendable {
     /// RMS level of a session's most recent ~`window` seconds, 0...1-ish.
     /// Cheap — safe to poll at 10Hz for pill waveforms.
     func currentLevel(for id: UUID, window: Double = 0.1) -> Float {
-        guard let eng = engine else { return 0 }
-        let rate = eng.inputNode.inputFormat(forBus: 0).sampleRate
-        let n = max(1, Int(rate * window))
         lock.lock()
+        let n = max(1, Int(cachedInputRate * window))
         let tail = (buffers[id] ?? []).suffix(n)
         lock.unlock()
         guard !tail.isEmpty else { return 0 }
@@ -210,6 +299,7 @@ final class AudioCapture: @unchecked Sendable {
         return !modes.values.contains(.raw)
     }
 
+    /// MUST run on `engineQueue` — every call in here can block.
     private func reconfigureAndRun() throws {
         prepare()
         let wantVP = desiredVoiceProcessing()
@@ -228,6 +318,7 @@ final class AudioCapture: @unchecked Sendable {
             _ = eng.inputNode.outputFormat(forBus: 0)
             eng.prepare()
             engine = eng
+            cacheInputRate(of: eng)
         }
         guard let eng = engine else { return }
         if !tapInstalled {
@@ -250,11 +341,23 @@ final class AudioCapture: @unchecked Sendable {
         if !eng.isRunning { try eng.start() }
     }
 
+    /// `processesUsingMic` off the caller's thread. Walking the process
+    /// objects is a pile of blocking IPC calls to coreaudiod; doing it on the
+    /// main actor is how MYMAN-4 hung. Main-actor code must use THIS.
+    static func processesUsingMicOffMain() async -> [String] {
+        await withCheckedContinuation { continuation in
+            halQueue.async { continuation.resume(returning: processesUsingMic()) }
+        }
+    }
+
     /// Bundle IDs of processes currently holding the mic open (macOS 14.4+
     /// CoreAudio process objects; empty when attribution is unavailable).
     /// Used by meeting detection AND to decide dictation's processing mode —
     /// if a call app owns the mic, our voice processing corrupts what the
     /// other side hears, so we must join raw.
+    ///
+    /// ⚠️ BLOCKING. Only call this from a background queue — see
+    /// `processesUsingMicOffMain`.
     static func processesUsingMic() -> [String] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyProcessObjectList,

@@ -160,15 +160,24 @@ final class BrainChatVoiceController: NSObject, ObservableObject, AVAudioPlayerD
             await TranscriptionService.shared.load(kind: TranscriptionService.shared.dictationKind)
         }
         guard shouldContinue else { return }
-        let othersOnMic = AudioCapture.processesUsingMic().contains { $0 != Bundle.main.bundleIdentifier }
+        let othersOnMic = await AudioCapture.processesUsingMicOffMain()
+            .contains { $0 != Bundle.main.bundleIdentifier }
+        let started: UUID
         do {
-            session = try audio.begin(othersOnMic ? .raw : .voiceProcessed)
+            started = try await audio.begin(othersOnMic ? .raw : .voiceProcessed)
         } catch {
             phase = .unavailable
             status = "My Man couldn't start the microphone."
             shouldContinue = false
             return
         }
+        // Starting the device blocks on CoreAudio — stop() may have run while
+        // we waited, and a listening session nobody owns records forever.
+        guard shouldContinue else {
+            _ = audio.end(started)
+            return
+        }
+        session = started
         phase = .listening
         status = "Listening… pause when you're done."
         heardSpeech = false; silenceSince = nil; peak = 0

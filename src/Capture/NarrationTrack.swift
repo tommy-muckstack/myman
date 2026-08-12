@@ -27,9 +27,9 @@ final class NarrationTrack {
         return CGFloat(min(1, AudioCapture.shared.currentLevel(for: session) * 6))
     }
 
-    func start(alongside movieURL: URL, videoStartedAt: Date = Date()) {
+    func start(alongside movieURL: URL, videoStartedAt: Date = Date()) async {
         stopDiscarding()
-        guard let id = try? AudioCapture.shared.begin(.raw) else { return }
+        guard let id = try? await AudioCapture.shared.begin(.raw) else { return }
         startOffsetSeconds = max(0, Date().timeIntervalSince(videoStartedAt))
         let rate = UInt32(AudioCapture.shared.nativeSampleRate())
         let url = movieURL.deletingPathExtension().appendingPathExtension("narration.wav")
