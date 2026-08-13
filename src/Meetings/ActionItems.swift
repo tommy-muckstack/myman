@@ -29,9 +29,23 @@ enum ActionItemExtractor {
                 to: window, generating: CommitmentList.self) else { continue }
             items += response.content.items
         }
+        let index = TranscriptIndex(transcript: transcript)
         let cleaned = dedupe(items.filter(isRealCommitment))
-        guard !cleaned.isEmpty else { return "" }
-        return cleaned.map { line(for: $0, meetingDate: meetingDate) }
+        // An item the transcript cannot back — a timestamp pointing at no
+        // line, an owner who never spoke — is an invention wearing a
+        // citation. Three real items beat eight where three are made up,
+        // because the invented ones cost more to detect than the real ones
+        // save. Drop, don't ship.
+        let supported = cleaned.filter {
+            index.supports(owner: $0.owner, timestamp: $0.timestamp)
+        }
+        if supported.count < cleaned.count {
+            Analytics.track("meeting_action_items_dropped_unsupported",
+                            ["dropped": cleaned.count - supported.count,
+                             "kept": supported.count])
+        }
+        guard !supported.isEmpty else { return "" }
+        return supported.map { line(for: $0, meetingDate: meetingDate) }
             .joined(separator: "\n")
         #else
         return ""
@@ -143,6 +157,56 @@ enum ActionItemExtractor {
         }
         if !current.isEmpty { result.append(current) }
         return result
+    }
+}
+
+/// The transcript's own speakers and timestamps, for checking a claimed
+/// citation against what was actually said. Built once per extraction.
+struct TranscriptIndex {
+    let speakers: Set<String>
+    let stamps: Set<String>
+
+    init(transcript: String) {
+        var speakers: Set<String> = []
+        var stamps: Set<String> = []
+        let pattern = #"\*\*([^*\n]{1,80})\*\*\s*\[(\d+:\d{2})\]:"#
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            for match in regex.matches(in: transcript,
+                                       range: NSRange(transcript.startIndex..., in: transcript)) {
+                if let range = Range(match.range(at: 1), in: transcript) {
+                    speakers.insert(String(transcript[range])
+                        .trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                if let range = Range(match.range(at: 2), in: transcript),
+                   let stamp = Self.canonicalStamp(String(transcript[range])) {
+                    stamps.insert(stamp)
+                }
+            }
+        }
+        self.speakers = speakers
+        self.stamps = stamps
+    }
+
+    /// True when the transcript can back this citation: the timestamp names
+    /// a real line and the owner is somebody who actually appears. An old
+    /// two-block transcript has no stamped lines to check against — then
+    /// everything passes, as before.
+    func supports(owner: String, timestamp: String) -> Bool {
+        guard !stamps.isEmpty else { return true }
+        guard let stamp = Self.canonicalStamp(timestamp), stamps.contains(stamp)
+        else { return false }
+        let who = owner.trimmingCharacters(in: .whitespacesAndNewlines)
+        return who.isEmpty || speakers.contains(who)
+    }
+
+    /// "04:32" and "4:32" are the same moment — compare them that way.
+    static func canonicalStamp(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: ":")
+        guard parts.count == 2, let minutes = Int(parts[0]), parts[1].count == 2,
+              let seconds = Int(parts[1]), (0..<60).contains(seconds), minutes >= 0
+        else { return nil }
+        return "\(minutes):\(String(format: "%02d", seconds))"
     }
 }
 

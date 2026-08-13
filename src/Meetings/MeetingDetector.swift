@@ -61,6 +61,30 @@ final class MeetingDetector {
     static let residentApps: Set<String> = [
         "com.tinyspeck.slackmacgap", "com.hnc.Discord",
     ]
+    /// Whether a mic-owning bundle means a call is live. Strong apps match
+    /// exactly; browsers also match their out-of-bundle helpers — Safari's
+    /// pages hold the mic from WebKit framework processes that resolve to
+    /// `com.apple.WebKit.*`, not `com.apple.Safari`, so an exact-match check
+    /// concluded "no browser on the mic" mid-Meet and never saw the hang-up.
+    nonisolated static func isCallBundle(_ id: String) -> Bool {
+        strongApps.keys.contains(id) || browserBundles.contains(id)
+            || id.hasPrefix("com.apple.WebKit")
+            || browserBundles.contains { id.hasPrefix($0 + ".") }
+    }
+
+    /// Window titles that only exist while a call is on screen. Their
+    /// disappearance is the end signal mic attribution can't always give:
+    /// Zoom's in-meeting window closes at "End meeting" even though the app
+    /// stays running, and a Google Meet tab's title vanishes when it closes.
+    nonisolated static func isMeetingWindowTitle(_ title: String) -> Bool {
+        if title.contains("Zoom Meeting") { return true }
+        // A Meet tab is "Meet – abc-defg-hij" (the code, behind an en dash or
+        // hyphen) — never bare "Meet", which would match ordinary pages.
+        if title.range(of: #"^Meet\s+[–-]\s"#, options: .regularExpression) != nil { return true }
+        if title.contains("Microsoft Teams meeting") { return true }
+        return false
+    }
+
     /// Known dictation utilities — them holding the mic is NEVER a meeting,
     /// even if attribution also lists other apps.
     static let dictationApps: Set<String> = [

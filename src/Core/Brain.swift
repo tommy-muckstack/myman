@@ -120,13 +120,19 @@ enum Brain {
     static func syncMeeting(id: String, title: String, startedAt: Date,
                             endedAt: Date?, summary: String, transcript: String) {
         queue.async {
+            // A meeting-length recording with almost no words means the ASR
+            // mostly failed. The file stays (deleting a real meeting is
+            // worse), but a machine-visible flag tells downstream readers not
+            // to treat it as a faithful record.
+            let lowContent = !transcript.isEmpty
+                && transcript.split(whereSeparator: \.isWhitespace).count < 100
             var content = """
             ---
             id: \(id)
             started: \(iso(startedAt))
             ended: \(endedAt.map(iso) ?? "")
             participants:
-            \(yamlList(speakers(in: transcript)))
+            \(yamlList(speakers(in: transcript)))\(lowContent ? "\nlow_content: true" : "")
             ---
 
             # \(title)

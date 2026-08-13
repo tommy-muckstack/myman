@@ -173,3 +173,122 @@ final class MeetingSummaryShapeTests: XCTestCase {
         XCTAssertFalse(stripped.contains("A thing"))
     }
 }
+
+/// The doc-diagnosis fixes: unsupported action items dropped, quiet group
+/// participants kept distinct, junk fragments discarded, call-end signals.
+final class MeetingDiagnosisFixTests: XCTestCase {
+    let transcript = """
+    **You** [0:04]: Morning. Let's start with the metrics question.
+
+    **Ran** [4:32]: I'll send the retention doc tonight.
+
+    **Speaker 3** [12:07]: We should think about pricing sometime.
+    """
+
+    // MARK: Action-item citations
+
+    func testACitedCommitmentIsSupported() {
+        let index = TranscriptIndex(transcript: transcript)
+        XCTAssertTrue(index.supports(owner: "Ran", timestamp: "4:32"))
+    }
+
+    func testALeadingZeroTimestampStillMatches() {
+        let index = TranscriptIndex(transcript: transcript)
+        XCTAssertTrue(index.supports(owner: "Ran", timestamp: "04:32"))
+    }
+
+    func testAFabricatedTimestampIsRejected() {
+        let index = TranscriptIndex(transcript: transcript)
+        XCTAssertFalse(index.supports(owner: "Ran", timestamp: "39:33"))
+    }
+
+    func testAnOwnerWhoNeverSpokeIsRejected() {
+        let index = TranscriptIndex(transcript: transcript)
+        XCTAssertFalse(index.supports(owner: "Chris", timestamp: "4:32"))
+    }
+
+    func testAnEmptyOwnerNeedsOnlyARealTimestamp() {
+        let index = TranscriptIndex(transcript: transcript)
+        XCTAssertTrue(index.supports(owner: "", timestamp: "0:04"))
+    }
+
+    func testTheOldTwoBlockFormatSkipsValidation() {
+        let index = TranscriptIndex(transcript: "You:\nHello there.\n\nSpeaker 2:\nHi.")
+        XCTAssertTrue(index.supports(owner: "Anyone", timestamp: "9:99"))
+    }
+
+    // MARK: Group-call speaker folding
+
+    /// Four-person call: a participant holding 9% of the dominant voice is a
+    /// quiet human, not an artefact — they must stay their own speaker.
+    func testAQuietGroupParticipantIsNotFoldedAway() {
+        let segments: [(speaker: String, start: Double, end: Double)] = [
+            ("A", 0, 600), ("B", 600, 800), ("C", 800, 900), ("D", 900, 950)
+        ]
+        let collapsed = MeetingController.collapsePhantomSpeakers(in: segments)
+        XCTAssertEqual(Set(collapsed.map(\.speaker)), ["A", "B", "C", "D"])
+    }
+
+    /// A sub-8s blip is still echo, even in a group call.
+    func testASubEightSecondBlipStillFoldsInAGroupCall() {
+        let segments: [(speaker: String, start: Double, end: Double)] = [
+            ("A", 0, 600), ("B", 600, 800), ("C", 800, 900), ("D", 900, 904)
+        ]
+        let collapsed = MeetingController.collapsePhantomSpeakers(in: segments)
+        XCTAssertEqual(Set(collapsed.map(\.speaker)), ["A", "B", "C"])
+    }
+
+    /// The original 1:1 case is unchanged: a low-share second voice on the
+    /// remote stream is echo and folds into the dominant voice.
+    func testAOneOnOneEchoVoiceStillFolds() {
+        let segments: [(speaker: String, start: Double, end: Double)] = [
+            ("A", 0, 600), ("B", 600, 620)
+        ]
+        let collapsed = MeetingController.collapsePhantomSpeakers(in: segments)
+        XCTAssertEqual(Set(collapsed.map(\.speaker)), ["A"])
+    }
+
+    // MARK: Noise fragments
+
+    private func meeting(seconds: Double, words: Int) -> Meeting {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        return Meeting(id: "m", title: "t", startedAt: start,
+                       endedAt: start.addingTimeInterval(seconds),
+                       micAudioPath: nil, systemAudioPath: nil,
+                       transcript: Array(repeating: "word", count: words)
+                           .joined(separator: " "))
+    }
+
+    func testAShortSparseRecordingIsNoise() {
+        XCTAssertTrue(MeetingController.isNoiseFragment(meeting(seconds: 28, words: 28)))
+    }
+
+    func testAShortButDenseRecordingIsKept() {
+        XCTAssertFalse(MeetingController.isNoiseFragment(meeting(seconds: 50, words: 140)))
+    }
+
+    /// A long meeting whose ASR failed must NEVER be deleted — that is a
+    /// real meeting with a broken transcript, not noise.
+    func testALongRecordingWithFewWordsIsKept() {
+        XCTAssertFalse(MeetingController.isNoiseFragment(meeting(seconds: 3400, words: 40)))
+    }
+
+    // MARK: Call-end signals
+
+    func testBrowserHelperBundlesCountAsCallApps() {
+        XCTAssertTrue(MeetingDetector.isCallBundle("com.google.Chrome"))
+        XCTAssertTrue(MeetingDetector.isCallBundle("com.google.Chrome.helper"))
+        XCTAssertTrue(MeetingDetector.isCallBundle("com.apple.WebKit.WebContent"))
+        XCTAssertTrue(MeetingDetector.isCallBundle("us.zoom.xos"))
+        XCTAssertFalse(MeetingDetector.isCallBundle("com.apple.Music"))
+    }
+
+    func testMeetingWindowTitlesAreRecognised() {
+        XCTAssertTrue(MeetingDetector.isMeetingWindowTitle("Zoom Meeting"))
+        XCTAssertTrue(MeetingDetector.isMeetingWindowTitle("Meet – abc-defg-hij"))
+        XCTAssertTrue(MeetingDetector.isMeetingWindowTitle("Meet - weekly sync"))
+        XCTAssertFalse(MeetingDetector.isMeetingWindowTitle("Meet"))
+        XCTAssertFalse(MeetingDetector.isMeetingWindowTitle("Meetings that could have been emails"))
+        XCTAssertFalse(MeetingDetector.isMeetingWindowTitle("Inbox — Gmail"))
+    }
+}

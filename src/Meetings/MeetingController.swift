@@ -109,6 +109,15 @@ final class MeetingController: ObservableObject {
     private var callAppSeenOnMic = false
     private var callAppMissingPolls = 0
     private var endNudgeShown = false
+    /// Call bundles actually attributed on the mic during THIS recording —
+    /// the only apps whose quitting is evidence the call ended.
+    private var seenCallBundles: Set<String> = []
+    /// Second end signal, for the calls mic attribution can't see (Bluetooth
+    /// mics, some browser stacks): a meeting-titled window was on screen and
+    /// then wasn't.
+    private var meetingWindowSeen = false
+    private var meetingWindowMissingPolls = 0
+    private var appTerminationObserver: NSObjectProtocol?
     /// Meeting link for the provisional card's Join & Start button.
     @Published var provisionalJoinURL: URL?
 
@@ -181,8 +190,7 @@ final class MeetingController: ObservableObject {
         let discardedMeeting = meeting
         isProvisional = false
         provisionalJoinURL = nil
-        endWatchTimer?.invalidate()
-        endWatchTimer = nil
+        stopEndWatch()
         provisionalTimeout?.invalidate()
         provisionalTimeout = nil
         slideTimer?.invalidate()
@@ -349,23 +357,92 @@ final class MeetingController: ObservableObject {
         callAppSeenOnMic = false
         callAppMissingPolls = 0
         endNudgeShown = false
+        seenCallBundles = []
+        meetingWindowSeen = false
+        meetingWindowMissingPolls = 0
         endWatchTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollForMeetingEnd() }
+        }
+        // Quitting the call app is the one unambiguous, instant hang-up
+        // signal — Granola stops here too. Only apps this recording actually
+        // saw on the mic count; an idle Zoom quitting during a Meet call
+        // must not end the meeting.
+        appTerminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bundle = app.bundleIdentifier else { return }
+            Task { @MainActor in await self?.callAppTerminated(bundle) }
+        }
+    }
+
+    private func stopEndWatch() {
+        endWatchTimer?.invalidate()
+        endWatchTimer = nil
+        if let observer = appTerminationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            appTerminationObserver = nil
+        }
+    }
+
+    /// A call app the mic had attributed just quit. If no other call app is
+    /// still holding the mic, everyone hung up — end now, not 30s from now.
+    private func callAppTerminated(_ bundle: String) async {
+        guard case .recording = phase, seenCallBundles.contains(bundle) else { return }
+        let owners = await AudioCapture.processesUsingMicOffMain()
+            .filter { $0 != Bundle.main.bundleIdentifier }
+        guard case .recording = phase else { return }
+        guard !owners.contains(where: { MeetingDetector.isCallBundle($0) && $0 != bundle })
+        else { return }
+        endBecauseCallEnded(reason: "app_quit")
+    }
+
+    /// The single hang-up exit: a committed meeting stops and transcribes, a
+    /// provisional one that was never opted into vanishes with its audio.
+    private func endBecauseCallEnded(reason: String) {
+        stopEndWatch()
+        if isProvisional {
+            Analytics.track("meeting_auto_discarded", ["reason": reason])
+            discardProvisional()
+        } else {
+            Analytics.track("meeting_auto_stopped", ["reason": reason])
+            Toast.show("Meeting ended — transcribing", systemImage: "checkmark.circle")
+            stop()
+        }
+    }
+
+    /// Any on-screen (or other-Space) window whose title marks a live call.
+    private static func meetingWindowPresent() async -> Bool {
+        guard let content = try? await SCShareableContent
+            .excludingDesktopWindows(true, onScreenWindowsOnly: false) else { return false }
+        return content.windows.contains { window in
+            guard let title = window.title, !title.isEmpty else { return false }
+            return MeetingDetector.isMeetingWindowTitle(title)
         }
     }
 
     private func pollForMeetingEnd() async {
         guard case .recording = phase else { return }
+        // Window-title signal, tracked every tick regardless of what the mic
+        // says — it must be armed before it can fire.
+        let windowPresent = await Self.meetingWindowPresent()
+        guard case .recording = phase else { return }
+        if windowPresent {
+            meetingWindowSeen = true
+            meetingWindowMissingPolls = 0
+        } else if meetingWindowSeen {
+            meetingWindowMissingPolls += 1
+        }
+
         let owners = await AudioCapture.processesUsingMicOffMain()
             .filter { $0 != Bundle.main.bundleIdentifier }
         guard case .recording = phase else { return }
-        let callActive = owners.contains {
-            MeetingDetector.strongApps.keys.contains($0)
-                || MeetingDetector.browserBundles.contains($0)
-        }
-        if callActive {
+        let callOwners = owners.filter { MeetingDetector.isCallBundle($0) }
+        if !callOwners.isEmpty {
             callAppSeenOnMic = true
             callAppMissingPolls = 0
+            seenCallBundles.formUnion(callOwners)
             return
         }
         // When macOS did attribute the call app, three missing polls is a
@@ -373,17 +450,18 @@ final class MeetingController: ObservableObject {
         if callAppSeenOnMic {
             callAppMissingPolls += 1
             guard callAppMissingPolls >= 3 else { return } // ~30s after hang-up
-            endWatchTimer?.invalidate()
-            endWatchTimer = nil
-            if isProvisional {
-                // Never opted in — the ended call takes its audio with it.
-                Analytics.track("meeting_auto_discarded")
-                discardProvisional()
-            } else {
-                Analytics.track("meeting_auto_stopped")
-                Toast.show("Meeting ended — transcribing", systemImage: "checkmark.circle")
-                stop()
-            }
+            endBecauseCallEnded(reason: "mic_attribution")
+            return
+        }
+
+        // Attribution never worked this call (Bluetooth mic, some browser
+        // stacks) but a meeting-titled window WAS here and is now gone. The
+        // window alone can lie — a Meet tab in the background loses its title
+        // spot to the foreground tab — so require the far side to have gone
+        // quiet too before calling it a hang-up.
+        if meetingWindowSeen, meetingWindowMissingPolls >= 2,
+           Date().timeIntervalSince(lastRemoteAudibleAt) > 20 {
+            endBecauseCallEnded(reason: "window_closed")
             return
         }
 
@@ -483,8 +561,7 @@ final class MeetingController: ObservableObject {
     }
 
     private func stop() {
-        endWatchTimer?.invalidate()
-        endWatchTimer = nil
+        stopEndWatch()
         levelTimer?.invalidate()
         levelTimer = nil
         slideTimer?.invalidate()
@@ -570,17 +647,16 @@ final class MeetingController: ObservableObject {
             micPath: job.micPath, systemPath: job.systemPath,
             candidates: job.candidates)
         Analytics.track("meeting_transcribed", ["transcript_chars": record.transcript.count])
-        if record.transcript.isEmpty {
-            // Nothing was said — keep nothing, but say so plainly.
-            try? await Database.shared.write { [record] in
-                _ = try Meeting.deleteOne($0, key: record.id)
+        if record.transcript.isEmpty || Self.isNoiseFragment(record) {
+            // Nothing was said — or an aborted sliver of a recording that
+            // would land in the brain looking like a real meeting. Keep
+            // nothing, but say so plainly.
+            if !record.transcript.isEmpty {
+                Analytics.track("meeting_noise_discarded",
+                                ["words": record.transcript
+                                    .split(whereSeparator: \.isWhitespace).count])
             }
-            if let path = record.micAudioPath {
-                try? FileManager.default.removeItem(atPath: path)
-            }
-            if let path = record.systemAudioPath {
-                try? FileManager.default.removeItem(atPath: path)
-            }
+            await Self.deleteArtifacts(of: record)
         } else {
             try? await Database.shared.write { [record] in try record.update($0) }
             People.noteAttendees(job.attendees)
@@ -589,6 +665,30 @@ final class MeetingController: ObservableObject {
                               summary: record.summary, transcript: record.transcript)
         }
         notifyDone(record)
+    }
+
+    /// An aborted or duplicate take, not a meeting: under a minute AND under
+    /// 100 words. Both conditions on purpose — a long recording whose ASR
+    /// failed also has few words, and deleting IT would destroy a real
+    /// meeting, while a short take someone actually talked through is dense
+    /// enough to clear the word floor and stay.
+    nonisolated static func isNoiseFragment(_ record: Meeting) -> Bool {
+        let duration = (record.endedAt ?? record.startedAt)
+            .timeIntervalSince(record.startedAt)
+        guard duration < 60 else { return false }
+        return record.transcript.split(whereSeparator: \.isWhitespace).count < 100
+    }
+
+    /// Remove every trace of a recording that turned out to be nothing: the
+    /// row, both audio tracks, and any captured slides.
+    private static func deleteArtifacts(of record: Meeting) async {
+        try? await Database.shared.write { [record] in
+            _ = try Meeting.deleteOne($0, key: record.id)
+        }
+        for path in [record.micAudioPath, record.systemAudioPath].compactMap({ $0 })
+            + record.slidePaths {
+            try? FileManager.default.removeItem(atPath: path)
+        }
     }
 
     /// The calendar event happening right now (±10 min), if any — its name
@@ -861,6 +961,7 @@ final class MeetingController: ObservableObject {
             }
             turns += sysTurns
         }
+        let terms = vocabularyTerms(candidates: candidates)
         if !turns.isEmpty {
             // Strictly chronological, and a turn that starts with another
             // resolves by which one finishes first.
@@ -870,19 +971,38 @@ final class MeetingController: ObservableObject {
             return turns.map { turn in
                 let m = Int(turn.start) / 60
                 let s = Int(turn.start) % 60
-                return "**\(turn.speaker)** [\(m):\(String(format: "%02d", s))]: \(turn.text)"
+                let text = DictationCleanup.applyVocabulary(turn.text, terms: terms)
+                return "**\(turn.speaker)** [\(m):\(String(format: "%02d", s))]: \(text)"
             }.joined(separator: "\n\n")
         }
         var sections: [String] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
             let text = await transcribeWavFile(atPath: micPath)
-            if !text.isEmpty { sections.append("\(Self.ownerLabel):\n\(text)") }
+            if !text.isEmpty {
+                sections.append("\(Self.ownerLabel):\n\(DictationCleanup.applyVocabulary(text, terms: terms))")
+            }
         }
         if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
             let text = await transcribeWavFile(atPath: systemPath)
-            if !text.isEmpty { sections.append("\(Self.remoteLabel):\n\(text)") }
+            if !text.isEmpty {
+                sections.append("\(Self.remoteLabel):\n\(DictationCleanup.applyVocabulary(text, terms: terms))")
+            }
         }
         return sections.joined(separator: "\n\n")
+    }
+
+    /// The same deterministic dictionary dictation already trusts —
+    /// vocabulary.md + the people registry — plus this meeting's own attendee
+    /// names. ASR mangles recurring proper nouns the same few ways every
+    /// meeting ("Sneehith", "stat sig"); the restore pass puts the canonical
+    /// spelling back without asking a model to rewrite anything.
+    nonisolated static func vocabularyTerms(candidates: SpeakerCandidates) -> [String] {
+        var terms = DictationCleanup.vocabulary()
+        for name in candidates.names
+        where !terms.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            terms.append(name)
+        }
+        return terms
     }
 
     /// The user's own track. The far side, before identification.
@@ -909,9 +1029,24 @@ final class MeetingController: ObservableObject {
         }
         guard let dominant = total.max(by: { $0.value < $1.value }) else { return segments }
         // Under a tenth of the leading voice, or under 8 seconds all told, is
-        // backchannel and echo — not a participant.
-        let phantoms = Set(total.filter { $0.key != dominant.key &&
-            ($0.value < dominant.value * 0.10 || $0.value < 8) }.keys)
+        // backchannel and echo — not a participant. But that share test only
+        // holds for the two-voice case it was written for: in a GROUP call a
+        // quiet participant can easily sit under 10% of the loudest voice,
+        // and folding them puts their words in someone else's mouth — the
+        // worst failure a transcript can have. With three or more substantial
+        // voices, only sub-8s blips fold; low-share voices stay their own
+        // speaker, visibly separate rather than silently merged.
+        let substantial = total.filter {
+            $0.key == dominant.key
+                || ($0.value >= 8 && $0.value >= dominant.value * 0.10)
+        }
+        let phantoms: Set<String>
+        if substantial.count >= 3 {
+            phantoms = Set(total.filter { $0.key != dominant.key && $0.value < 8 }.keys)
+        } else {
+            phantoms = Set(total.filter { $0.key != dominant.key &&
+                ($0.value < dominant.value * 0.10 || $0.value < 8) }.keys)
+        }
         guard !phantoms.isEmpty else { return segments }
         Analytics.track("meeting_phantom_speaker_collapsed", ["count": phantoms.count])
         return segments.map {
@@ -1076,10 +1211,8 @@ final class MeetingController: ObservableObject {
                             $0.name.split(separator: " ").first.map(String.init)
                         },
                         fromAttendees: false))
-                if orphan.transcript.isEmpty {
-                    try? await Database.shared.write { [orphan] in
-                        _ = try Meeting.deleteOne($0, key: orphan.id)
-                    }
+                if orphan.transcript.isEmpty || Self.isNoiseFragment(orphan) {
+                    await Self.deleteArtifacts(of: orphan)
                 } else {
                     try? await Database.shared.write { [orphan] in try orphan.update($0) }
                     Brain.syncMeeting(id: orphan.id, title: orphan.title,
