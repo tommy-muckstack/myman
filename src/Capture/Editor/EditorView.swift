@@ -53,6 +53,15 @@ struct EditorView: View {
     @State private var dragMode: DragMode = .undecided
     @State private var selectedAnnotation: UUID?
 
+    /// Toolbar clusters that collapse to a single chip showing the current
+    /// choice, and animate open into the full row when clicked. One state
+    /// value — opening a group closes whichever other one was open.
+    private enum ToolbarGroup { case draw, backdrop, color }
+    @State private var expandedGroup: ToolbarGroup?
+    /// What the collapsed draw chip shows while a non-draw tool is active.
+    @State private var lastDrawTool: EditorTool = .arrow
+    private static let drawTools: [EditorTool] = [.arrow, .box, .highlight, .text]
+
     var onDone: () -> Void = {}
     var onSaved: (NSImage, URL) -> Void = { _, _ in }
 
@@ -116,16 +125,15 @@ struct EditorView: View {
 
     private var toolbar: some View {
         HStack(spacing: 6) {
-            ForEach(EditorTool.allCases) { t in
-                toolButton(t)
-            }
+            toolButton(.select)
+            drawToolsGroup
+            toolButton(.pixelate)
+            toolButton(.crop)
+            toolButton(.ocr)
 
             Divider().frame(height: 18).overlay(MM.Colors.border).padding(.horizontal, 6)
 
-            // Backdrop chips
-            ForEach(BackdropStyle.allCases) { style in
-                backdropChip(style)
-            }
+            backdropGroup
 
             Divider().frame(height: 18).overlay(MM.Colors.border).padding(.horizontal, 6)
 
@@ -231,24 +239,7 @@ struct EditorView: View {
                 .help("Toggle the in-place translation layer")
             }
 
-            HStack(spacing: 6) {
-                ForEach(annotationColors.indices, id: \.self) { index in
-                    let color = annotationColors[index]
-                    Button {
-                        model.annotationColor = color
-                    } label: {
-                        Circle()
-                            .fill(Color(nsColor: color))
-                            .frame(width: 16, height: 16)
-                            .overlay(Circle().strokeBorder(.white.opacity(0.8), lineWidth: 1))
-                            .overlay(Circle().strokeBorder(MM.Colors.textPrimary, lineWidth: 2)
-                                .opacity(model.annotationColor.isEqual(color) ? 1 : 0))
-                            .clickable(minSize: 26)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .help("Annotation color")
+            colorGroup
 
             Spacer()
 
@@ -321,9 +312,125 @@ struct EditorView: View {
         .frame(height: 46)
     }
 
+    // MARK: Collapsible toolbar groups
+
+    /// Open a group's row (closing any other). A pending text entry commits
+    /// first so its caret doesn't keep blinking behind the expanded row.
+    private func expand(_ group: ToolbarGroup) {
+        commitText()
+        withAnimation(MM.Motion.gentle) { expandedGroup = group }
+    }
+
+    /// The collapsed face of a group: current choice + a chevron.
+    private func groupChip(help: String, isActive: Bool = false,
+                           action: @escaping () -> Void,
+                           @ViewBuilder label: () -> some View) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                label()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(MM.Colors.textTertiary)
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isActive ? MM.Colors.surface : .clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(isActive ? MM.Colors.border : .clear, lineWidth: 1)
+            )
+            .clickable(minSize: 30)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    /// Arrow/box/highlight/text collapse to the active (or last-used) tool.
+    @ViewBuilder private var drawToolsGroup: some View {
+        if expandedGroup == .draw {
+            ForEach(Self.drawTools) { t in
+                toolButton(t)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+            }
+        } else {
+            let active = Self.drawTools.contains(tool) ? tool : lastDrawTool
+            groupChip(help: "Draw — arrow, box, highlight, text",
+                      isActive: Self.drawTools.contains(tool),
+                      action: { expand(.draw) }) {
+                Image(systemName: active.symbol ?? "arrow.up.right")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Self.drawTools.contains(tool)
+                                     ? MM.Colors.textPrimary : MM.Colors.textSecondary)
+            }
+        }
+    }
+
+    /// Backdrop chips collapse to the current backdrop's swatch.
+    @ViewBuilder private var backdropGroup: some View {
+        if expandedGroup == .backdrop {
+            ForEach(BackdropStyle.allCases) { style in
+                backdropChip(style)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+            }
+        } else {
+            groupChip(help: "Backdrop — click to choose",
+                      action: { expand(.backdrop) }) {
+                backdropSwatch(model.backdrop)
+            }
+        }
+    }
+
+    /// Color swatches collapse to the current annotation color.
+    @ViewBuilder private var colorGroup: some View {
+        if expandedGroup == .color {
+            HStack(spacing: 6) {
+                ForEach(annotationColors.indices, id: \.self) { index in
+                    let color = annotationColors[index]
+                    Button {
+                        withAnimation(MM.Motion.gentle) {
+                            model.annotationColor = color
+                            expandedGroup = nil
+                        }
+                    } label: {
+                        colorSwatch(color)
+                            .overlay(Circle().strokeBorder(MM.Colors.textPrimary, lineWidth: 2)
+                                .opacity(model.annotationColor.isEqual(color) ? 1 : 0))
+                            .clickable(minSize: 26)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .transition(.scale(scale: 0.5).combined(with: .opacity))
+            .help("Annotation color")
+        } else {
+            groupChip(help: "Annotation color — click to choose",
+                      action: { expand(.color) }) {
+                colorSwatch(model.annotationColor)
+            }
+        }
+    }
+
+    private func colorSwatch(_ color: NSColor) -> some View {
+        Circle()
+            .fill(Color(nsColor: color))
+            .frame(width: 16, height: 16)
+            .overlay(Circle().strokeBorder(.white.opacity(0.8), lineWidth: 1))
+    }
+
     private func toolButton(_ t: EditorTool) -> some View {
         Button {
-            withAnimation(MM.Motion.gentle) { tool = t }
+            // A half-typed text label must not keep its caret blinking under
+            // another tool: commit it (or drop it if empty) on any switch.
+            commitText()
+            withAnimation(MM.Motion.gentle) {
+                tool = t
+                if Self.drawTools.contains(t) { lastDrawTool = t }
+                // Choosing anything closes whichever dropdown row was open.
+                expandedGroup = nil
+            }
             if t == .ocr {
                 scanning = true
                 Task { @MainActor in
@@ -357,30 +464,39 @@ struct EditorView: View {
         .help(t.help)
     }
 
+    /// The chip's visual alone — shared by the picker row and the collapsed
+    /// group chip.
+    private func backdropSwatch(_ style: BackdropStyle) -> some View {
+        Group {
+            if let colors = style.colors {
+                Circle().fill(
+                    LinearGradient(
+                        colors: colors.map { Color(nsColor: $0) },
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+            } else {
+                Circle()
+                    .strokeBorder(MM.Colors.border, lineWidth: 1)
+                    .overlay(
+                        Rectangle()
+                            .fill(MM.Colors.textTertiary)
+                            .frame(width: 12, height: 1)
+                            .rotationEffect(.degrees(-45))
+                    )
+            }
+        }
+        .frame(width: 16, height: 16)
+    }
+
     private func backdropChip(_ style: BackdropStyle) -> some View {
         Button {
-            withAnimation(MM.Motion.gentle) { model.backdrop = style }
-        } label: {
-            Group {
-                if let colors = style.colors {
-                    Circle().fill(
-                        LinearGradient(
-                            colors: colors.map { Color(nsColor: $0) },
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        )
-                    )
-                } else {
-                    Circle()
-                        .strokeBorder(MM.Colors.border, lineWidth: 1)
-                        .overlay(
-                            Rectangle()
-                                .fill(MM.Colors.textTertiary)
-                                .frame(width: 12, height: 1)
-                                .rotationEffect(.degrees(-45))
-                        )
-                }
+            withAnimation(MM.Motion.gentle) {
+                model.backdrop = style
+                expandedGroup = nil
             }
-            .frame(width: 16, height: 16)
+        } label: {
+            backdropSwatch(style)
             .overlay(
                 Circle().strokeBorder(
                     model.backdrop == style ? MM.Colors.textPrimary : .clear, lineWidth: 1.5

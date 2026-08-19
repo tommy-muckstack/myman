@@ -350,20 +350,24 @@ struct CalendarPanelView: View {
                     .font(MM.Fonts.metadata)
                     .foregroundStyle(MM.Colors.textTertiary)
                 Spacer(minLength: 0)
-                if event.meetingID != nil {
-                    HStack(spacing: 3) {
-                        IconView(icon: .note, size: 11, color: MM.Colors.accent)
-                        Text("notes")
-                            .font(MM.Fonts.metadata)
-                            .foregroundStyle(MM.Colors.accent)
-                    }
-                    .contentShape(Rectangle())
-                    .clickable(minSize: 22)
-                    .onTapGesture {
-                        if let meetingID = event.meetingID {
-                            MeetingDocumentController.shared.open(meetingID: meetingID)
+                if let meetingID = event.meetingID {
+                    // A Button, not an onTapGesture: the surrounding card's
+                    // own tap (open in Google Calendar) must never swallow
+                    // this — notes opens the meeting document, always.
+                    Button {
+                        MeetingDocumentController.shared.open(meetingID: meetingID)
+                    } label: {
+                        HStack(spacing: 3) {
+                            IconView(icon: .note, size: 11, color: MM.Colors.accent)
+                            Text("notes")
+                                .font(MM.Fonts.metadata)
+                                .foregroundStyle(MM.Colors.accent)
                         }
+                        .contentShape(Rectangle())
+                        .clickable(minSize: 22)
                     }
+                    .buttonStyle(.plain)
+                    .help("Open this meeting's notes")
                 }
                 if hovering {
                     Button("Brief") { openBrief(event) }

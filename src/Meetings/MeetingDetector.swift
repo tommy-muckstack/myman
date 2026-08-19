@@ -1,6 +1,7 @@
 import AppKit
 import CoreAudio
 import Foundation
+import ScreenCaptureKit
 
 // Meeting auto-detection, the Muesli pattern: a CoreAudio listener on the
 // default input device's "is running somewhere" flag fires the moment ANY app
@@ -83,6 +84,18 @@ final class MeetingDetector {
         if title.range(of: #"^Meet\s+[–-]\s"#, options: .regularExpression) != nil { return true }
         if title.contains("Microsoft Teams meeting") { return true }
         return false
+    }
+
+    /// Any on-screen (or other-Space) window whose title marks a live call.
+    /// Shared by start detection (evidence a merely-running app is really in
+    /// a call) and end detection (its disappearance is the hang-up).
+    nonisolated static func meetingWindowPresent() async -> Bool {
+        guard let content = try? await SCShareableContent
+            .excludingDesktopWindows(true, onScreenWindowsOnly: false) else { return false }
+        return content.windows.contains { window in
+            guard let title = window.title, !title.isEmpty else { return false }
+            return isMeetingWindowTitle(title)
+        }
     }
 
     /// Known dictation utilities — them holding the mic is NEVER a meeting,
@@ -216,17 +229,31 @@ final class MeetingDetector {
         // fallback heuristic sees a merely-RUNNING Zoom and fires.
         if !allOwners.isEmpty { return }
 
-        // No attribution available — old heuristics. Strong signal: a
-        // dedicated meeting app is running. Resident apps (Slack, Discord)
-        // are excluded here — always-running is not evidence of a call.
+        // No attribution available — old heuristics. Resident apps (Slack,
+        // Discord) are excluded here — always-running is not evidence of a
+        // call. And "Zoom is running" alone is not evidence either: Zoom and
+        // Teams idle in the dock all day, so ANY app touching the mic kept
+        // firing a "Zoom meeting" nudge. Merely-running only counts when the
+        // app is frontmost or an on-screen window says a call is live.
         let apps = NSWorkspace.shared.runningApplications
         if let meeting = apps.first(where: {
             let id = $0.bundleIdentifier ?? ""
             return Self.strongApps.keys.contains(id) && !Self.residentApps.contains(id)
         }) {
-            let name = Self.strongApps[meeting.bundleIdentifier ?? ""] ?? "a meeting app"
-            lastNudge = Date()
-            onMeetingDetected?(name)
+            let bundle = meeting.bundleIdentifier ?? ""
+            let name = Self.strongApps[bundle] ?? "a meeting app"
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundle {
+                lastNudge = Date()
+                onMeetingDetected?(name)
+                return
+            }
+            Task { @MainActor [weak self] in
+                guard await Self.meetingWindowPresent() else { return }
+                guard let self, !self.isOwnAudioActive(),
+                      Date() > self.suppressedUntil else { return }
+                self.lastNudge = Date()
+                self.onMeetingDetected?(name)
+            }
             return
         }
         // Weaker: the FRONTMOST app is a browser using the mic.

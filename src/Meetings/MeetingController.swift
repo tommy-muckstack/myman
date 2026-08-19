@@ -50,7 +50,7 @@ struct SpeakerCandidates: Sendable, Equatable {
     var isEmpty: Bool { names.isEmpty }
 }
 
-// transcribe on-device (Parakeet) into a "You" / "Speaker 2" transcript stored
+// transcribe on-device (Qwen3, Parakeet fallback) into a "You" / "Speaker 2" transcript stored
 // in the shared database. Music auto-pauses while recording.
 
 @MainActor
@@ -162,6 +162,16 @@ final class MeetingController: ObservableObject {
         if let title { pendingTitle = title }
         provisionalJoinURL = joinURL
         start(provisional: true)
+    }
+
+    /// Evidence that this take contains an actual call, not just an armed
+    /// mic: a call app attributed on the mic, a meeting-titled window on
+    /// screen, or the far side audible on the system track. The auto-record
+    /// commit waits for this — a calendar nudge for an event the user never
+    /// joined must evaporate, not become a phantom meeting.
+    var hasCallEvidence: Bool {
+        guard case .recording(let start) = phase else { return false }
+        return callAppSeenOnMic || meetingWindowSeen || lastRemoteAudibleAt > start
     }
 
     func keepProvisional() {
@@ -412,21 +422,11 @@ final class MeetingController: ObservableObject {
         }
     }
 
-    /// Any on-screen (or other-Space) window whose title marks a live call.
-    private static func meetingWindowPresent() async -> Bool {
-        guard let content = try? await SCShareableContent
-            .excludingDesktopWindows(true, onScreenWindowsOnly: false) else { return false }
-        return content.windows.contains { window in
-            guard let title = window.title, !title.isEmpty else { return false }
-            return MeetingDetector.isMeetingWindowTitle(title)
-        }
-    }
-
     private func pollForMeetingEnd() async {
         guard case .recording = phase else { return }
         // Window-title signal, tracked every tick regardless of what the mic
         // says — it must be armed before it can fire.
-        let windowPresent = await Self.meetingWindowPresent()
+        let windowPresent = await MeetingDetector.meetingWindowPresent()
         guard case .recording = phase else { return }
         if windowPresent {
             meetingWindowSeen = true
@@ -639,14 +639,19 @@ final class MeetingController: ObservableObject {
 
     private func runTranscription(_ job: TranscriptionJob) async {
         var record = job.record
-        // Meetings favor Parakeet: hour-long audio needs its speed.
-        if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .parakeet {
-            await TranscriptionService.shared.load(kind: .parakeet)
+        // Meetings favor Qwen3 (~4x fewer word errors): transcription runs in
+        // the background, so its slower decode costs nothing the user waits
+        // on. load() falls back to Parakeet on its own when Qwen3 can't load
+        // (download failure, macOS < 15).
+        if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .qwen3 {
+            await TranscriptionService.shared.load(kind: .qwen3)
         }
         record.transcript = await Self.buildTranscript(
             micPath: job.micPath, systemPath: job.systemPath,
             candidates: job.candidates)
-        Analytics.track("meeting_transcribed", ["transcript_chars": record.transcript.count])
+        Analytics.track("meeting_transcribed",
+                        ["transcript_chars": record.transcript.count,
+                         "engine": TranscriptionService.shared.kind.rawValue])
         if record.transcript.isEmpty || Self.isNoiseFragment(record) {
             // Nothing was said — or an aborted sliver of a recording that
             // would land in the brain looking like a real meeting. Keep
@@ -691,18 +696,50 @@ final class MeetingController: ObservableObject {
         }
     }
 
-    /// The calendar event happening right now (±10 min), if any — its name
-    /// beats a timestamp as the meeting title.
+    /// The calendar event this recording most plausibly IS — its name beats
+    /// a timestamp as the meeting title.
     private static func currentCalendarEventTitle() -> String? {
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return nil }
         let store = EKEventStore()
         let now = Date()
         let predicate = store.predicateForEvents(
-            withStart: now.addingTimeInterval(-600),
+            withStart: now.addingTimeInterval(-1200),
             end: now.addingTimeInterval(600), calendars: nil)
-        return store.events(matching: predicate)
-            .filter { !$0.isAllDay && $0.startDate <= now.addingTimeInterval(600) }
-            .sorted { $0.startDate > $1.startDate }
+        let candidates = store.events(matching: predicate).map { event in
+            EventTitleCandidate(
+                title: event.title ?? "",
+                start: event.startDate ?? .distantPast,
+                isAllDay: event.isAllDay,
+                hasLink: CalendarWatcher.meetingURL(in: event) != nil,
+                declined: CalendarWatcher.isDeclined(event))
+        }
+        return bestEventTitle(candidates, now: now)
+    }
+
+    struct EventTitleCandidate {
+        let title: String
+        let start: Date
+        let isAllDay: Bool
+        let hasLink: Bool
+        let declined: Bool
+    }
+
+    /// Which event should name a recording starting NOW. The old rule ("any
+    /// event overlapping ±10 min, latest start wins") let a 3-hour focus
+    /// block that began hours ago name a Zoom call, and let declined and
+    /// linkless events outrank the actual meeting. Now: the event must have
+    /// STARTED within the last 20 minutes (or start within 10), declined
+    /// invites never name anything, and an event carrying a meeting link
+    /// beats any bare calendar block.
+    nonisolated static func bestEventTitle(_ events: [EventTitleCandidate], now: Date) -> String? {
+        let plausible = events.filter {
+            !$0.title.isEmpty && !$0.isAllDay && !$0.declined
+                && $0.start > now.addingTimeInterval(-1200)
+                && $0.start <= now.addingTimeInterval(600)
+        }
+        let linked = plausible.filter(\.hasLink)
+        return (linked.isEmpty ? plausible : linked)
+            .sorted { $0.start > $1.start }
             .first?.title
     }
 
@@ -762,6 +799,44 @@ final class MeetingController: ObservableObject {
         await transcribeWavChunks(atPath: path).map(\.text).joined(separator: " ")
     }
 
+    /// Max seconds per ASR slice for the ACTIVE engine. Qwen3 is built for
+    /// ~30s utterances — longer input silently truncates its tail (the same
+    /// defect dictation hit; see VoiceController.chunkSeconds). Parakeet
+    /// handles a minute comfortably. Slices stay 5s under each ceiling so a
+    /// pause-seeking cut has room to move the boundary.
+    private static var maxSliceSeconds: Double {
+        TranscriptionService.shared.kind == .qwen3 ? 25 : 55
+    }
+
+    /// Whole-chunk fallback size for the active engine, same ceilings.
+    private static var chunkSeconds: Int {
+        TranscriptionService.shared.kind == .qwen3 ? 30 : 60
+    }
+
+    /// Where to end a slice that must be cut before the speech does: the
+    /// start of the quietest 0.1s frame in the tail window, so the cut lands
+    /// in a breath or pause instead of mid-word. A hard cut at exactly 55s
+    /// splits whatever word straddles it, and the recognizer garbles BOTH
+    /// halves — one boundary error per minute of continuous speech.
+    /// Returns `samples.count` when the tail is too short to search.
+    nonisolated static func quietestCutSample(in samples: [Float], from lowerBound: Int) -> Int {
+        let frame = 1600 // 0.1s at 16kHz
+        guard lowerBound >= 0, samples.count - lowerBound >= frame else { return samples.count }
+        var best = samples.count
+        var bestEnergy = Float.greatestFiniteMagnitude
+        var index = lowerBound
+        while index + frame <= samples.count {
+            var sum: Float = 0
+            for sample in samples[index ..< index + frame] { sum += sample * sample }
+            if sum < bestEnergy {
+                bestEnergy = sum
+                best = index
+            }
+            index += frame
+        }
+        return best
+    }
+
     /// 60s chunk transcriptions with their start offsets — the coarse
     /// fallback shape when turn detection fails on a track.
     private static func transcribeWavChunks(atPath path: String)
@@ -769,21 +844,34 @@ final class MeetingController: ObservableObject {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
         let headerBytes: UInt64 = 44
-        let chunkBytes = 16000 * 60 * 2 // 60s of mono Int16
+        let seconds = chunkSeconds
+        let chunkBytes = 16000 * seconds * 2 // one chunk of mono Int16
         var offset = headerBytes
         var parts: [(start: Double, text: String)] = []
         while true {
             try? handle.seek(toOffset: offset)
             guard let data = try? handle.read(upToCount: chunkBytes), !data.isEmpty else { break }
-            let samples = data.withUnsafeBytes { raw -> [Float] in
+            var samples = data.withUnsafeBytes { raw -> [Float] in
                 let int16 = raw.bindMemory(to: Int16.self)
                 return int16.map { Float($0) / Float(Int16.max) }
+            }
+            let isFinal = data.count < chunkBytes
+            var consumedBytes = data.count
+            if !isFinal {
+                // More audio follows, so this cut lands mid-speech unless we
+                // move it: end the chunk at the quietest instant of its last
+                // 10 seconds instead of at an arbitrary sample.
+                let cut = Self.quietestCutSample(in: samples, from: (seconds - 10) * 16000)
+                if cut < samples.count {
+                    samples.removeLast(samples.count - cut)
+                    consumedBytes = cut * 2
+                }
             }
             let start = Double(offset - headerBytes) / 32000
             let text = await TranscriptionService.shared.transcribe(samples)
             if !text.isEmpty { parts.append((start, text)) }
-            if data.count < chunkBytes { break }
-            offset += UInt64(data.count)
+            if isFinal { break }
+            offset += UInt64(consumedBytes)
         }
         return parts
     }
@@ -815,8 +903,9 @@ final class MeetingController: ObservableObject {
         Analytics.track("meeting_track_fallback",
                         ["speaker": speaker, "turn_chars": Int(covered),
                          "chunk_chars": chunkChars, "duration_s": Int(duration)])
+        let chunkLength = Double(chunkSeconds)
         return chunks.map {
-            MeetingTurn(start: $0.start, end: $0.start + 60, speaker: speaker, text: $0.text)
+            MeetingTurn(start: $0.start, end: $0.start + chunkLength, speaker: speaker, text: $0.text)
         }
     }
 
@@ -910,13 +999,26 @@ final class MeetingController: ObservableObject {
             var offset = segment.start
             var texts: [String] = []
             while offset < segment.end {
-                let sliceEnd = min(offset + 55, segment.end) // ASR-safe length
+                let maxSlice = maxSliceSeconds
+                let hardEnd = min(offset + maxSlice, segment.end) // ASR-safe length
                 let byteStart = 44 + UInt64(offset * 16000) * 2
-                let byteCount = Int((sliceEnd - offset) * 16000) * 2
+                let byteCount = Int((hardEnd - offset) * 16000) * 2
                 try? handle.seek(toOffset: byteStart)
                 guard let data = try? handle.read(upToCount: byteCount), !data.isEmpty else { break }
-                let samples = data.withUnsafeBytes { raw -> [Float] in
+                var samples = data.withUnsafeBytes { raw -> [Float] in
                     raw.bindMemory(to: Int16.self).map { Float($0) / Float(Int16.max) }
+                }
+                var sliceEnd = hardEnd
+                if hardEnd < segment.end {
+                    // The segment continues past this slice, so a cut here is
+                    // mid-speech by definition. Land it on the quietest
+                    // instant of the slice's last 10 seconds — a breath, not
+                    // the middle of a word — and resume the next slice there.
+                    let cut = Self.quietestCutSample(in: samples, from: Int((maxSlice - 10) * 16000))
+                    if cut < samples.count {
+                        samples.removeLast(samples.count - cut)
+                        sliceEnd = offset + Double(cut) / 16000
+                    }
                 }
                 let text = await TranscriptionService.shared.transcribe(samples)
                 if !text.isEmpty { texts.append(text) }
@@ -1199,8 +1301,10 @@ final class MeetingController: ObservableObject {
                    let mtime = try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date {
                     orphan.endedAt = mtime
                 }
-                if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .parakeet {
-                    await TranscriptionService.shared.load(kind: .parakeet)
+                // Same engine policy as live jobs: accuracy first, with
+                // load()'s own fallback to Parakeet when Qwen3 can't load.
+                if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .qwen3 {
+                    await TranscriptionService.shared.load(kind: .qwen3)
                 }
                 orphan.transcript = await Self.buildTranscript(
                     micPath: orphan.micAudioPath, systemPath: orphan.systemAudioPath,

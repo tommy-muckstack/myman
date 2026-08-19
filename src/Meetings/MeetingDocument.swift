@@ -44,6 +44,97 @@ final class MeetingDocumentController {
     }
 }
 
+/// Slide thumbnails without the dead space: captured call windows routinely
+/// carry big uniform margins (letterboxed screen shares, empty chrome), and a
+/// center-crop of THAT shows mostly margin. Trim the uniform border first so
+/// the thumbnail is all content.
+enum SlideThumbnailer {
+    private static let cache = NSCache<NSString, NSImage>()
+
+    static func thumbnail(atPath path: String) -> NSImage? {
+        if let cached = cache.object(forKey: path as NSString) { return cached }
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        var result = image
+        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+           let rect = contentCropRect(of: cg),
+           let cropped = cg.cropping(to: rect) {
+            result = NSImage(cgImage: cropped,
+                             size: NSSize(width: cropped.width, height: cropped.height))
+        }
+        cache.setObject(result, forKey: path as NSString)
+        return result
+    }
+
+    /// The bounding box of actual content, or nil when there's nothing worth
+    /// trimming. Works on a ≤128px grayscale copy: the border shade is the
+    /// modal value of the outermost pixel ring, and a row/column is "empty"
+    /// when under 2% of its pixels depart from that shade.
+    static func contentCropRect(of image: CGImage) -> CGRect? {
+        let maxSide: CGFloat = 128
+        let scale = min(1, maxSide / CGFloat(max(image.width, image.height)))
+        let w = max(8, Int(CGFloat(image.width) * scale))
+        let h = max(8, Int(CGFloat(image.height) * scale))
+        var pixels = [UInt8](repeating: 0, count: w * h)
+        guard let ctx = CGContext(
+            data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return nil }
+        ctx.interpolationQuality = .low
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        var histogram = [Int](repeating: 0, count: 256)
+        for x in 0 ..< w {
+            histogram[Int(pixels[x])] += 1
+            histogram[Int(pixels[(h - 1) * w + x])] += 1
+        }
+        for y in 0 ..< h {
+            histogram[Int(pixels[y * w])] += 1
+            histogram[Int(pixels[y * w + w - 1])] += 1
+        }
+        guard let border = histogram.indices.max(by: { histogram[$0] < histogram[$1] })
+        else { return nil }
+
+        func rowIsEmpty(_ y: Int) -> Bool {
+            var busy = 0
+            for x in 0 ..< w where abs(Int(pixels[y * w + x]) - border) > 12 { busy += 1 }
+            return busy * 50 < w
+        }
+        func colIsEmpty(_ x: Int) -> Bool {
+            var busy = 0
+            for y in 0 ..< h where abs(Int(pixels[y * w + x]) - border) > 12 { busy += 1 }
+            return busy * 50 < h
+        }
+        var top = 0
+        while top < h - 1, rowIsEmpty(top) { top += 1 }
+        var bottom = h - 1
+        while bottom > top, rowIsEmpty(bottom) { bottom -= 1 }
+        var left = 0
+        while left < w - 1, colIsEmpty(left) { left += 1 }
+        var right = w - 1
+        while right > left, colIsEmpty(right) { right -= 1 }
+
+        let cw = right - left + 1
+        let ch = bottom - top + 1
+        // A near-blank frame is not "all margin" — trimming it to a sliver
+        // would show garbage. And a trim under ~2% isn't worth a re-crop.
+        guard cw >= w / 4, ch >= h / 4 else { return nil }
+        guard (w - cw) + (h - ch) >= max(2, (w + h) / 50) else { return nil }
+
+        let sx = CGFloat(image.width) / CGFloat(w)
+        let sy = CGFloat(image.height) / CGFloat(h)
+        // One coarse pixel of slack each side so round-off never shaves
+        // real content.
+        let x = max(0, (CGFloat(left) - 1) * sx)
+        let y = max(0, (CGFloat(top) - 1) * sy)
+        return CGRect(
+            x: x, y: y,
+            width: min(CGFloat(image.width) - x, (CGFloat(cw) + 2) * sx),
+            height: min(CGFloat(image.height) - y, (CGFloat(ch) + 2) * sy)
+        )
+    }
+}
+
 struct MeetingDocumentView: View {
     let meeting: Meeting
     @State private var title: String
@@ -58,6 +149,9 @@ struct MeetingDocumentView: View {
     @State private var linkCopied = false
     @Namespace private var tabNamespace
     @State private var headerHovering = false
+    /// Transcript tab defaults to the formatted reading view; this flips to
+    /// the raw text editor for corrections.
+    @State private var editingTranscript = false
 
     init(meeting: Meeting) {
         self.meeting = meeting
@@ -166,21 +260,125 @@ struct MeetingDocumentView: View {
     }
 
     private var transcriptEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Rename speakers above — every line updates everywhere.")
-                .font(MM.Fonts.secondary)
-                .foregroundStyle(MM.Colors.textTertiary)
-                .padding(.horizontal, 24)
-                .padding(.top, 14)
-            TextEditor(text: $transcript)
-                .font(MM.Fonts.body)
-                .foregroundStyle(MM.Colors.textPrimary)
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
-                .onChange(of: transcript) { _, newValue in
-                    debouncedSaveTranscript(newValue)
+        let turns = Self.parseTurns(transcript)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(editingTranscript || turns == nil
+                     ? "Rename speakers above — every line updates everywhere."
+                     : "Reading view — Edit to correct the text.")
+                    .font(MM.Fonts.secondary)
+                    .foregroundStyle(MM.Colors.textTertiary)
+                Spacer()
+                if turns != nil {
+                    Button(editingTranscript ? "Done" : "Edit") {
+                        withAnimation(MM.Motion.gentle) { editingTranscript.toggle() }
+                    }
+                    .buttonStyle(.plain)
+                    .font(MM.Fonts.secondary)
+                    .foregroundStyle(MM.Colors.textSecondary)
+                    .help(editingTranscript
+                          ? "Back to the formatted view"
+                          : "Edit the raw transcript text")
                 }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
+            if let turns, !editingTranscript {
+                formattedTranscript(turns)
+            } else {
+                TextEditor(text: $transcript)
+                    .font(MM.Fonts.body)
+                    .foregroundStyle(MM.Colors.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 16)
+                    .onChange(of: transcript) { _, newValue in
+                        debouncedSaveTranscript(newValue)
+                    }
+            }
+        }
+    }
+
+    // MARK: Formatted transcript
+
+    /// One parsed `**Name** [m:ss]: text` turn.
+    struct TranscriptTurn: Equatable {
+        let speaker: String
+        let time: String
+        let text: String
+    }
+
+    /// The interleaved transcript, parsed — nil when the text isn't in the
+    /// turn format (old two-block transcripts, hand-edited text), in which
+    /// case the raw editor is the honest view.
+    nonisolated static func parseTurns(_ transcript: String) -> [TranscriptTurn]? {
+        let pattern = #"\*\*([^*\n]{1,80})\*\*\s*\[(\d+:\d{2})\]:\s*"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let ns = transcript as NSString
+        let matches = regex.matches(in: transcript, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return nil }
+        var turns: [TranscriptTurn] = []
+        for (index, match) in matches.enumerated() {
+            let textStart = match.range.location + match.range.length
+            let textEnd = index + 1 < matches.count
+                ? matches[index + 1].range.location : ns.length
+            let text = ns.substring(with: NSRange(location: textStart, length: textEnd - textStart))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            turns.append(TranscriptTurn(
+                speaker: ns.substring(with: match.range(at: 1)),
+                time: ns.substring(with: match.range(at: 2)),
+                text: text))
+        }
+        return turns
+    }
+
+    /// Muted, readable hues — one per speaker in first-appearance order.
+    nonisolated static let speakerPalette: [Color] = [
+        Color(red: 0.36, green: 0.56, blue: 0.94),  // blue
+        Color(red: 0.87, green: 0.47, blue: 0.34),  // coral
+        Color(red: 0.36, green: 0.69, blue: 0.52),  // green
+        Color(red: 0.66, green: 0.48, blue: 0.90),  // purple
+        Color(red: 0.88, green: 0.42, blue: 0.60),  // pink
+        Color(red: 0.33, green: 0.68, blue: 0.72),  // teal
+    ]
+
+    nonisolated static func speakerColors(for turns: [TranscriptTurn]) -> [String: Color] {
+        var colors: [String: Color] = [:]
+        for turn in turns where colors[turn.speaker] == nil {
+            colors[turn.speaker] = speakerPalette[colors.count % speakerPalette.count]
+        }
+        return colors
+    }
+
+    /// The clean reading view: bold colored speaker names, quiet timestamps,
+    /// plain paragraphs — no markup on screen.
+    private func formattedTranscript(_ turns: [TranscriptTurn]) -> some View {
+        let colors = Self.speakerColors(for: turns)
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                ForEach(turns.indices, id: \.self) { index in
+                    let turn = turns[index]
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(turn.speaker)
+                                .font(MM.Fonts.outfit(13, .semiBold))
+                                .foregroundStyle(colors[turn.speaker] ?? MM.Colors.textPrimary)
+                            Text(turn.time)
+                                .font(MM.Fonts.metadata)
+                                .foregroundStyle(MM.Colors.textTertiary)
+                        }
+                        Text(turn.text)
+                            .font(MM.Fonts.body)
+                            .foregroundStyle(MM.Colors.textPrimary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 2)
+            .padding(.bottom, 16)
         }
     }
 
@@ -190,7 +388,7 @@ struct MeetingDocumentView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(slidePaths, id: \.self) { path in
-                    if let image = NSImage(contentsOfFile: path) {
+                    if let image = SlideThumbnailer.thumbnail(atPath: path) {
                         Image(nsImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
