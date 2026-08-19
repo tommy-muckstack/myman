@@ -50,6 +50,147 @@ final class MeetingTranscriptTests: XCTestCase {
         XCTAssertEqual(merged[1].start, 10)
     }
 
+    // MARK: Slice boundaries
+
+    /// A slice that must be cut before the speech ends should end at the
+    /// quietest instant of its tail window — a pause — never mid-word.
+    func testLongSliceCutLandsOnTheQuietestFrame() {
+        // 3s of "speech" with one silent 0.1s frame planted at 2.5s.
+        var samples = [Float](repeating: 0.3, count: 3 * 16000)
+        let pause = Int(2.5 * 16000)
+        for i in pause ..< pause + 1600 { samples[i] = 0 }
+        let cut = MeetingController.quietestCutSample(in: samples, from: 16000)
+        XCTAssertEqual(cut, pause)
+    }
+
+    /// A tail too short to search keeps the hard cut (returns the full length).
+    func testTooShortATailKeepsTheHardCut() {
+        let samples = [Float](repeating: 0.3, count: 1000)
+        XCTAssertEqual(MeetingController.quietestCutSample(in: samples, from: 500),
+                       samples.count)
+    }
+
+    // MARK: Meeting naming
+
+    /// A 3-hour focus block that began hours ago must not name a Zoom call
+    /// that starts now — only events starting near NOW are plausible.
+    func testLongRunningBlockNeverNamesAFreshCall() {
+        let now = Date()
+        let events = [
+            MeetingController.EventTitleCandidate(
+                title: "Deep work", start: now.addingTimeInterval(-7200),
+                isAllDay: false, hasLink: false, declined: false),
+        ]
+        XCTAssertNil(MeetingController.bestEventTitle(events, now: now))
+    }
+
+    /// The event with the meeting link IS the meeting — it beats a bare
+    /// calendar block even when the block started more recently.
+    func testLinkedEventOutranksBareBlock() {
+        let now = Date()
+        let events = [
+            MeetingController.EventTitleCandidate(
+                title: "Lunch hold", start: now.addingTimeInterval(-60),
+                isAllDay: false, hasLink: false, declined: false),
+            MeetingController.EventTitleCandidate(
+                title: "Design sync", start: now.addingTimeInterval(-300),
+                isAllDay: false, hasLink: true, declined: false),
+        ]
+        XCTAssertEqual(MeetingController.bestEventTitle(events, now: now), "Design sync")
+    }
+
+    /// A declined invite never names a recording.
+    func testDeclinedEventNeverNamesARecording() {
+        let now = Date()
+        let events = [
+            MeetingController.EventTitleCandidate(
+                title: "All-hands (declined)", start: now,
+                isAllDay: false, hasLink: true, declined: true),
+        ]
+        XCTAssertNil(MeetingController.bestEventTitle(events, now: now))
+    }
+
+    func testUpcomingEventWithinTenMinutesCanName() {
+        let now = Date()
+        let events = [
+            MeetingController.EventTitleCandidate(
+                title: "1:1 Lauren", start: now.addingTimeInterval(300),
+                isAllDay: false, hasLink: true, declined: false),
+        ]
+        XCTAssertEqual(MeetingController.bestEventTitle(events, now: now), "1:1 Lauren")
+    }
+
+    // MARK: Formatted transcript rendering
+
+    /// The document view shows turns, not markup — `**Name** [m:ss]:` must
+    /// parse into speaker / time / text.
+    func testTranscriptTurnsParseCleanly() {
+        let transcript = """
+        **You** [0:12]: Morning, ready to start?
+
+        **Lauren** [0:19]: Yes — one sec, sharing my screen.
+        """
+        let turns = MeetingDocumentView.parseTurns(transcript)
+        XCTAssertEqual(turns?.count, 2)
+        XCTAssertEqual(turns?[0].speaker, "You")
+        XCTAssertEqual(turns?[0].time, "0:12")
+        XCTAssertEqual(turns?[0].text, "Morning, ready to start?")
+        XCTAssertEqual(turns?[1].speaker, "Lauren")
+    }
+
+    /// Old two-block transcripts have no turn markers — the raw editor stays
+    /// the honest view for them.
+    func testUnstructuredTranscriptFallsBackToRawEditor() {
+        XCTAssertNil(MeetingDocumentView.parseTurns("You:\nJust a plain block of text."))
+    }
+
+    func testEachSpeakerGetsAStableDistinctColor() {
+        let turns = [
+            MeetingDocumentView.TranscriptTurn(speaker: "You", time: "0:01", text: "a"),
+            MeetingDocumentView.TranscriptTurn(speaker: "Lauren", time: "0:05", text: "b"),
+            MeetingDocumentView.TranscriptTurn(speaker: "You", time: "0:09", text: "c"),
+        ]
+        let colors = MeetingDocumentView.speakerColors(for: turns)
+        XCTAssertEqual(colors.count, 2)
+        XCTAssertNotEqual(colors["You"], colors["Lauren"])
+    }
+
+    // MARK: Slide thumbnails
+
+    /// A slide that's mostly letterbox must crop down to its content box.
+    func testLetterboxedSlideCropsToContent() throws {
+        let width = 200, height = 100
+        var pixels = [UInt8](repeating: 0, count: width * height) // black margins
+        for y in 30 ..< 70 {
+            for x in 50 ..< 150 { pixels[y * width + x] = 220 } // bright content
+        }
+        let image = try XCTUnwrap(Self.grayImage(pixels: pixels, width: width, height: height))
+        let rect = try XCTUnwrap(SlideThumbnailer.contentCropRect(of: image))
+        // Content box ±2 coarse pixels of slack.
+        XCTAssertEqual(rect.minX, 50, accuracy: 6)
+        XCTAssertEqual(rect.minY, 30, accuracy: 6)
+        XCTAssertEqual(rect.maxX, 150, accuracy: 6)
+        XCTAssertEqual(rect.maxY, 70, accuracy: 6)
+    }
+
+    /// A frame that's already all content must be left alone.
+    func testFullContentSlideIsNotCropped() throws {
+        let width = 128, height = 72
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        for i in pixels.indices { pixels[i] = UInt8((i * 37) % 256) } // busy everywhere
+        let image = try XCTUnwrap(Self.grayImage(pixels: pixels, width: width, height: height))
+        XCTAssertNil(SlideThumbnailer.contentCropRect(of: image))
+    }
+
+    private static func grayImage(pixels: [UInt8], width: Int, height: Int) -> CGImage? {
+        var data = pixels
+        let ctx = CGContext(
+            data: &data, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        return ctx?.makeImage()
+    }
+
     // MARK: Speaker identity
 
     func testAnEmailAddressNeverBecomesASpeakerLabel() {

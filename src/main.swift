@@ -69,9 +69,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             self.meetings.startProvisional(title: title, joinURL: joinURL)
             if SettingsStore.shared.autoRecordMeetings {
                 let delay = max(0, startsAt.timeIntervalSinceNow)
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    guard let self, !ScreenRecorder.shared.isBusy else { return }
-                    self.meetings.keepProvisional()
+                // Commit only once the take shows an actual call (call app on
+                // the mic, meeting window, remote audio) — blind commit at the
+                // event's start time turned every unjoined invite into a
+                // phantom recorded "meeting" named after the calendar. Checks
+                // every 30s for 10 minutes to catch late joins; if the user
+                // never joins, the provisional silence watchdog discards it.
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(delay))
+                    for _ in 0 ..< 20 {
+                        guard let self, self.meetings.isProvisional else { return }
+                        if !ScreenRecorder.shared.isBusy, self.meetings.hasCallEvidence {
+                            self.meetings.keepProvisional()
+                            return
+                        }
+                        try? await Task.sleep(for: .seconds(30))
+                    }
                 }
             }
         }
@@ -354,7 +367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         }
 
         // Voice: hold to talk, release to paste. Bare-modifier combos (hold
-        // Left ⌘ — the default) go through the NSEvent monitor; key combos go
+        // Right ⌥ — the default) go through the NSEvent monitor; key combos go
         // through Carbon with press/release.
         modifierMonitor.stop()
         let voiceCombo = store.combo(for: .voice)

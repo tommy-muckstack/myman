@@ -11,7 +11,7 @@ struct HotkeyCombo: Codable, Equatable {
     var keyCode: UInt32
     var carbonModifiers: UInt32
 
-    /// Bare-modifier hotkey (hold Left ⌘) — registered via NSEvent monitors,
+    /// Bare-modifier hotkey (hold Right ⌥) — registered via NSEvent monitors,
     /// not Carbon.
     var isModifierOnly: Bool {
         carbonModifiers == 0 && ModifierHotkeyMonitor.isModifierKeyCode(keyCode)
@@ -74,8 +74,11 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         // in-app "Save As" shortcuts while My Man runs.
         case .screenshot: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_S), carbonModifiers: UInt32(cmdKey | shiftKey))
         case .note: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: UInt32(optionKey | shiftKey))
-        // Hold Left ⌘ to dictate, release to paste — the Wispr gesture.
-        case .voice: return HotkeyCombo(keyCode: UInt32(kVK_Command), carbonModifiers: 0)
+        // Hold Right ⌥ to dictate, release to paste — the Wispr gesture.
+        // Right ⌥ on purpose, not ⌘: ⌘ is half of every shortcut on the
+        // machine, and chords like ⌘⇧S kept arming dictation before the
+        // second modifier arrived. Right ⌥ is on no common shortcut.
+        case .voice: return HotkeyCombo(keyCode: UInt32(kVK_RightOption), carbonModifiers: 0)
         case .meeting: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(optionKey | shiftKey))
         case .record: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey))
         }
@@ -147,7 +150,19 @@ final class SettingsStore: ObservableObject {
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: "hotkeys"),
-           let decoded = try? JSONDecoder().decode([String: HotkeyCombo].self, from: data) {
+           var decoded = try? JSONDecoder().decode([String: HotkeyCombo].self, from: data) {
+            // One-time migration: dictation's default moved from hold Left ⌘
+            // to hold Right ⌥ (⌘ chords like ⌘⇧S kept firing dictation). A
+            // stored combo equal to the OLD default was the default, not a
+            // choice — drop it so the new default applies. A genuinely custom
+            // combo is untouched.
+            if decoded[HotkeyAction.voice.rawValue]
+                == HotkeyCombo(keyCode: UInt32(kVK_Command), carbonModifiers: 0) {
+                decoded[HotkeyAction.voice.rawValue] = nil
+                if let updated = try? JSONEncoder().encode(decoded) {
+                    UserDefaults.standard.set(updated, forKey: "hotkeys")
+                }
+            }
             hotkeys = decoded
         } else {
             hotkeys = [:]

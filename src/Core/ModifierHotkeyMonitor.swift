@@ -1,7 +1,7 @@
 import AppKit
 import Carbon
 
-/// Bare-modifier hotkeys (hold Left ⌘ to dictate) — Carbon can't register
+/// Bare-modifier hotkeys (hold Right ⌥ to dictate) — Carbon can't register
 /// these, so we watch flagsChanged via NSEvent monitors (needs Accessibility,
 /// which auto-paste already requires). Other keys and clicks are intentionally
 /// ignored once dictation is live: holding ⌘ while pressing Return or clicking

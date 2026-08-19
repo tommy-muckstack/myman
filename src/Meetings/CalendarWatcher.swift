@@ -80,6 +80,7 @@ final class CalendarWatcher {
                   !nudgedEventIDs.contains(id),
                   nudgeTimers[id] == nil,
                   Self.meetingLink(in: event) != nil,
+                  !Self.isDeclined(event),
                   event.startDate > now.addingTimeInterval(-120)
             else { continue }
 
@@ -108,6 +109,13 @@ final class CalendarWatcher {
     /// Zoom/Meet/Teams/Webex/FaceTime link anywhere in the event.
     static func meetingLink(in event: EKEvent) -> String? {
         meetingURL(in: event) != nil ? "link" : nil
+    }
+
+    /// The user's own RSVP. A declined invite still sits on the calendar with
+    /// its meeting link intact — nudging (or auto-recording!) for a call the
+    /// user said no to is pure noise.
+    static func isDeclined(_ event: EKEvent) -> Bool {
+        event.attendees?.first(where: { $0.isCurrentUser })?.participantStatus == .declined
     }
 
     /// The actual joinable URL, extracted from url/location/notes.
