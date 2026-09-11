@@ -151,7 +151,14 @@ enum ThemeStore {
                       prepared: [ConceptThemes.Proposal]? = nil,
                       retireUnmatched: Bool = true, preserveConcepts: Bool = false) throws {
         guard enabled else { return }
-        let proposals = prepared ?? ConceptThemes.fallback(items)
+        var proposals: [ConceptThemes.Proposal] = []
+        for proposal in prepared ?? ConceptThemes.fallback(items) {
+            let words = CaptureText.words(proposal.title)
+            if let index = proposals.firstIndex(where: { CaptureText.words($0.title) == words }) {
+                proposals[index].members.formUnion(proposal.members)
+                proposals[index].digest = "semantic:" + ConceptThemes.digest([proposals[index].digest, proposal.digest].sorted())
+            } else { proposals.append(proposal) }
+        }
         let allowed = Set(items.filter { !$0.excluded }.map(\.id))
         let existing = try Row.fetchAll(db, sql: "SELECT * FROM captureTheme ORDER BY id")
         var memberships: [String: Set<String>] = [:]
@@ -173,7 +180,7 @@ enum ThemeStore {
             // A dismissal applies to that concept, not every smaller subject
             // which happened to share a broad legacy phrase or person's name.
             if existing.contains(where: { row in
-                (row["dismissed"] as Bool) && ((row["signature"] as String) == signature || overlap(memberships[row["id"]] ?? [], members) >= 0.6)
+                (row["dismissed"] as Bool) && ((row["signature"] as String) == signature || CaptureText.words(row["title"] as String) == CaptureText.words(proposal.title) || overlap(memberships[row["id"]] ?? [], members) >= 0.6)
             }) { continue }
             let match = existing.filter { !(($0["dismissed"] as Bool)) && !matched.contains($0["id"]) }.compactMap { row -> (Row, Double)? in
                 let similarity = overlap(memberships[row["id"]] ?? [], members)

@@ -83,10 +83,11 @@ final class ConceptThemeTests: XCTestCase {
         XCTAssertEqual(themes[0].count, 3)
     }
 
-    func testDuplicateGeneratedTitlesDoNotRollBackThePass() throws {
+    func testDuplicateGeneratedTitlesCombineTheirEvidence() throws {
         let queue = try database()
         try apply([proposal(), proposal(proposal().title, ["note-3", "note-4", "note-5"])], queue)
         XCTAssertEqual(try ThemeStore.list(database: queue).count, 1)
+        XCTAssertEqual(try ThemeStore.list(database: queue).first?.count, 6)
     }
 
     func testRenamesPinsAssignmentsAndRemovalsSurviveRegrouping() throws {
