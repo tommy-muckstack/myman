@@ -224,7 +224,7 @@ extension Notification.Name {
 
 struct SettingsPanelView: View {
     private enum SettingsPage: String, CaseIterable, Identifiable {
-        case general = "General", dictation = "Dictation", shortcuts = "Shortcuts"
+        case general = "General", dictation = "Dictation", shortcuts = "Shortcuts", library = "Library"
         var id: String { rawValue }
     }
 
@@ -265,6 +265,7 @@ struct SettingsPanelView: View {
                 case .general: generalPage
                 case .dictation: dictationPage
                 case .shortcuts: shortcutsPage
+                case .library: CapturePrivacySettings()
                 }
             }
 

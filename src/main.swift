@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         _ = Database.shared
         Brain.bootstrap()
         Brain.backfillScreenshots()
+        CaptureEnrichment.shared.start()
         // Crashed sessions can leave phantom aggregate audio devices behind.
         SystemAudioTap.cleanupStaleDevices()
         MeetingController.cleanupOldRecordings()

@@ -19,6 +19,7 @@ final class EditorWindowController {
             defer: false
         )
         window.titlebarAppearsTransparent = true
+        window.representedURL = fileURL
         window.titleVisibility = .hidden
         // Never movable-by-background here: canvas drags ARE the annotation
         // gestures. The (transparent) title bar region still moves the window.

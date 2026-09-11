@@ -43,10 +43,8 @@ struct LauncherView: View {
     var onSizeChange: (CGSize) -> Void = { _ in }
 
     @State private var query = ""
-    @State private var results: [SearchHit] = []
-    @State private var searchTask: Task<Void, Never>?
+    @State private var libraryMode: CaptureLibraryMode = .search
     @State private var selectedAction: Int?
-    @State private var selectedResult: Int?
     @State private var hoveredAction: String?
     @State private var recentHits: [SearchHit] = []
     /// On open, every tile's hotkey shows briefly, then fades (hover recalls it).
@@ -67,13 +65,12 @@ struct LauncherView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             searchField
+            Picker("Library", selection: $libraryMode) {
+                ForEach(CaptureLibraryMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented).labelsHidden().padding(.horizontal, MM.Layout.padding).padding(.bottom, 8)
             Divider().overlay(MM.Colors.border)
-            if searching {
-                if results.isEmpty {
-                    emptyState
-                } else {
-                    resultsList
-                }
+            if searching || libraryMode != .search {
+                CaptureLibraryView(query: $query, mode: $libraryMode, onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote)
             } else {
                 VStack(spacing: 0) {
                     actionBar
@@ -131,9 +128,7 @@ struct LauncherView: View {
         })
         .onAppear {
             query = ""
-            results = []
             selectedAction = nil
-            selectedResult = nil
             showChatSwitch = false
             focused = true
             showAllHints = true
@@ -142,27 +137,6 @@ struct LauncherView: View {
                 // Shortcut labels are deliberately opacity-only. A spring here
                 // makes them look as though they rise out of the tile.
                 withAnimation(.easeInOut(duration: 0.16)) { showAllHints = false }
-            }
-        }
-        .onChange(of: query) { _, newValue in
-            selectedResult = nil
-            selectedAction = nil
-            searchTask?.cancel()
-            let q = newValue.trimmingCharacters(in: .whitespaces)
-            guard !q.isEmpty else {
-                results = []
-                return
-            }
-            // Debounce 120ms, then query off the main thread — typing never
-            // waits on SQLite, and stale results never overwrite fresh ones.
-            searchTask = Task { [query = newValue] in
-                try? await Task.sleep(for: .milliseconds(120))
-                guard !Task.isCancelled else { return }
-                let hits = await Task.detached(priority: .userInitiated) {
-                    SearchHit.searchDebounced(query)
-                }.value
-                guard !Task.isCancelled else { return }
-                results = hits
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
@@ -176,7 +150,7 @@ struct LauncherView: View {
                     .clickable()
                     .onTapGesture { focused = true; showChatSwitch = true }
                     .help("Search")
-                TextField("", text: $query, prompt: Text("My man, what can I help with?")
+                TextField("", text: $query, prompt: Text("Find something you captured…")
                     .foregroundStyle(MM.Colors.textTertiary))
                     .textFieldStyle(.plain)
                     .font(MM.Fonts.bodyInput)
@@ -184,7 +158,7 @@ struct LauncherView: View {
                     .focused($focused)
                     .onKeyPress(.rightArrow) { moveAction(1) }
                     .onKeyPress(.leftArrow) { moveAction(-1) }
-                    .onKeyPress(.tab) { _ = moveAction(1); return .handled }
+                    .onKeyPress(.tab) { moveAction(1) }
                     .onKeyPress(.downArrow) { moveResult(1); return .handled }
                     .onKeyPress(.upArrow) { moveResult(-1); return .handled }
                     .onKeyPress(.return) { execute(); return .handled }
@@ -212,27 +186,6 @@ struct LauncherView: View {
     }
 
     // MARK: Search results
-
-    private var resultsList: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(results.enumerated()), id: \.element.id) { index, hit in
-                resultRow(hit, selected: selectedResult == index)
-                    .contentShape(Rectangle())
-                    .onTapGesture { open(hit) }
-                    .onHover { hovering in
-                        if hovering {
-                            selectedResult = index
-                            hoveredRowID = hit.id
-                            NSCursor.pointingHand.set()
-                        } else {
-                            if hoveredRowID == hit.id { hoveredRowID = nil }
-                            NSCursor.arrow.set()
-                        }
-                    }
-            }
-        }
-        .padding(8)
-    }
 
     private func kindBadge(_ hit: SearchHit) -> some View {
         Text(hit.kindLabel)
@@ -291,43 +244,8 @@ struct LauncherView: View {
     }
 
     private func deleteHit(_ hit: SearchHit) {
-        switch hit {
-        case .note(let note):
-            NotesStore().delete(note)
-        case .screenshot(let shot):
-            // File goes to the Trash (recoverable); the row goes away.
-            try? FileManager.default.trashItem(
-                at: URL(fileURLWithPath: shot.path), resultingItemURL: nil)
-            try? Database.shared.write { _ = try Screenshot.deleteOne($0, key: shot.id) }
-            Brain.deleteScreenshot(id: shot.id, createdAt: shot.createdAt)
-        case .meeting(let meeting):
-            if let path = meeting.micAudioPath {
-                try? FileManager.default.trashItem(
-                    at: URL(fileURLWithPath: path), resultingItemURL: nil)
-            }
-            if let path = meeting.systemAudioPath {
-                try? FileManager.default.trashItem(
-                    at: URL(fileURLWithPath: path), resultingItemURL: nil)
-            }
-            for path in meeting.slidePaths {
-                try? FileManager.default.trashItem(
-                    at: URL(fileURLWithPath: path), resultingItemURL: nil)
-            }
-            try? Database.shared.write { _ = try Meeting.deleteOne($0, key: meeting.id) }
-            Brain.deleteMeeting(id: meeting.id, startedAt: meeting.startedAt)
-        case .dictation(let record):
-            try? Database.shared.write {
-                try $0.execute(sql: "DELETE FROM dictation WHERE id = ?", arguments: [record.id])
-            }
-        case .recording(let recording):
-            try? FileManager.default.trashItem(
-                at: URL(fileURLWithPath: recording.path), resultingItemURL: nil)
-            try? Database.shared.write { _ = try ScreenRecording.deleteOne($0, key: recording.id) }
-            Brain.deleteRecording(id: recording.id, createdAt: recording.createdAt)
-        }
-        results.removeAll { $0.id == hit.id }
-        recentHits.removeAll { $0.id == hit.id }
-        Analytics.track("row_deleted")
+        if let item = CaptureIndex.item(hit.id) { CaptureActions.confirmDelete(item) }
+        recentHits.removeAll { CaptureIndex.item($0.id) == nil }
     }
 
     private func copyHit(_ hit: SearchHit) {
@@ -479,26 +397,6 @@ struct LauncherView: View {
         }
     }
 
-    private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Nothing for “\(query.trimmingCharacters(in: .whitespaces))”")
-                .font(MM.Fonts.body)
-                .foregroundStyle(MM.Colors.textSecondary)
-            HStack(spacing: 5) {
-                Text("⏎")
-                    .font(MM.Fonts.metadata)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(MM.Colors.surface))
-                Text("save it as a note")
-                    .font(MM.Fonts.secondary)
-            }
-            .foregroundStyle(MM.Colors.textTertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(MM.Layout.padding)
-    }
-
     // MARK: Action bar (only when not searching)
 
     private var actionBar: some View {
@@ -581,7 +479,7 @@ struct LauncherView: View {
     // MARK: Keyboard & execution
 
     private func moveAction(_ delta: Int) -> KeyPress.Result {
-        guard query.isEmpty else { return .ignored }
+        guard query.isEmpty, libraryMode == .search else { return .ignored }
         let enabledIndices = actions.indices.filter { actions[$0].enabled }
         guard !enabledIndices.isEmpty else { return .handled }
         if let current = selectedAction, let position = enabledIndices.firstIndex(of: current) {
@@ -593,26 +491,15 @@ struct LauncherView: View {
     }
 
     private func moveResult(_ delta: Int) {
-        guard searching, !results.isEmpty else { return }
-        if let current = selectedResult {
-            selectedResult = min(max(0, current + delta), results.count - 1)
-        } else if delta > 0 {
-            selectedResult = 0
+        if searching || libraryMode != .search {
+            NotificationCenter.default.post(name: .captureLibraryCommand, object: delta > 0 ? "down" : "up")
+            return
         }
     }
 
     private func execute() {
-        if searching {
-            if let index = selectedResult, results.indices.contains(index) {
-                open(results[index])
-            } else if results.isEmpty {
-                let text = query.trimmingCharacters(in: .whitespaces)
-                guard !text.isEmpty else { return }
-                onDismiss()
-                onSaveQueryAsNote(text)
-            } else {
-                open(results[0])
-            }
+        if searching || libraryMode != .search {
+            NotificationCenter.default.post(name: .captureLibraryCommand, object: "open")
             return
         }
         guard let index = selectedAction, actions.indices.contains(index),
@@ -623,8 +510,8 @@ struct LauncherView: View {
     }
 
     private func open(_ hit: SearchHit) {
-        let rank = results.firstIndex(where: { $0.id == hit.id }) ?? -1
-        SearchService.recordClick(query: query, hit: hit, rank: rank, resultCount: results.count)
+        let rank = recentHits.firstIndex(where: { $0.id == hit.id }) ?? -1
+        SearchService.recordClick(query: query, hit: hit, rank: rank, resultCount: recentHits.count)
         switch hit {
         case .note(let note):
             onDismiss()
@@ -646,14 +533,6 @@ struct LauncherView: View {
     }
 }
 
-
-extension SearchHit {
-    /// Runs on a background task from the launcher's debounced onChange —
-    /// FTS + cached embeddings keep this fast at any corpus size.
-    static func searchDebounced(_ query: String) -> [SearchHit] {
-        SearchService.search(query)
-    }
-}
 
 extension SearchHit {
     static func recentItems(for actionID: String) -> [SearchHit] {

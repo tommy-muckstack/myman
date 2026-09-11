@@ -1,0 +1,168 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, utimes } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { Brain, limits } from '../brain.mjs';
+import { execute } from '../tools.mjs';
+
+export async function fixture(t) {
+  const base = await mkdtemp(path.join(tmpdir(), 'myman-brain-test-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const root = path.join(base, 'MyMan Brain');
+  await mkdir(root);
+  for (const folder of ['meetings', 'notes', 'recordings', 'screenshots']) await mkdir(path.join(root, folder));
+  const put = async (relative, text) => writeFile(path.join(root, relative), text);
+  await put('meetings/2026-09-01-budget.md', '---\nstarted: 2026-09-01T13:00:00Z\nlow_content: true\n---\n\n# Budget review\n\n**Alex** [0:01]: Ship the launch on Friday.\n');
+  await put('notes/2026-09-02-launch.md', '---\ncreated: 2026-09-02T14:00:00Z\n---\n# Launch checklist\nBudget approved.\n');
+  await put('screenshots/2026-09-03-launch.md', '# Launch checklist\nBudget approved.\n');
+  await put('tasks.md', '# Tasks\n\n- [ ] Send proposal  <!-- meeting, 2026-09-01 -->\n- [ ] Call Alex\n\n## Done\n\n- [x] Book room\n');
+  return { base, root, put, brain: new Brain(root) };
+}
+
+test('search finds keywords, prioritizes deliberate sources, and cites exact text', async t => {
+  const { brain } = await fixture(t);
+  const result = await execute(brain, 'search', { query: 'LAUNCH budget' });
+  assert.deepEqual(result.results.map(r => r.kind), ['meetings', 'notes', 'screenshots']);
+  const meeting = result.results.find(r => r.kind === 'meetings');
+  assert.equal(meeting.low_content, true);
+  const read = await execute(brain, 'read', { path: meeting.path, offset: meeting.read_offset });
+  assert.equal(read.source.start_line, meeting.source.start_line);
+  assert.ok(read.content.startsWith(meeting.excerpt));
+  assert.equal((await execute(brain, 'search', { query: 'nonexistent' })).total_matches, 0);
+  assert.equal((await execute(brain, 'search', { query: 'budget', kind: 'meetings' })).results.length, 1);
+});
+
+test('Unicode case folding preserves original excerpt positions', async t => {
+  const { brain, put } = await fixture(t);
+  await put('notes/unicode.md', '# İİİİİİİİİİİİİİİİİİİİİİİİİİİİİİ\nTarget\nAnother line\n');
+  const found = (await execute(brain, 'search', { query: 'target' })).results[0];
+  assert.equal(found.source.start_line, 2);
+  assert.ok(found.excerpt.startsWith('Target'));
+  const page = await execute(brain, 'read', { path: found.path, offset: found.read_offset });
+  assert.ok(page.content.startsWith('Target'));
+});
+
+test('recent uses capture date despite file modification dates, with deterministic pagination', async t => {
+  const { root, brain } = await fixture(t);
+  await utimes(path.join(root, 'meetings/2026-09-01-budget.md'), new Date(), new Date('2030-01-01'));
+  const a = await execute(brain, 'recent', { kind: 'meetings', limit: 1 });
+  assert.equal(a.results[0].timestamp, '2026-09-01T13:00:00.000Z');
+  const first = await execute(brain, 'recent', { limit: 2 });
+  const second = await execute(brain, 'recent', { limit: 2, offset: first.next_offset });
+  assert.equal(new Set([...first.results, ...second.results].map(x => x.path)).size, 4);
+});
+
+test('read paginates long lines without content loss and uses LF-based citations', async t => {
+  const { brain, put } = await fixture(t);
+  const original = '# Long\r\n' + 'hello 😀 '.repeat(5000) + '\r\nEnd';
+  await put('notes/long.md', original);
+  let content = '', offset = 0;
+  do {
+    const page = await execute(brain, 'read', { path: 'notes/long.md', offset, max_chars: 999 });
+    assert.equal(page.source.start_line, content.split('\n').length);
+    content += page.content;
+    offset = page.next_offset;
+  } while (offset !== null);
+  assert.equal(content, original.replaceAll('\r\n', '\n'));
+  await assert.rejects(execute(brain, 'read', { path: 'notes/long.md', offset: 200000 }), { code: 'INVALID_OFFSET' });
+});
+
+test('tasks distinguishes open and done, paginates, and does not alter exports', async t => {
+  const { brain, root } = await fixture(t);
+  const before = await readFile(path.join(root, 'tasks.md'));
+  const first = await execute(brain, 'tasks', { limit: 1 });
+  assert.equal(first.total, 2);
+  assert.equal(first.results[0].title, 'Send proposal');
+  assert.equal(first.results[0].source.start_line, 3);
+  const next = await execute(brain, 'tasks', { offset: first.next_offset });
+  assert.equal(next.results[0].title, 'Call Alex');
+  assert.equal(next.next_offset, null);
+  assert.equal((await execute(brain, 'tasks', { state: 'done' })).results[0].title, 'Book room');
+  assert.equal((await execute(brain, 'tasks', { state: 'all' })).total, 3);
+  assert.deepEqual(await readFile(path.join(root, 'tasks.md')), before);
+});
+
+test('missing root, absent tasks, and empty tasks are distinct; reads reflect new exports', async t => {
+  const { brain, base, root, put } = await fixture(t);
+  await assert.rejects(new Brain(path.join(base, 'missing')).status(), { code: 'BRAIN_NOT_FOUND' });
+  await rm(path.join(root, 'tasks.md'));
+  await assert.rejects(execute(brain, 'tasks'), { code: 'DOCUMENT_NOT_FOUND' });
+  await put('tasks.md', '# Tasks\n');
+  assert.equal((await execute(brain, 'tasks')).total, 0);
+  await put('tasks.md', '# Tasks\n- [ ] New task\n');
+  assert.equal((await execute(brain, 'tasks')).total, 1);
+});
+
+test('read denies traversal, hidden files, media, nested paths, and arbitrary singleton files', async t => {
+  const { brain, base } = await fixture(t);
+  await writeFile(path.join(base, 'secret.md'), 'outside-secret');
+  for (const relative of ['../secret.md', '/etc/passwd', 'notes/../../secret.md', 'notes/../tasks.md', 'notes//x.md', 'notes\\x.md', 'notes/.secret.md', 'notes/a/b.md', 'notes/image.png', 'secrets.env', 'README.md', 'notes/x.md\0']) {
+    await assert.rejects(execute(brain, 'read', { path: relative }), { code: 'INVALID_PATH' });
+  }
+});
+
+test('symlinked roots, files, folders, and hard-linked files cannot disclose outside data', async t => {
+  const { brain, base, root } = await fixture(t);
+  await writeFile(path.join(base, 'secret.md'), 'outside-secret');
+  await symlink(root, path.join(base, 'alias'));
+  await assert.rejects(new Brain(path.join(base, 'alias')).status(), { code: 'INVALID_ROOT' });
+  await symlink(path.join(base, 'secret.md'), path.join(root, 'notes/link.md'));
+  await link(path.join(base, 'secret.md'), path.join(root, 'notes/hard.md'));
+  for (const file of ['notes/link.md', 'notes/hard.md']) await assert.rejects(brain.load(file), { code: 'UNSAFE_PATH' });
+  await rm(path.join(root, 'recordings'), { recursive: true });
+  await symlink(base, path.join(root, 'recordings'));
+  await assert.rejects(brain.load('recordings/secret.md'), { code: 'UNSAFE_PATH' });
+  const result = await execute(brain, 'search', { query: 'outside-secret' });
+  assert.equal(result.results.length, 0);
+  assert.equal(result.partial, true);
+  assert.ok(result.warning_count >= 3);
+});
+
+test('oversized and invalid files produce partial scan warnings without leaking content', async t => {
+  const { brain, put } = await fixture(t);
+  await put('notes/large.md', 'x'.repeat(limits.fileBytes + 1));
+  await put('notes/invalid.md', Buffer.from([0xff, 0xfe]));
+  await put('notes/binary.md', 'abc\0def');
+  for (const [file, code] of [['large', 'FILE_TOO_LARGE'], ['invalid', 'INVALID_TEXT'], ['binary', 'INVALID_TEXT']]) await assert.rejects(brain.load(`notes/${file}.md`), { code });
+  const result = await execute(brain, 'search', { query: 'budget' });
+  assert.equal(result.partial, true);
+  assert.equal(result.warning_count, 3);
+  assert.ok(result.results.length > 0);
+});
+
+test('malformed metadata stays plain text and media references are not followed', async t => {
+  const { brain, put } = await fixture(t);
+  await put('recordings/example.md', '---\nstarted: not-a-date\nfile: /etc/passwd\n---\n# Example\nA recording transcript.');
+  const result = await execute(brain, 'read', { path: 'recordings/example.md' });
+  assert.equal(result.timestamp, null);
+  assert.ok(result.content.endsWith('A recording transcript.'));
+  assert.equal(result.content.includes('root:'), false);
+});
+
+test('arguments reject invalid limits, unknown fields, and attempted root overrides', async t => {
+  const { brain } = await fixture(t);
+  for (const args of [{ query: 'x', limit: 0 }, { query: 'x', limit: 51 }, { query: 'x', root: '/' }, { query: 'x', kind: 'private' }, null]) {
+    await assert.rejects(execute(brain, 'search', args), { code: 'INVALID_ARGUMENTS' });
+  }
+  await assert.rejects(execute(brain, 'search', { query: '!!!' }), { code: 'INVALID_QUERY' });
+  await assert.rejects(execute(brain, 'constructor'), { code: 'UNKNOWN_TOOL' });
+});
+
+test('CLI returns JSON, uses a root with spaces, and reports errors on stderr', async t => {
+  const { brain, root } = await fixture(t);
+  const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+  const run = (...args) => spawnSync(process.execPath, [cli, '--root', root, ...args], { encoding: 'utf8' });
+  const good = run('tasks');
+  assert.equal(good.status, 0, good.stderr);
+  assert.deepEqual(JSON.parse(good.stdout), await execute(brain, 'tasks'));
+  assert.equal(good.stderr, '');
+  const invalid = run('read', '{invalid');
+  assert.equal(invalid.status, 1);
+  assert.equal(invalid.stdout, '');
+  assert.equal(JSON.parse(invalid.stderr).error.code, 'INVALID_COMMAND');
+  const denied = run('read', '{"path":"../secret.md"}');
+  assert.equal(JSON.parse(denied.stderr).error.code, 'INVALID_PATH');
+});

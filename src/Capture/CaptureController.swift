@@ -53,9 +53,8 @@ final class CaptureController: SelectionOverlayDelegate {
     func openInEditor(fileURL: URL) {
         guard let image = NSImage(contentsOf: fileURL) else {
             // Ghost row (early builds had a filename bug) — drop it and say so.
-            try? Database.shared.write { db in
-                try db.execute(sql: "DELETE FROM screenshot WHERE path = ?",
-                               arguments: [fileURL.path])
+            if let items = try? Database.shared.read({ try CaptureItem.fetchAll($0, sql: "SELECT * FROM captureItem WHERE kind = 'screenshot' AND sourcePath = ?", arguments: [fileURL.path]) }) {
+                for item in items { CaptureActions.perform { try CaptureLifecycle.delete(item) } }
             }
             Toast.show("That screenshot's file is missing — removed it from search",
                        systemImage: "exclamationmark.triangle")
@@ -100,6 +99,7 @@ final class CaptureController: SelectionOverlayDelegate {
         } catch {
             NSLog("My Man [Capture] save failed: \(error)")
             Toast.show("Couldn't save the screenshot file", systemImage: "exclamationmark.triangle")
+            return
         }
 
         let pasteboard = NSPasteboard.general
@@ -110,23 +110,7 @@ final class CaptureController: SelectionOverlayDelegate {
         try? Database.shared.write { try record.insert($0) }
 
         // OCR off the critical path; the index catches up seconds later.
-        Task.detached(priority: .utility) { [record] in
-            let analysis = await ImageAnalysis.analyze(image)
-            let updated = Screenshot(
-                id: record.id, path: record.path,
-                ocrText: analysis.searchableText, createdAt: record.createdAt
-            )
-            try? await Database.shared.write { try updated.update($0) }
-            Brain.syncScreenshot(id: record.id, filePath: record.path,
-                                 ocrText: analysis.searchableText,
-                                 createdAt: record.createdAt)
-            if let blob = SearchService.embedding(for: analysis.searchableText) {
-                try? await Database.shared.write { db in
-                    try db.execute(sql: "UPDATE screenshot SET embedding = ? WHERE id = ?",
-                                   arguments: [blob, record.id])
-                }
-            }
-        }
+        OCRStore.refresh(image: image, fileURL: url, id: record.id)
 
         Analytics.track("screenshot_captured")
         showThumbnail(image: image, fileURL: url)

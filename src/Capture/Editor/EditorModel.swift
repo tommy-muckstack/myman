@@ -572,6 +572,11 @@ final class EditorModel: ObservableObject {
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else { return nil }
         guard (try? png.write(to: fileURL)) != nil else { return nil }
+        // Clear old OCR immediately: redacted/cropped text must not remain
+        // searchable while the replacement image is being recognized.
+        do { try OCRStore.invalidate(path: fileURL.path) }
+        catch { Toast.show("Image saved, but search text could not be cleared. Please retry saving.", systemImage: "exclamationmark.triangle"); return nil }
+        OCRStore.refresh(image: final, fileURL: fileURL)
         copyToClipboard()
         return final
     }

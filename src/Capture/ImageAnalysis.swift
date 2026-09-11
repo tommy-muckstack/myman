@@ -6,8 +6,8 @@ import AppKit
 enum ImageAnalysis {
     /// One recognized text line and its Vision-normalized bounding box
     /// (bottom-left origin, 0...1).
-    struct TextObservation: Identifiable {
-        let id = UUID()
+    struct TextObservation: Identifiable, Codable {
+        var id = UUID()
         let text: String
         let box: CGRect
 
@@ -46,6 +46,7 @@ enum ImageAnalysis {
     struct Result {
         let text: String
         let labels: [String]
+        var observations: [TextObservation] = []
 
         var searchableText: String {
             [text, labels.joined(separator: " ")]
@@ -58,24 +59,10 @@ enum ImageAnalysis {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return Result(text: "", labels: [])
         }
-        async let text = recognizeText(cgImage)
+        async let observations = textObservations(image)
         async let labels = classify(cgImage)
-        return await Result(text: text, labels: labels)
-    }
-
-    private static func recognizeText(_ image: CGImage) async -> String {
-        await withCheckedContinuation { continuation in
-            nonisolated(unsafe) let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-            let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            DispatchQueue.global(qos: .utility).async {
-                try? handler.perform([request])
-                let lines = (request.results ?? [])
-                    .compactMap { $0.topCandidates(1).first?.string }
-                continuation.resume(returning: lines.joined(separator: "\n"))
-            }
-        }
+        let lines = await observations
+        return await Result(text: lines.map(\.text).joined(separator: "\n"), labels: labels, observations: lines)
     }
 
     private static func classify(_ image: CGImage) async -> [String] {

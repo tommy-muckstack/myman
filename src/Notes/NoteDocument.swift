@@ -9,6 +9,7 @@ import SwiftUI
 final class NoteDocumentController {
     static let shared = NoteDocumentController()
     private var windows: [String: NSWindow] = [:]
+    func close(id: String) { let window = windows.removeValue(forKey: id); window?.contentView = nil; window?.close() }
 
     func open(_ note: Note) {
         if let existing = windows[note.id] {
@@ -130,6 +131,7 @@ struct NoteDocumentView: View {
                     }
                 }
         }
+        .safeAreaInset(edge: .bottom) { CaptureRelatedSection(itemID: "note-" + note.id).padding(MM.Layout.padding).background(MM.Colors.background) }
         .background(MM.Colors.background)
         .frame(minWidth: 380, minHeight: 300)
     }
