@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, utimes } from 'node:fs/promises';
+import { realpath, mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -165,4 +165,172 @@ test('CLI returns JSON, uses a root with spaces, and reports errors on stderr', 
   assert.equal(JSON.parse(invalid.stderr).error.code, 'INVALID_COMMAND');
   const denied = run('read', '{"path":"../secret.md"}');
   assert.equal(JSON.parse(denied.stderr).error.code, 'INVALID_PATH');
+});
+
+test('meeting discovery separates participants from mentions and preserves ambiguous calls', async t => {
+  const { brain, put } = await fixture(t);
+  const call = (date, people, title, body = '') => `---\nstarted: ${date}T09:00:00-04:00\nended: ${date}T10:00:00-04:00\nparticipants:\n${people.map(p => '  - ' + p).join('\n')}\n---\n# ${title}\n${body}`;
+  await put('meetings/a.md', call('2026-09-10', ['Jared Lane <jared@example.com>', 'Zoë Park'], 'Design review', 'Pricing flow'));
+  await put('meetings/b.md', call('2026-09-11', ['Jared Lane', 'Zoë Park'], 'Design review'));
+  await put('meetings/mention.md', call('2026-09-11', ['Alex'], 'Other call', 'We mentioned Jared and Zoe.'));
+  const candidates = await execute(brain, 'meetings', { participants: ['jared', 'zoe'], limit: 1 });
+  assert.equal(candidates.total, 2);
+  assert.equal(candidates.next_offset, 1);
+  assert.equal(candidates.results[0].path, 'meetings/b.md');
+  const next = await execute(brain, 'meetings', { participants: ['jared', 'zoe'], offset: candidates.next_offset });
+  assert.equal(next.results[0].started_at, '2026-09-10T13:00:00.000Z');
+  assert.equal(next.results[0].interval_available, true);
+  assert.equal((await execute(brain, 'meetings', { participants: ['Jar'] })).total, 0);
+  assert.equal((await execute(brain, 'meetings', { participants: ['jared@example.com'] })).total, 1);
+  assert.equal((await execute(brain, 'meetings', { participants: ['Jared'], query: 'pricing', started_after: '2026-09-10T00:00:00-04:00', started_before: '2026-09-11T00:00:00-04:00' })).total, 1);
+  const mentions = await execute(brain, 'meetings', { query: 'Jared' });
+  assert.equal(mentions.total, 3);
+  assert.equal(mentions.results.at(-1).matched_in, 'meeting_content');
+});
+
+test('meeting screenshots use full real interval, offset dates, exact boundaries, and all pages', async t => {
+  const { brain, put, root } = await fixture(t);
+  await put('meetings/call.md', '---\nstarted: 2026-09-10T23:30:00-04:00\nended: 2026-09-11T01:00:00-04:00\n---\n# Long call\n');
+  const shot = (time, file = '/Users/example/MyMan Screenshots/image.png') => `---\ncaptured: ${time}\nfile: ${file}\n---\n# Screenshot\n(no text detected)`;
+  await put('screenshots/before.md', shot('2026-09-11T03:29:59Z'));
+  await put('screenshots/end.md', shot('2026-09-11T05:00:00Z'));
+  await put('screenshots/after.md', shot('2026-09-11T05:00:01Z'));
+  for (let i = 0; i < 55; i++) await put(`screenshots/item-${String(i).padStart(2, '0')}.md`, shot(new Date(Date.parse('2026-09-11T03:30:00Z') + i * 60000).toISOString()));
+  await utimes(path.join(root, 'screenshots/before.md'), new Date(), new Date('2026-09-11T04:00:00Z'));
+  const first = await execute(brain, 'meeting_screenshots', { meeting_path: 'meetings/call.md' });
+  assert.equal(first.total, 55);
+  assert.equal(first.results.length, 50);
+  assert.equal(first.results[0].seconds_into_meeting, 0);
+  assert.equal(first.results[0].image_path, '/Users/example/MyMan Screenshots/image.png');
+  assert.equal(first.partial, true); // original undated fixture is not silently assigned
+  assert.equal(first.screenshots_without_capture_time, 1);
+  const last = await execute(brain, 'meeting_screenshots', { meeting_path: 'meetings/call.md', offset: first.next_offset });
+  assert.equal(last.results.length, 5);
+  assert.equal(last.results.at(-1).seconds_into_meeting, 54 * 60);
+  assert.equal(last.next_offset, null);
+  assert.equal(new Set([...first.results, ...last.results].map(s => s.path)).size, 55);
+  const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+  const run = spawnSync(process.execPath, [cli, '--root', root, 'meeting_screenshots', JSON.stringify({ meeting_path: 'meetings/call.md', offset: 50 })], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(JSON.parse(run.stdout).results.length, 5);
+});
+
+test('incomplete, reversed, invalid, and timezone-free meeting intervals are never guessed', async t => {
+  const { brain, put } = await fixture(t);
+  for (const [start, end] of [['2026-09-11T13:00:00Z', ''], ['2026-09-11T13:00:00Z', '2026-09-11T12:00:00Z'], ['2026-09-11T13:00:00', '2026-09-11T14:00:00'], ['2026-02-30T13:00:00Z', '2026-03-01T14:00:00Z']]) {
+    await put('meetings/invalid.md', `---\nstarted: ${start}\nended: ${end}\n---\n# Call\n`);
+    await assert.rejects(execute(brain, 'meeting_screenshots', { meeting_path: 'meetings/invalid.md' }), { code: 'MEETING_INTERVAL_UNAVAILABLE' });
+  }
+  await assert.rejects(execute(brain, 'meetings', { started_after: 'yesterday' }), { code: 'INVALID_ARGUMENTS' });
+  await assert.rejects(execute(brain, 'meetings', { started_after: '2026-09-11T14:00:00Z', started_before: '2026-09-11T13:00:00Z' }), { code: 'INVALID_RANGE' });
+  await assert.rejects(execute(brain, 'meeting_screenshots', { meeting_path: 'notes/2026-09-02-launch.md' }), { code: 'INVALID_PATH' });
+  await assert.rejects(execute(brain, 'meeting_screenshots', { meeting_path: 'meetings/../../secret.md' }), { code: 'INVALID_PATH' });
+});
+
+test('deleted exports disappear, missing images remain references, and scan failures are explicit', async t => {
+  const { brain, put, root, base } = await fixture(t);
+  await put('meetings/call.md', '---\nstarted: 2026-09-11T13:00:00Z\nended: 2026-09-11T14:00:00Z\n---\n# Call\n');
+  await put('screenshots/during.md', '---\ncaptured: 2026-09-11T13:01:00Z\nfile: /missing/image.png\n---\n# Screenshot\n');
+  await symlink(path.join(base, 'outside.md'), path.join(root, 'screenshots/link.md'));
+  const result = await execute(brain, 'meeting_screenshots', { meeting_path: 'meetings/call.md' });
+  assert.equal(result.total, 1);
+  assert.equal(result.results[0].image_path, '/missing/image.png');
+  assert.equal(result.partial, true);
+  assert.ok(result.warnings.some(w => w.code === 'UNSAFE_PATH'));
+  await rm(path.join(root, 'screenshots/during.md'));
+  assert.equal((await execute(brain, 'meeting_screenshots', { meeting_path: 'meetings/call.md' })).total, 0);
+  await rm(path.join(root, 'meetings/call.md'));
+  await assert.rejects(execute(brain, 'meeting_screenshots', { meeting_path: 'meetings/call.md' }), { code: 'DOCUMENT_NOT_FOUND' });
+});
+
+test('collect combines time, kinds, phrases, alternatives, and full-evidence pagination', async t => {
+  const { brain, put } = await fixture(t);
+  await put('screenshots/prices.md', '---\ncaptured: 2026-09-02T14:30:00Z\n---\n# Plans\nRegistration price $49. Renewal is $59.');
+  await put('meetings/window.md', '---\nstarted: 2026-09-02T14:00:00Z\nended: 2026-09-02T15:00:00Z\n---\n# Pricing\n');
+  const matches = await execute(brain, 'collect', { kinds: ['screenshots', 'notes'], query: '"registration price" launch', match: 'any', after: '2026-09-02T10:00:00-04:00', before: '2026-09-02T11:00:00-04:00', limit: 1 });
+  assert.equal(matches.total, 2);
+  assert.equal(matches.results[0].path, 'screenshots/prices.md');
+  const source = await execute(brain, 'read', { path: matches.results[0].path, offset: matches.results[0].read_offset });
+  assert.ok(source.content.startsWith(matches.results[0].excerpt));
+  assert.equal(source.source.start_line, matches.results[0].source.start_line);
+  assert.equal((await execute(brain, 'collect', { kinds: ['screenshots'], query: '"price registration"' })).total, 0);
+  assert.equal((await execute(brain, 'collect', { kinds: ['screenshots'], query: 'registration $49' })).total, 1);
+  const during = await execute(brain, 'collect', { kinds: ['notes', 'screenshots'], during: 'meetings/window.md' });
+  assert.equal(during.total, 2);
+  assert.equal(during.relationship, 'captured_during_meeting');
+  await assert.rejects(execute(brain, 'collect', { participants: ['Jared'] }), { code: 'INVALID_ARGUMENTS' });
+  await assert.rejects(execute(brain, 'collect', { during: 'meetings/window.md', after: '2026-09-02T14:00:00Z' }), { code: 'INVALID_ARGUMENTS' });
+  await assert.rejects(execute(brain, 'collect', { theme: 'pricing' }), { code: 'CATALOG_REQUIRED' });
+});
+
+test('catalog provides saved themes, pinning, full tasks and dictation while excluding stale files', async t => {
+  const { brain, put, root } = await fixture(t);
+  for (const folder of ['dictations', 'task-items', 'themes']) await mkdir(path.join(root, folder));
+  await put('dictations/thought.md', '---\ncreated: 2026-09-11T13:00:00Z\n---\n# Pricing idea\nTry a renewal offer.');
+  await put('themes/pricing.md', '# Pricing research\nnotes/2026-09-02-launch.md');
+  await put('task-items/task.md', '---\ncreated: 2026-09-10T13:00:00Z\n---\n# Compare plans\nInclude taxes and renewal prices.');
+  const entries = [
+    { path: 'notes/2026-09-02-launch.md', kind: 'notes', title: 'Launch checklist', timestamp: '2026-09-02T14:00:00Z', pinned: true, themes: [{ id: 'theme1', title: 'Pricing research' }] },
+    { path: 'dictations/thought.md', kind: 'dictations', title: 'Pricing idea', timestamp: '2026-09-11T13:00:00Z', themes: [{ id: 'theme1', title: 'Pricing research' }] },
+    { path: 'themes/pricing.md', kind: 'themes', title: 'Pricing research', timestamp: '2026-09-11T13:00:00Z' },
+    { path: 'task-items/task.md', kind: 'tasks', title: 'Compare plans', timestamp: '2026-09-10T13:00:00Z', done: false },
+  ];
+  await put('catalog.json', JSON.stringify({ version: 1, generated_at: '2026-09-11T14:00:00Z', exports: entries }));
+  const themed = await execute(brain, 'collect', { theme: 'theme1', limit: 1 });
+  assert.equal(themed.total, 2);
+  assert.equal(themed.results[0].kind, 'dictations');
+  assert.equal((await execute(brain, 'collect', { theme: 'Pricing', pinned_only: true })).total, 1);
+  assert.equal((await execute(brain, 'collect', { kinds: ['themes'] })).results[0].title, 'Pricing research');
+  const tasks = await execute(brain, 'tasks');
+  assert.equal(tasks.total, 1); // legacy tasks.md is superseded, never duplicated
+  assert.equal(tasks.results[0].title, 'Compare plans');
+  assert.equal((await execute(brain, 'collect', { kinds: ['tasks'], query: 'renewal', state: 'open', after: '2026-09-10T00:00:00Z' })).total, 1);
+  await put('task-items/task.md', '---\ncreated: 2026-09-01T13:00:00Z\ncompleted: 2026-09-10T13:00:00Z\ndue: 2026-09-12T00:00:00Z\n---\n# Compare plans\nInclude renewal prices.');
+  assert.equal((await execute(brain, 'collect', { kinds: ['tasks'], date_field: 'task_completed', after: '2026-09-10T00:00:00Z', before: '2026-09-11T00:00:00Z' })).total, 1);
+  assert.equal((await execute(brain, 'collect', { kinds: ['tasks'], date_field: 'task_due', before: '2026-09-11T00:00:00Z' })).total, 0);
+  assert.equal((await execute(brain, 'search', { kind: 'meetings', query: 'proposal' })).total_matches, 0);
+  await assert.rejects(execute(brain, 'read', { path: 'meetings/2026-09-01-budget.md' }), { code: 'DOCUMENT_NOT_FOUND' });
+  await put('catalog.json', JSON.stringify({ version: 1, exports: entries.filter(e => e.kind !== 'dictations') }));
+  assert.equal((await execute(brain, 'collect', { kinds: ['dictations'] })).total, 0);
+  await assert.rejects(execute(brain, 'read', { path: 'dictations/thought.md' }), { code: 'DOCUMENT_NOT_FOUND' });
+  await rm(path.join(root, 'task-items/task.md'));
+  assert.equal((await execute(brain, 'collect', { kinds: ['tasks'] })).partial, true);
+});
+
+test('broken or linked catalogs never fall back to disclosing excluded legacy exports', async t => {
+  const { brain, put, root, base } = await fixture(t);
+  await put('catalog.json', '{invalid');
+  await assert.rejects(execute(brain, 'collect', {}), { code: 'INVALID_CATALOG' });
+  await put('catalog.json', JSON.stringify({ version: 1, exports: [{ path: '../secret.md', kind: 'notes' }] }));
+  await assert.rejects(execute(brain, 'read', { path: 'notes/2026-09-02-launch.md' }), { code: 'INVALID_CATALOG' });
+  await rm(path.join(root, 'catalog.json'));
+  await writeFile(path.join(base, 'catalog.json'), JSON.stringify({ version: 1, exports: [] }));
+  await symlink(path.join(base, 'catalog.json'), path.join(root, 'catalog.json'));
+  await assert.rejects(execute(brain, 'collect', {}), { code: 'UNSAFE_PATH' });
+});
+
+test('image access requires a catalog-listed original, ignores markdown paths, and reflects exclusion', async t => {
+  const { brain, root, base, put } = await fixture(t);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aA5sAAAAASUVORK5CYII=', 'base64');
+  const original = path.join(await realpath(base), 'original.png');
+  await writeFile(original, png);
+  const relative = 'screenshots/2026-09-03-launch.md';
+  await put(relative, '---\nfile: /etc/passwd\ncaptured: 2026-09-03T12:00:00Z\n---\n# Screenshot');
+  await assert.rejects(execute(brain, 'image', { path: relative }), { code: 'CATALOG_REQUIRED' });
+  const catalog = file => JSON.stringify({ version: 1, exports: [{ path: relative, kind: 'screenshots', image_path: file }] });
+  await put('catalog.json', catalog(original));
+  const result = await execute(brain, 'image', { path: relative });
+  assert.deepEqual(Buffer.from(result.image.data, 'base64'), png);
+  assert.equal(result.width, 1); assert.equal(result.height, 1);
+  await symlink(original, path.join(base, 'linked.png'));
+  await put('catalog.json', catalog(path.join(base, 'linked.png')));
+  await assert.rejects(execute(brain, 'image', { path: relative }), { code: 'UNSAFE_PATH' });
+  await put('catalog.json', catalog(original));
+  await writeFile(original, 'this is plain text, not an image'.repeat(5));
+  await assert.rejects(execute(brain, 'image', { path: relative }), { code: 'INVALID_IMAGE' });
+  await writeFile(original, Buffer.alloc(8 * 1024 * 1024 + 1));
+  await assert.rejects(execute(brain, 'image', { path: relative }), { code: 'IMAGE_TOO_LARGE' });
+  await put('catalog.json', JSON.stringify({ version: 1, exports: [] }));
+  await assert.rejects(execute(brain, 'image', { path: relative }), { code: 'DOCUMENT_NOT_FOUND' });
+  assert.equal(await readFile(path.join(root, relative), 'utf8'), '---\nfile: /etc/passwd\ncaptured: 2026-09-03T12:00:00Z\n---\n# Screenshot');
 });

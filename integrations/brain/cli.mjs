@@ -8,7 +8,7 @@ try {
     options: { root: { type: 'string' }, help: { type: 'boolean' } },
   });
   if (values.help) {
-    console.log('Usage: node cli.mjs [--root /absolute/MyManBrain] <status|search|recent|read|tasks> [JSON arguments]\nExamples: search \'{"query":"budget review"}\' | recent \'{"kind":"meetings"}\' | tasks');
+    console.log('Usage: node cli.mjs [--root /absolute/MyManBrain] <status|search|recent|collect|meetings|meeting_screenshots|read|image|tasks> [JSON arguments]\nExamples: search \'{"query":"budget review"}\' | recent \'{"kind":"meetings"}\' | tasks');
   } else {
     if (positionals.length < 1 || positionals.length > 2) throw new BrainError('INVALID_COMMAND', 'Expected a command and optional JSON arguments; use --help.');
     const args = positionals.length === 2 ? JSON.parse(positionals[1]) : {};

@@ -1,7 +1,8 @@
 # MyMan Brain plugin
 
-Read-only search and retrieval for MyMan's exported meeting transcripts, notes,
-tasks, people, recording transcripts, and screenshot OCR. The companion reads
+Read-only collection and retrieval for MyMan's exported meeting transcripts,
+notes, full tasks, dictation, saved Themes, people, recording transcripts, and
+screenshot OCR/images. The companion reads
 `~/MyManBrain` and returns JSON with file paths, line citations, and pagination.
 It does not open MyMan's database or change captures.
 
@@ -20,7 +21,9 @@ node integrations/brain/cli.mjs tasks
 Open MyMan at least once to create the Brain. A missing folder is an error,
 not an empty knowledge base. The companion works while MyMan is closed, using
 the last exported files. It is distributed from source separately from the
-signed Mac app; no app rebuild is needed. Run `npm ci` again after updating.
+signed Mac app. Update and open the app to generate `catalog.json`, dictation,
+complete task exports, and saved Themes. The companion also reads older Brain
+folders, reporting their limited coverage. Run `npm ci` again after updating.
 
 For another export folder, pass `--root /absolute/path/to/MyManBrain` to the
 CLI, or set `MYMAN_BRAIN_ROOT` in the process environment. The root must be a
@@ -89,34 +92,97 @@ this version.
 | `myman_brain_status` | `status` | none |
 | `myman_brain_search` | `search` | `query`, optional `kind`, `limit` |
 | `myman_brain_recent` | `recent` | optional `kind`, `limit`, `offset` |
+| `myman_brain_collect` | `collect` | optional `kinds`, `query`, `match`, `after`, `before`, `during`, `date_field`, `participants`, `theme`, `pinned_only`, `state`, `limit`, `offset` |
+| `myman_brain_meetings` | `meetings` | optional `query`, `participants`, `started_after`, `started_before`, `limit`, `offset` |
+| `myman_brain_meeting_screenshots` | `meeting_screenshots` | `meeting_path`, optional `limit`, `offset` |
 | `myman_brain_read` | `read` | `path`, optional `offset`, `max_chars` |
+| `myman_brain_image` | `image` | screenshot export `path` (requires app catalog; explicit original PNG access) |
 | `myman_brain_tasks` | `tasks` | optional `state`: `open`/`done`/`all`, `limit`, `offset` |
 
-Kinds: `meetings`, `notes`, `recordings`, `screenshots`, `tasks`, `people`,
+Kinds: `meetings`, `notes`, `recordings`, `screenshots`, `dictations`, `themes`, `tasks`, `people`,
 `vocabulary`. Searches are case-insensitive and require all keyword terms.
 Result limits are 1–50. Reads return up to 20,000 characters per call; use the
 returned `next_offset` verbatim (UTF-16 units after LF normalization). Search
 returns a `read_offset` to jump to the excerpt. `timestamp` is capture time if
 present; `exported_at` is modification time, which can change during resync.
 
-Only known top-level export files and one level of `.md` files under the four
+Only known top-level export files and one level of `.md` files under the capture
 capture folders are read. Hidden files, nested folders, symlinks, hard links,
-media, and arbitrary paths are excluded. Documents above 2 MiB are rejected;
+media, and arbitrary paths are excluded from text retrieval. Documents above 2 MiB are rejected;
 scans stop at 10,000 directory entries or 64 MiB of document bytes. Scan
 warnings identify incomplete results; `partial: true` is not a zero-match claim.
 The filesystem checks reduce accidental disclosure; this process runs as the
 local user and is not an OS sandbox against hostile concurrent filesystem changes.
 
+## Collecting and analyzing evidence
+
+`collect` is the general primitive for agents. Natural-language interpretation
+and summaries stay with the requesting agent. It can combine time, type,
+keywords, quoted phrases, saved Themes, and pinning, then read full evidence:
+
+```bash
+# All calls with a person; paginate and read each call to summarize them.
+node integrations/brain/cli.mjs collect '{"kinds":["meetings"],"participants":["Jared"]}'
+
+# Evidence for themes across calls and screenshots in a specific local week.
+node integrations/brain/cli.mjs collect '{"kinds":["meetings","screenshots"],"after":"2026-09-07T00:00:00-04:00","before":"2026-09-14T00:00:00-04:00"}'
+
+# Synonyms or descriptive text; match=all is the default.
+node integrations/brain/cli.mjs collect '{"kinds":["screenshots","notes"],"query":"pricing subscription renewal","match":"any"}'
+
+# Complete task evidence for pattern analysis, or saved app Themes.
+node integrations/brain/cli.mjs collect '{"kinds":["tasks"],"state":"all"}'
+node integrations/brain/cli.mjs collect '{"kinds":["themes"]}'
+```
+
+Date bounds are `[after,before)` and require timezone offsets. Resolve relative
+dates in the user's timezone. Dates mean original capture/task creation time;
+a saved Theme uses its latest member time. For tasks, choose
+`date_field: task_completed` or `task_due` to filter completion or due dates. File modification times never
+establish time-based relationships. Undated items are reported separately.
+
+For “screenshots from my call with Jared and Zoe,” first use `meetings` with
+`participants: ["Jared","Zoe"]` and optional topic/date filters. Resolve a
+singular ambiguous call from returned titles/dates. Then call `collect` with
+`kinds: ["screenshots"]` and `during: "<returned meeting path>"`; the same
+operation can collect notes, dictation, or other captures during that interval.
+`meeting_screenshots` is a convenience tool. These use the entire recorded
+interval, not a short nearby window, and return original screenshot paths.
+Missing end times are errors. Time overlap does not prove shared subject matter.
+
+Every collection has `total`, `next_offset`, coverage, and scan warnings. Follow
+all pages for “all”; read full documents, not just the 600-character previews,
+before comprehensive analysis. `snapshot` identifies the app catalog: restart
+pagination if it changes. Collections are sorted newest first, with stable path
+ties; meeting screenshots are chronological. Keyword retrieval is lexical,
+including OCR, not semantic or visual matching. For visual descriptions, use
+`image` on relevant candidates. MCP returns actual image content; the CLI returns
+base64 JSON. Original PNGs are limited to 8 MiB/100 megapixels, must be regular
+unlinked files, and must appear in the app catalog. Markdown media links alone
+cannot authorize reads. Missing originals are explicit errors.
+
+`themes` contains saved app Themes and member source paths. An agent can also
+infer recurring patterns from any collection, including tasks; those are its
+analysis and do not create or alter saved app Themes.
+
+The app catalog is an atomic metadata snapshot capped at 8 MiB by the companion.
+It excludes captures hidden from search and replaces the capped legacy task
+checklist with individual task documents containing notes and dates. It includes
+all non-archived tasks. The companion rejects reads of captures absent from the
+catalog, even if a stale markdown file remains. A broken catalog is an error,
+never a reason to fall back to excluded files. Existing user-owned files and git
+history are not a secure erase boundary. No app database migration is needed.
+
 ## Privacy and write behavior
 
 The companion makes no network calls, writes no index/log/content cache, and
 does not invoke capture commands. Your MCP client or Grok Bot can send returned
-content to its model provider. Using this integration with a hosted model is
+content, including explicitly requested images, to its model provider. Using this integration with a hosted model is
 different from MyMan's built-in on-device processing.
 
 Brain files sync from the app; changing them would not update MyMan's database.
-Task results reflect the export, and completed task history is capped by the
-app. Missing `tasks.md` is reported separately from an existing empty task list.
+Task results reflect the export; old Brain folders have capped task history.
+Missing `tasks.md` is reported separately from an existing empty legacy task list.
 
 ## Verify and publish
 
