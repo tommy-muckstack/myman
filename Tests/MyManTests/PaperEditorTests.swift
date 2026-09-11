@@ -229,6 +229,12 @@ final class PaperEditorTests: XCTestCase {
                 try render(window, name: "note-" + name)
                 let text = try XCTUnwrap(editor(in: XCTUnwrap(window.contentView)))
                 XCTAssertLessThanOrEqual(text.textContainer?.containerSize.width ?? 1000, MM.Document.columnWidth + 1)
+                if width == 1000 {
+                    window.makeFirstResponder(text)
+                    text.setSelectedRange((text.string as NSString).range(of: "clear emphasis"))
+                    text.updateFormatBar()
+                    try render(window, name: "note-selection-" + (dark ? "dark" : "light"))
+                }
                 window.contentView = nil; window.close()
             }
             let window = try await host(MeetingDocumentView(meeting: meeting, database: db, automaticallySummarize: false), size: NSSize(width: 820, height: 800))
