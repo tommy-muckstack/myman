@@ -77,6 +77,11 @@ final class MeetingController: ObservableObject {
     /// timeout) deletes the audio with no database row, no transcription.
     @Published var isProvisional = false
     @Published var levels: [Float] = []
+    @Published private(set) var recordingTitle = ""
+    @Published private(set) var titleEditorVisible = false
+    private var titleSaveTask: Task<Void, Never>?
+    private var titleNeedsSaving = false
+    private let titleDatabase: DatabaseQueue?
     private var provisionalTimeout: Timer?
     private var lastAudibleAt = Date()
     /// Remote/system audio is a stronger end-of-call clue than our own mic:
@@ -120,6 +125,63 @@ final class MeetingController: ObservableObject {
     private var appTerminationObserver: NSObjectProtocol?
     /// Meeting link for the provisional card's Join & Start button.
     @Published var provisionalJoinURL: URL?
+
+    /// Supplying an existing take allows previews and title-persistence tests
+    /// without starting microphones, process taps, or transcription models.
+    init(recording: Meeting? = nil, titleDatabase: DatabaseQueue? = nil) {
+        self.titleDatabase = titleDatabase
+        meeting = recording
+        recordingTitle = recording?.title ?? ""
+        if let recording { phase = .recording(start: recording.startedAt) }
+    }
+
+    func updateRecordingTitle(_ text: String) {
+        guard case .recording = phase, var current = meeting, text != current.title else { return }
+        let title = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An empty draft is allowed in the field while replacing a title, but
+        // must never erase the saved name if recording stops mid-edit.
+        guard !title.isEmpty, title != current.title else { return }
+        current.title = title
+        meeting = current
+        recordingTitle = title
+        titleNeedsSaving = !isProvisional
+        titleSaveTask?.cancel()
+        guard !isProvisional else { return }
+        titleSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            self?.flushRecordingTitle()
+        }
+    }
+
+    func flushRecordingTitle() {
+        titleSaveTask?.cancel(); titleSaveTask = nil
+        guard titleNeedsSaving, !isProvisional, let current = meeting else { return }
+        do {
+            try (titleDatabase ?? Database.shared).write { db in
+                // Only change the name; never overwrite concurrent notes or
+                // recreate a meeting deleted elsewhere.
+                try db.execute(sql: "UPDATE meeting SET title = ? WHERE id = ?", arguments: [current.title, current.id])
+            }
+            titleNeedsSaving = false
+        } catch {
+            Toast.show("Couldn’t save the meeting name. Finish editing to retry.", systemImage: "exclamationmark.triangle")
+        }
+    }
+
+    func setTitleEditorVisible(_ visible: Bool) {
+        let visible = visible && !isProvisional && !pillShowsTranscribing && phase != .idle
+        guard titleEditorVisible != visible else { return }
+        titleEditorVisible = visible
+        applyPillFrame(animated: true)
+    }
+
+    func finishTitleEditing() {
+        flushRecordingTitle()
+        panel?.makeFirstResponder(nil)
+        panel?.resignKey()
+        setTitleEditorVisible(false)
+    }
 
     static var recordingsFolder: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -196,6 +258,8 @@ final class MeetingController: ObservableObject {
     /// for both provisional and already-saved meeting rows.
     func discardRecording() {
         guard case .recording = phase else { return }
+        titleSaveTask?.cancel(); titleSaveTask = nil
+        titleNeedsSaving = false; titleEditorVisible = false
         let wasProvisional = isProvisional
         let discardedMeeting = meeting
         isProvisional = false
@@ -302,6 +366,9 @@ final class MeetingController: ObservableObject {
             systemAudioPath: systemWriter?.url.path,
             transcript: "", summary: ""
         )
+        recordingTitle = title
+        titleEditorVisible = false
+        titleNeedsSaving = false
         pendingAttendees = People.currentEventAttendees()
         sessionAttendeeNames = Self.speakerCandidates(
             eventTitle: title, attendees: pendingAttendees.map(\.name))
@@ -561,6 +628,8 @@ final class MeetingController: ObservableObject {
     }
 
     private func stop() {
+        flushRecordingTitle()
+        titleEditorVisible = false
         stopEndWatch()
         levelTimer?.invalidate()
         levelTimer = nil
@@ -1364,10 +1433,11 @@ final class MeetingController: ObservableObject {
     /// fittingSize lies pre-layout (collapsed pill, "S" button) and
     /// GeometryReader only reports the space it was GIVEN, so a too-small
     /// panel stays crushed and thrashes. Fixed sizes end the whole saga.
-    static func pillSize(provisional: Bool, transcribing: Bool) -> CGSize {
+    static func pillSize(provisional: Bool, transcribing: Bool, editingTitle: Bool = false) -> CGSize {
         // Height covers header + waveform + action row + text-only Cancel.
         if provisional { return CGSize(width: 320, height: 186) }
         if transcribing { return CGSize(width: 216, height: 40) }
+        if editingTitle { return CGSize(width: 320, height: 130) }
         return CGSize(width: 248, height: 76)
     }
 
@@ -1378,22 +1448,37 @@ final class MeetingController: ObservableObject {
         return false
     }
 
-    func applyPillFrame() {
-        guard let panel, let screen = NSScreen.main else { return }
-        let size = Self.pillSize(provisional: isProvisional, transcribing: pillShowsTranscribing)
+    private var pillFrameRevision = 0
+    func applyPillFrame(animated: Bool = false) {
+        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
+        pillFrameRevision += 1
+        let revision = pillFrameRevision
+        let size = Self.pillSize(provisional: isProvisional, transcribing: pillShowsTranscribing, editingTitle: titleEditorVisible)
         let visible = screen.visibleFrame
         let frame = NSRect(x: visible.maxX - size.width - 24,
                            y: visible.maxY - size.height - 24,
                            width: size.width, height: size.height)
         guard panel.frame != frame else { return }
         DispatchQueue.main.async { [weak self] in
-            self?.panel?.setFrame(frame, display: true)
+            guard let self, self.pillFrameRevision == revision, self.panel === panel else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.25 : 0
+                panel.animator().setFrame(frame, display: true)
+            }
         }
     }
 
     private func showPill() {
         guard panel == nil else { return }
-        let pill = FloatingPanel(content: MeetingPillView(controller: self), becomesKey: false, fixedSize: true)
+        let pill = FloatingPanel(content: MeetingPillView(controller: self), becomesKey: true, fixedSize: true)
+        pill.becomesKeyOnlyIfNeeded = true
+        pill.dismissesOnResign = false
+        pill.isMovableByWindowBackground = false
+        pill.onCancel = { [weak self] in self?.finishTitleEditing() }
+        pill.onResignKey = { [weak self] in
+            self?.flushRecordingTitle()
+            self?.setTitleEditorVisible(false)
+        }
         pill.onDismiss = { [weak self] in self?.panel = nil }
         panel = pill
         // Top-right, out of the way — a meeting indicator, not a dialog.
@@ -1462,10 +1547,16 @@ final class MeetingController: ObservableObject {
 struct MeetingPillView: View {
     @ObservedObject var controller: MeetingController
     @State private var now = Date()
+    @State private var titleDraft = ""
+    @State private var hovering = false
+    @State private var collapseTask: Task<Void, Never>?
+    @FocusState private var titleFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var fixedSize: CGSize {
         MeetingController.pillSize(provisional: controller.isProvisional,
-                                   transcribing: controller.pillShowsTranscribing)
+                                   transcribing: controller.pillShowsTranscribing,
+                                   editingTitle: controller.titleEditorVisible)
     }
     private var isRecording: Bool {
         if case .recording = controller.phase { return true }
@@ -1483,6 +1574,7 @@ struct MeetingPillView: View {
                     .padding(.vertical, 8)
             }
         }
+        .frame(width: fixedSize.width, height: fixedSize.height)
         .background(
             Group {
                 if controller.isProvisional || isRecording {
@@ -1497,8 +1589,74 @@ struct MeetingPillView: View {
                 }
             }
         )
-        .frame(width: fixedSize.width, height: fixedSize.height)
+        .contentShape(Rectangle())
+        .animation(reduceMotion ? nil : MM.Motion.gentle, value: controller.titleEditorVisible)
+        .onAppear { titleDraft = controller.recordingTitle }
+        .onHover { inside in
+            hovering = inside
+            collapseTask?.cancel()
+            if inside {
+                controller.setTitleEditorVisible(true)
+            } else if !titleFocused {
+                // Resizing under the pointer can briefly produce an exit.
+                collapseTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(180))
+                    guard !Task.isCancelled, !hovering, !titleFocused else { return }
+                    controller.setTitleEditorVisible(false)
+                }
+            }
+        }
+        .onChange(of: titleFocused) { _, focused in
+            if !focused {
+                controller.flushRecordingTitle()
+                titleDraft = controller.recordingTitle
+                if !hovering { controller.setTitleEditorVisible(false) }
+            }
+        }
+        .onChange(of: controller.recordingTitle) { _, title in
+            if !titleFocused { titleDraft = title }
+        }
+        .onChange(of: controller.titleEditorVisible) { _, visible in
+            if !visible {
+                titleFocused = false
+                titleDraft = controller.recordingTitle
+            }
+        }
+        .onKeyPress(.escape) {
+            guard controller.titleEditorVisible else { return .ignored }
+            finishEditing()
+            return .handled
+        }
+        .onDisappear { collapseTask?.cancel() }
         .onReceive(clock) { now = $0 }
+    }
+
+    private func finishEditing() {
+        hovering = false
+        titleFocused = false
+        controller.finishTitleEditing()
+    }
+
+    private var titleEditor: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing / 3) {
+            Text("Meeting name")
+                .font(MM.Fonts.metadata)
+                .foregroundStyle(MM.Colors.textSecondary)
+            TextField("Meeting name", text: $titleDraft)
+                .textFieldStyle(.plain)
+                .font(MM.Fonts.secondary)
+                .foregroundStyle(MM.Colors.textPrimary)
+                .focused($titleFocused)
+                .onChange(of: titleDraft) { _, text in controller.updateRecordingTitle(text) }
+                .onSubmit { finishEditing() }
+                .padding(MM.Layout.padding / 2)
+                .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
+                .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
+                    .strokeBorder(titleFocused ? MM.Colors.accent : MM.Colors.border, lineWidth: 1))
+                .accessibilityLabel("Meeting name")
+                .help("Changes save while recording. Press Return to finish editing.")
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     /// The in-your-face pre-meeting card: logo, live waveform, one obvious
@@ -1634,6 +1792,7 @@ struct MeetingPillView: View {
             }
             }
             if isRecording {
+                if controller.titleEditorVisible { titleEditor }
                 Button {
                     controller.discardRecording()
                 } label: {
