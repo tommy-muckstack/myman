@@ -178,6 +178,7 @@ final class PaperEditorTests: XCTestCase {
         try await db.write { try $0.execute(sql: "UPDATE meeting SET transcript = 'Finished transcript', summary = 'Prepared notes' WHERE id = ?", arguments: [meeting.id]) }
         for _ in 0..<40 where text.string.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
         XCTAssertEqual(text.string, "Prepared notes")
+        try render(window, name: "meeting-prepared")
         window.makeFirstResponder(text)
         text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
         text.insertText(" with my additions", replacementRange: text.selectedRange())
