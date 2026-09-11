@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-struct CaptureItem: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable {
+struct CaptureItem: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable, Sendable {
     static let databaseTableName = "captureItem"
     var id: String
     var kind: String

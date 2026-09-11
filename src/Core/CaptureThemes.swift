@@ -4,6 +4,7 @@ import GRDB
 struct CaptureTheme: Identifiable, FetchableRecord {
     var id: String
     var title: String
+    var description: String
     var signature: String
     var pinned: Bool
     var count: Int
@@ -12,6 +13,7 @@ struct CaptureTheme: Identifiable, FetchableRecord {
     var typeCounts: String
     init(row: Row) {
         id = row["id"]; title = row["title"]; signature = row["signature"]
+        description = row["description"]
         pinned = row["pinned"]; count = row["itemCount"]; latest = row["latest"]; kinds = row["kinds"]
         typeCounts = ["meeting", "screenshot", "dictation", "recording", "note"].compactMap { kind in
             let count: Int = row[kind + "Count"]
@@ -43,35 +45,6 @@ enum CaptureSignals {
             guard let host = result.url?.host?.lowercased(), !["google.com", "zoom.us", "teams.microsoft.com"].contains(host) else { return nil }
             return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         })
-    }
-
-    /// Repeated phrases, not a cluster per capture. Restrict seeds to titles and
-    /// sentence/line-local phrases so unrelated transcript words don't combine.
-    static func seeds(_ item: CaptureItem) -> [String: String] {
-        var result: [String: String] = [:]
-        let titleWords = CaptureText.words(item.title)
-        if (2...7).contains(titleWords.count), titleWords.filter({ !stopWords.contains($0) }).count >= 2,
-           !item.rawTitle.isEmpty || !item.userTitle.isEmpty {
-            result[titleWords.joined(separator: " ")] = item.title
-        }
-        let source = item.title + "\n" + String(item.body.prefix(6000))
-        for line in source.components(separatedBy: .newlines).prefix(80) {
-            let words = line.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
-            guard words.count > 1 else { continue }
-            for length in 2...min(3, words.count) {
-                for i in 0...(words.count - length) {
-                    let phrase = Array(words[i..<(i + length)])
-                    let normalized = phrase.map { $0.lowercased() }
-                    guard normalized.allSatisfy({ $0.count > 2 && $0.rangeOfCharacter(from: .letters) != nil }),
-                          !stopWords.contains(normalized[0]), !stopWords.contains(normalized[length - 1]) else { continue }
-                    // A connecting utility word can be meaningful inside a
-                    // topic name, e.g. “Man search redesign”.
-                    result[normalized.joined(separator: " ")] = phrase.joined(separator: " ")
-                }
-            }
-        }
-        for domain in domains(source) { result["domain:" + domain] = domain }
-        return result
     }
 }
 
@@ -172,62 +145,69 @@ enum ThemeStore {
         }; notify()
     }
 
-    typealias Candidates = [String: (String, Set<String>, Int)]
-    static func candidates(for items: [CaptureItem]) -> Candidates {
-        var candidates: Candidates = [:]
-        for item in items where !item.excluded {
-            let title = CaptureText.words(item.title).joined(separator: " ")
-            let seeds = CaptureSignals.seeds(item)
-            for (signature, title) in seeds {
-                if candidates[signature] == nil { candidates[signature] = (title, [], 0) }
-                candidates[signature]?.1.insert(item.id)
-                candidates[signature]?.2 += 1
-            }
-            for signature in seeds.keys where title.contains(signature) {
-                candidates[signature]?.2 += 4
-            }
-        }
-        return candidates
-    }
-    static func infer(in db: GRDB.Database, items: [CaptureItem], enabled: Bool, prepared: Candidates? = nil) throws {
+    /// Apply a complete conceptual pass using stable IDs and existing correction
+    /// rows. Inference never replaces explicit membership or a user's title.
+    static func infer(in db: GRDB.Database, items: [CaptureItem], enabled: Bool,
+                      prepared: [ConceptThemes.Proposal]? = nil,
+                      retireUnmatched: Bool = true, preserveConcepts: Bool = false) throws {
         guard enabled else { return }
-        let items = items.filter { !$0.excluded }
-        let candidates = prepared ?? self.candidates(for: items)
-        let existing = try Row.fetchAll(db, sql: "SELECT * FROM captureTheme")
-        let knownSignatures = Set(existing.map { $0["signature"] as String })
-        var used: [Set<String>] = []
-        // Existing clusters retain stable identity and user names. Only inferred
-        // memberships are refreshed; blocked/manual corrections remain intact.
-        for row in existing {
-            let id: String = row["id"], signature: String = row["signature"], dismissed: Bool = row["dismissed"]
-            if dismissed {
-                used.append(Set(try String.fetchAll(db, sql: "SELECT itemID FROM captureThemeMember WHERE themeID = ?", arguments: [id])))
-                continue
+        let proposals = prepared ?? ConceptThemes.fallback(items)
+        let allowed = Set(items.filter { !$0.excluded }.map(\.id))
+        let existing = try Row.fetchAll(db, sql: "SELECT * FROM captureTheme ORDER BY id")
+        var memberships: [String: Set<String>] = [:]
+        var corrected = Set<String>()
+        for row in try Row.fetchAll(db, sql: "SELECT * FROM captureThemeMember") {
+            let id: String = row["themeID"]
+            memberships[id, default: []].insert(row["itemID"])
+            if row["manual"] as Bool { corrected.insert(id) }
+        }
+        func overlap(_ a: Set<String>, _ b: Set<String>) -> Double {
+            Double(a.intersection(b).count) / Double(max(1, a.union(b).count))
+        }
+        var matched = Set<String>(), used: [Set<String>] = []
+        var signatures = Set(existing.map { $0["signature"] as String })
+        for proposal in proposals.prefix(12) {
+            let members = proposal.members.intersection(allowed)
+            guard members.count >= 3, !used.contains(where: { overlap($0, members) > 0.7 }) else { continue }
+            let signature = "concept:" + CaptureText.words(proposal.title).joined(separator: " ")
+            // A dismissal applies to that concept, not every smaller subject
+            // which happened to share a broad legacy phrase or person's name.
+            if existing.contains(where: { row in
+                (row["dismissed"] as Bool) && ((row["signature"] as String) == signature || overlap(memberships[row["id"]] ?? [], members) >= 0.6)
+            }) { continue }
+            let match = existing.filter { !(($0["dismissed"] as Bool)) && !matched.contains($0["id"]) }.compactMap { row -> (Row, Double)? in
+                let similarity = overlap(memberships[row["id"]] ?? [], members)
+                let sameTitle = CaptureText.words(row["title"] as String) == CaptureText.words(proposal.title)
+                let same = (row["signature"] as String) == signature || (row["conceptDigest"] as String) == proposal.digest || sameTitle
+                return same || similarity >= 0.5 ? (row, same ? 2 : similarity) : nil
+            }.max { $0.1 < $1.1 }?.0
+            let id: String = match?["id"] ?? UUID().uuidString
+            if let match {
+                let keepTitle = (match["renamed"] as Bool) || (match["pinned"] as Bool)
+                try db.execute(sql: "UPDATE captureTheme SET title = ?, description = ?, conceptDigest = ? WHERE id = ?",
+                               arguments: [keepTitle ? match["title"] as String : proposal.title, proposal.description, proposal.digest, id])
+                try db.execute(sql: "DELETE FROM captureThemeMember WHERE themeID = ? AND manual = 0", arguments: [id])
+            } else {
+                // Signature is a creation identity; matched themes keep it so
+                // renaming and inference refinements don't break references.
+                guard signatures.insert(signature).inserted else { continue }
+                try db.execute(sql: "INSERT INTO captureTheme(id,title,signature,description,conceptDigest) VALUES(?,?,?,?,?)",
+                               arguments: [id, proposal.title, signature, proposal.description, proposal.digest])
             }
-            let candidateMembers = candidates[signature]?.1 ?? []
-            let members = candidateMembers.count >= 3 ? candidateMembers : []
-            used.append(members)
-            try db.execute(sql: "DELETE FROM captureThemeMember WHERE themeID = ? AND manual = 0", arguments: [id])
-            for itemID in members { try db.execute(sql: "INSERT OR IGNORE INTO captureThemeMember(themeID,itemID) VALUES (?,?)", arguments: [id, itemID]) }
+            for member in members {
+                try db.execute(sql: "INSERT OR IGNORE INTO captureThemeMember(themeID,itemID) VALUES (?,?)", arguments: [id, member])
+            }
+            matched.insert(id); used.append(members)
         }
-        var created = 0
-        for (signature, candidate) in candidates.sorted(by: {
-            if $0.value.1.count != $1.value.1.count { return $0.value.1.count > $1.value.1.count }
-            if $0.value.2 != $1.value.2 { return $0.value.2 > $1.value.2 }
-            if $0.key.count != $1.key.count { return $0.key.count > $1.key.count }
-            return $0.key < $1.key
-        }) {
-            guard candidate.1.count >= 3, !knownSignatures.contains(signature), created < 12 else { continue }
-            // Skip near-duplicate clusters and very broad terms spanning most
-            // of a larger library. Prefer a few coherent themes to microtopics.
-            if items.count > 12 && Double(candidate.1.count) / Double(items.count) > 0.65 { continue }
-            if used.contains(where: { Double($0.intersection(candidate.1).count) / Double(max(1, min($0.count, candidate.1.count))) > 0.7 }) { continue }
-            let id = UUID().uuidString
-            try db.execute(sql: "INSERT INTO captureTheme(id,title,signature) VALUES (?,?,?)", arguments: [id, candidate.0, signature])
-            for itemID in candidate.1 { try db.execute(sql: "INSERT INTO captureThemeMember(themeID,itemID) VALUES (?,?)", arguments: [id, itemID]) }
-            used.append(candidate.1); created += 1
+        if retireUnmatched {
+            for row in existing {
+                let id: String = row["id"]
+                guard !matched.contains(id), !(row["dismissed"] as Bool), !(row["renamed"] as Bool),
+                      !(row["pinned"] as Bool), !corrected.contains(id),
+                      !preserveConcepts || !(row["conceptDigest"] as String).hasPrefix("semantic:") else { continue }
+                try db.execute(sql: "DELETE FROM captureTheme WHERE id = ?", arguments: [id])
+            }
         }
-        try db.execute(sql: "DELETE FROM captureTheme WHERE dismissed = 0 AND renamed = 0 AND pinned = 0 AND id NOT IN (SELECT themeID FROM captureThemeMember)")
     }
 
     static func notify() { DispatchQueue.main.async { NotificationCenter.default.post(name: .captureLibraryChanged, object: nil) } }

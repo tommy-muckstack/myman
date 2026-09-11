@@ -123,7 +123,7 @@ final class CaptureLibraryTests: XCTestCase {
         var screenshot = item
         screenshot.kind = "screenshot"; screenshot.rawTitle = ""; screenshot.body = "Man search redesign"
         XCTAssertEqual(CaptureEnrichment.generatedTitle(screenshot), "Man search redesign")
-        XCTAssertEqual(CaptureSignals.seeds(screenshot)["man search redesign"], "Man search redesign")
+        XCTAssertTrue(ConceptThemes.fallback([screenshot]).isEmpty)
     }
 
     func testNaturalQueriesAndExplicitFilters() throws {
@@ -196,7 +196,11 @@ final class CaptureLibraryTests: XCTestCase {
         MM.Fonts.registerFonts()
         let queue = try database()
         for index in 0..<3 { try note(queue, id: "\(index)", title: "HuddleUp payments", body: "Registration pricing is $49 per month.\nDiscuss the rollout and billing changes.") }
-        try queue.write { db in try ThemeStore.infer(in: db, items: CaptureItem.fetchAll(db), enabled: true) }
+        try queue.write { db in
+            let items = try CaptureItem.fetchAll(db)
+            let theme = ConceptThemes.Proposal(title: "Designing registration payments", description: "Registration pricing, billing choices, and the payment rollout.", members: Set(items.map(\.id)), digest: "semantic:fixture")
+            try ThemeStore.infer(in: db, items: items, enabled: true, prepared: [theme])
+        }
         let model = CaptureLibraryModel(database: queue)
         model.results = try CaptureIndex.lexical("pricing", database: queue)
         model.themes = try ThemeStore.list(database: queue)
