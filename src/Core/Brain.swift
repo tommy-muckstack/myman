@@ -319,7 +319,7 @@ enum Brain {
     /// a user's first launch.
     private static func stageManagedFiles() {
         let paths = ["README.md", "CLAUDE.md", "notes", "meetings", "screenshots", "recordings",
-                     "tasks.md", "people.md", "vocabulary.md"]
+                     "tasks.md", "people.md", "vocabulary.md", "assets"]
             .filter { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }
         guard !paths.isEmpty else { return }
         _ = git(["add", "-A", "--"] + paths)

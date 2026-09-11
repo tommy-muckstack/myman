@@ -23,7 +23,7 @@ enum MarkdownRich {
     }
 
     static func plainText(_ markdown: String) -> String {
-        markdown.components(separatedBy: "\n").map { parseInline(block($0).body).string }.joined(separator: "\n")
+        markdown.components(separatedBy: "\n").map { parseInline(block($0).body, loadImages: false).string }.joined(separator: "\n")
     }
 
     static func block(_ line: String) -> (prefix: String, display: String, body: String) {
@@ -45,11 +45,16 @@ enum MarkdownRich {
         return (prefix, indent + marker, ns.substring(from: NSMaxRange(match.range)))
     }
 
-    static func attributed(from markdown: String, firstLineIsTitle: Bool = true) -> NSMutableAttributedString {
+    static func attributed(from markdown: String, firstLineIsTitle: Bool = true, assets: DocumentAssets = .shared) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
         let lines = markdown.components(separatedBy: "\n")
         var fenced = false
-        for (index, raw) in lines.enumerated() {
+        var index = 0
+        while index < lines.count {
+            let raw = lines[index]
+            if !fenced, let parsed = DocumentTable.parse(lines, at: index) {
+                result.append(parsed.table.attributed(assets: assets)); index = parsed.end; continue
+            }
             let fence = raw.trimmingCharacters(in: .whitespaces).hasPrefix("```") || raw.trimmingCharacters(in: .whitespaces).hasPrefix("~~~")
             let literal = fenced || fence
             let parts = literal ? (prefix: "", display: "", body: raw) : block(raw)
@@ -57,22 +62,23 @@ enum MarkdownRich {
             if literal {
                 line.append(NSAttributedString(string: parts.body, attributes: [.font: NSFont.monospacedSystemFont(ofSize: bodySize - 2, weight: .regular), .manCode: "fenced"]))
             } else {
-                line.append(parseInline(parts.body))
+                line.append(parseInline(parts.body, assets: assets))
             }
             if index < lines.count - 1 { line.append(NSAttributedString(string: "\n")) }
             line.addAttribute(.manBlock, value: parts.prefix, range: NSRange(location: 0, length: line.length))
             style(line, title: firstLineIsTitle && index == 0)
             result.append(line)
             if fence { fenced.toggle() }
+            index += 1
         }
         return result
     }
 
-    private static func parseInline(_ source: String, depth: Int = 0) -> NSMutableAttributedString {
+    static func parseInline(_ source: String, depth: Int = 0, assets: DocumentAssets = .shared, loadImages: Bool = true) -> NSMutableAttributedString {
         let base: [NSAttributedString.Key: Any] = [.font: bodyFont(bold: false), .foregroundColor: NSColor.textColor]
         guard depth < 8 else { return NSMutableAttributedString(string: source, attributes: base) }
         let output = NSMutableAttributedString()
-        let pattern = #"(`[^`\n]+`|\[[^\]\n]+\]\((?:\\.|[^)\n])+\)|<u>.*?</u>|\*\*\*.+?\*\*\*|\*\*.+?\*\*|~~.+?~~|\*[^*\n]+\*)"#
+        let pattern = #"(!\[[^\]\n]*\]\([^\)\n]+\)|`[^`\n]+`|\[[^\]\n]+\]\((?:\\.|[^)\n])+\)|<u>.*?</u>|\*\*\*.+?\*\*\*|\*\*.+?\*\*|~~.+?~~|\*[^*\n]+\*)"#
         let ns = source as NSString
         var cursor = 0
         let matches = (try? NSRegularExpression(pattern: pattern).matches(in: source, range: NSRange(location: 0, length: ns.length))) ?? []
@@ -81,7 +87,16 @@ enum MarkdownRich {
             let token = ns.substring(with: match.range)
             var attributes: [NSAttributedString.Key: Any] = [:]
             let content: String
-            if token.hasPrefix("`") {
+            if token.hasPrefix("!["), let boundary = token.range(of: "](") {
+                let alt = String(token[token.index(token.startIndex, offsetBy: 2)..<boundary.lowerBound])
+                let target = String(token[boundary.upperBound...].dropLast())
+                if !loadImages {
+                    output.append(NSAttributedString(string: alt, attributes: base))
+                } else if let url = assets.resolve(target) {
+                    output.append(NSAttributedString(attachment: DocumentImageAttachment(markdown: token, url: url, alternativeText: alt)))
+                } else { output.append(NSAttributedString(string: token, attributes: base)) }
+                cursor = NSMaxRange(match.range); continue
+            } else if token.hasPrefix("`") {
                 content = String(token.dropFirst().dropLast()); attributes[.manCode] = "inline"
             } else if token.hasPrefix("["), let boundary = token.range(of: "](") {
                 let target = String(token[boundary.upperBound...].dropLast()).replacingOccurrences(of: "\\)", with: ")").replacingOccurrences(of: "\\(", with: "(")
@@ -101,7 +116,7 @@ enum MarkdownRich {
             } else {
                 content = String(token.dropFirst().dropLast()); attributes[.manItalic] = true
             }
-            let inner = attributes[.manCode] != nil ? NSMutableAttributedString(string: content, attributes: base) : parseInline(content, depth: depth + 1)
+            let inner = attributes[.manCode] != nil ? NSMutableAttributedString(string: content, attributes: base) : parseInline(content, depth: depth + 1, assets: assets, loadImages: loadImages)
             inner.addAttributes(attributes, range: NSRange(location: 0, length: inner.length))
             output.append(inner)
             cursor = NSMaxRange(match.range)
@@ -117,37 +132,37 @@ enum MarkdownRich {
         let prefix = (text.attribute(.manBlock, at: 0, effectiveRange: nil) as? String ?? "").trimmingCharacters(in: .whitespaces)
         let heading = prefix.hasPrefix("#")
         let size: CGFloat = title ? titleSize : prefix == "#" ? 28 : prefix == "##" ? 24 : prefix == "###" ? 20 : bodySize
+        let existingParagraph = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        let tableCell = existingParagraph?.textBlocks.first as? NSTextTableBlock
         let paragraph = NSMutableParagraphStyle()
+        if let existingParagraph, tableCell != nil {
+            paragraph.textBlocks = existingParagraph.textBlocks
+            paragraph.alignment = existingParagraph.alignment
+        }
         paragraph.lineSpacing = MM.Document.lineSpacing
         paragraph.paragraphSpacing = title ? 24 : MM.Document.paragraphSpacing
         paragraph.paragraphSpacingBefore = heading && !title ? 12 : 0
+        if tableCell != nil { paragraph.paragraphSpacing = 0; paragraph.lineSpacing = 3 }
         if prefix.hasPrefix("-") || prefix.hasPrefix("*") || prefix.first?.isNumber == true || prefix == ">" { paragraph.headIndent = 24 }
         text.addAttribute(.paragraphStyle, value: paragraph, range: whole)
         text.enumerateAttributes(in: whole) { attributes, range, _ in
             let code = attributes[.manCode] as? String
             let bold = attributes[.manBold] as? Bool == true
             let italic = attributes[.manItalic] as? Bool == true
-            text.addAttribute(.font, value: code != nil ? NSFont.monospacedSystemFont(ofSize: bodySize - 2, weight: bold ? .semibold : .regular) : MM.Fonts.native(size, bold || title || heading ? .semiBold : .regular, italic: italic), range: range)
+            text.addAttribute(.font, value: code != nil ? NSFont.monospacedSystemFont(ofSize: bodySize - 2, weight: bold ? .semibold : .regular) : MM.Fonts.native(tableCell != nil ? MM.Fonts.tableSize : size, bold || title || heading || tableCell?.startingRow == 0 ? .semiBold : .regular, italic: italic), range: range)
             text.addAttribute(.foregroundColor, value: prefix == ">" ? NSColor.secondaryLabelColor : NSColor.textColor, range: range)
             if code == "inline" { text.addAttribute(.backgroundColor, value: NSColor.quaternaryLabelColor, range: range) }
         }
     }
 
-    static func markdown(from attributed: NSAttributedString, firstLineIsTitle: Bool = true) -> String {
-        let full = attributed.string as NSString
-        var lines: [String] = []
-        var location = 0
-        while location <= full.length {
-            let newline = full.range(of: "\n", range: NSRange(location: location, length: full.length - location))
-            let end = newline.location == NSNotFound ? full.length : newline.location
-            let line = attributed.attributedSubstring(from: NSRange(location: location, length: end - location))
-            let prefix = location < attributed.length ? attributed.attribute(.manBlock, at: location, effectiveRange: nil) as? String ?? "" : ""
-            let display = block(prefix + "content").display
-            let start = !display.isEmpty && line.string.hasPrefix(display) ? (display as NSString).length : 0
-            let content = line.attributedSubstring(from: NSRange(location: start, length: line.length - start))
-            var output = prefix
-            var active: [(key: String, open: String, close: String)] = []
+    static func inlineMarkdown(_ content: NSAttributedString) -> String {
+        var output = ""
+        var active: [(key: String, open: String, close: String)] = []
             content.enumerateAttributes(in: NSRange(location: 0, length: content.length)) { attributes, range, _ in
+                if let image = attributes[.attachment] as? DocumentImageAttachment {
+                    output += active.reversed().map(\.close).joined() + image.markdown
+                    active = []; return
+                }
                 let text = (content.string as NSString).substring(with: range)
                 var marks: [(key: String, open: String, close: String)] = []
                 if let link = attributes[.link] as? URL {
@@ -167,10 +182,29 @@ enum MarkdownRich {
                 active = marks
             }
             output += active.reversed().map(\.close).joined()
-            lines.append(output)
+        return output
+    }
+
+    static func markdown(from attributed: NSAttributedString, firstLineIsTitle: Bool = true) -> String {
+        let full = attributed.string as NSString
+        var output = "", location = 0
+        while location < full.length {
+            if let table = DocumentTable.selection(in: attributed, at: location) {
+                output += table.markdown(in: attributed)
+                location = NSMaxRange(table.range)
+                if location < full.length, !output.hasSuffix("\n") { output += "\n" }
+                continue
+            }
+            let newline = full.range(of: "\n", range: NSRange(location: location, length: full.length - location))
+            let end = newline.location == NSNotFound ? full.length : newline.location
+            let line = attributed.attributedSubstring(from: NSRange(location: location, length: end - location))
+            let prefix = attributed.attribute(.manBlock, at: location, effectiveRange: nil) as? String ?? ""
+            let display = block(prefix + "content").display
+            let start = !display.isEmpty && line.string.hasPrefix(display) ? (display as NSString).length : 0
+            output += prefix + inlineMarkdown(line.attributedSubstring(from: NSRange(location: start, length: line.length - start)))
             if newline.location == NSNotFound { break }
-            location = end + 1
+            output += "\n"; location = end + 1
         }
-        return lines.joined(separator: "\n")
+        return output
     }
 }
