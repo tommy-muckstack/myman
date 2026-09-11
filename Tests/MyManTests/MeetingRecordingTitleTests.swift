@@ -20,6 +20,16 @@ final class MeetingRecordingTitleTests: XCTestCase {
         try queue.read { try Meeting.fetchOne($0, key: "live") }
     }
 
+    @MainActor private func waitForSavedTitle(_ title: String, in queue: DatabaseQueue) async throws {
+        // SwiftUI must first deliver its text change, then the debounce runs.
+        // A fixed sleep incorrectly couples correctness to runner/render speed.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while try saved(queue)?.title != title, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(try saved(queue)?.title, title)
+    }
+
     @MainActor func testRenameUpdatesActiveTakeAndSearchWithoutOverwritingContent() throws {
         let (controller, queue) = try fixture()
         controller.updateRecordingTitle("  Search redesign  ")
@@ -39,7 +49,7 @@ final class MeetingRecordingTitleTests: XCTestCase {
         let (controller, queue) = try fixture()
         controller.updateRecordingTitle("Search")
         controller.updateRecordingTitle("Search design")
-        try await Task.sleep(for: .milliseconds(550))
+        try await waitForSavedTitle("Search design", in: queue)
         XCTAssertEqual(try saved(queue)?.title, "Search design")
     }
 
@@ -110,7 +120,7 @@ final class MeetingRecordingTitleTests: XCTestCase {
                 XCTAssertTrue(panel.makeFirstResponder(field))
                 let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
                 editor.insertText("Live edited name", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
-                try await Task.sleep(for: .milliseconds(550))
+                try await waitForSavedTitle("Live edited name", in: queue)
                 XCTAssertEqual(controller.recordingTitle, "Live edited name")
                 XCTAssertEqual(try saved(queue)?.title, "Live edited name")
                 guard case .recording = controller.phase else { return XCTFail("Typing stopped recording") }
