@@ -136,7 +136,8 @@ node integrations/brain/cli.mjs collect '{"kinds":["themes"]}'
 ```
 
 Date bounds are `[after,before)` and require timezone offsets. Resolve relative
-dates in the user's timezone. Dates mean original capture/task creation time;
+dates in the user's timezone; `status` reports the Mac's timezone and current
+time as a default. Dates mean original capture/task creation time;
 a saved Theme uses its latest member time. For tasks, choose
 `date_field: task_completed` or `task_due` to filter completion or due dates. File modification times never
 establish time-based relationships. Undated items are reported separately.

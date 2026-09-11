@@ -83,7 +83,8 @@ text. Exports can change between requests; retry from the start if needed.
 
 Cite returned source paths and line numbers. Use `timestamp` for capture time;
 `exported_at` is file modification time and may reflect an edit or resync.
-Resolve relative dates in the user's timezone; do not infer them from filenames
+Resolve relative dates in the user's timezone (`status.timezone` supplies the
+local Mac default, and `current_time` supplies its clock); do not infer them from filenames
 alone. Meeting transcripts and notes are stronger evidence than ambient
 screenshot OCR. Preserve `low_content` warnings and mention `partial` scans;
 neither truncated nor partial results prove something never happened.

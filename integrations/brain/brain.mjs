@@ -214,7 +214,8 @@ export class Brain {
   async status() {
     const { documents, ...scan } = await this.scan();
     const counts = Object.fromEntries(kinds.map(kind => [kind, documents.filter(d => d.kind === kind).length]));
-    return { root: await this.root(), read_only: true, counts, ...scan, limits };
+    return { root: await this.root(), read_only: true, counts, ...scan, limits,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, current_time: new Date().toISOString() };
   }
 
   async search({ query, kind, limit = 10 }) {

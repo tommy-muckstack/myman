@@ -7,7 +7,7 @@ const offset = z.number().int().min(0).max(2 * 1024 * 1024).default(0);
 
 export const tools = {
   status: {
-    description: 'Check this computer for the MyMan Brain folder, export counts, and scan warnings. Does not return document contents.',
+    description: 'Check this computer for the MyMan Brain folder, export counts, local timezone/current time, and scan warnings. Does not return document contents.',
     schema: z.object({}).strict(),
   },
   search: {
