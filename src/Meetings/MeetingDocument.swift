@@ -14,6 +14,7 @@ final class MeetingDocumentController {
     static let shared = MeetingDocumentController()
     private var windows: [String: NSWindow] = [:]
     func close(id: String) {
+        MeetingNotesService.shared.cancel(meetingID: id)
         let window = windows.removeValue(forKey: id)
         (window as? DocumentWindow)?.autosave?.discardPendingChanges()
         window?.contentView = nil; window?.close()
@@ -154,6 +155,7 @@ struct MeetingDocumentView: View {
     @State private var isSummarizing = false
     @StateObject private var autosave: DocumentAutosave
     @StateObject private var editor = RichEditorSession()
+    @StateObject private var notesService: MeetingNotesService
     @State private var hasEditedNotes = false
     @State private var showRelated = false
     @State private var showSlides = false
@@ -170,6 +172,7 @@ struct MeetingDocumentView: View {
         self.database = database
         self.automaticallySummarize = automaticallySummarize
         _autosave = StateObject(wrappedValue: autosave ?? DocumentAutosave())
+        _notesService = StateObject(wrappedValue: database == nil ? .shared : MeetingNotesService(database: database))
         _title = State(initialValue: meeting.title)
         _summary = State(initialValue: meeting.summary)
         _transcript = State(initialValue: meeting.transcript)
@@ -188,10 +191,12 @@ struct MeetingDocumentView: View {
                 if isSummarizing {
                     HStack(spacing: MM.Layout.spacing) {
                         ProgressView().controlSize(.mini)
-                        Text("Preparing notes… You can start writing here.").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                        Text(notesService.stages[meeting.id] ?? "Preparing notes…")
+                            .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
                     }.padding(.horizontal, MM.Document.margin)
                 }
                 RichMarkdownEditor(markdown: Binding(get: { summary }, set: { text in
+                    notesService.cancel(meetingID: meeting.id)
                     summary = text; hasEditedNotes = true; debouncedSave(text)
                 }), firstLineIsTitle: false, session: editor,
                                    placeholder: "Write your notes…")
@@ -202,6 +207,19 @@ struct MeetingDocumentView: View {
         .background(MM.Colors.background)
         .frame(minWidth: 560, minHeight: 420)
         .onAppear { if automaticallySummarize { generateSummaryIfMissing() } }
+        .task {
+            let id = meeting.id
+            let observation = ValueObservation.tracking { db in try Meeting.fetchOne(db, key: id) }
+            do {
+                for try await saved in observation.values(in: db) {
+                    guard let saved else { return }
+                    // A document can already be open when transcription finishes.
+                    if transcript.isEmpty { transcript = saved.transcript }
+                    if !hasEditedNotes, summary.isEmpty { summary = saved.summary }
+                    if automaticallySummarize { generateSummaryIfMissing() }
+                }
+            } catch { /* Keep the editable document available if observation fails. */ }
+        }
         .onChange(of: showTranscript) { _, _ in autosave.flush() }
         .onDisappear { autosave.flush() }
     }
@@ -245,6 +263,7 @@ struct MeetingDocumentView: View {
     private func renameSpeaker(from old: String, to newRaw: String) {
         let new = newRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !new.isEmpty, new != old, !new.contains("*") else { return }
+        notesService.cancel(meetingID: meeting.id)
         transcript = transcript.replacingOccurrences(of: "**\(old)**", with: "**\(new)**")
         // The summary was written against the old label — keep it in step.
         if !summary.isEmpty, summary.contains(old) {
@@ -292,6 +311,7 @@ struct MeetingDocumentView: View {
                 formattedTranscript(turns)
             } else {
                 TextEditor(text: Binding(get: { transcript }, set: { text in
+                    notesService.cancel(meetingID: meeting.id)
                     transcript = text; debouncedSaveTranscript(text)
                 }))
                     .font(MM.Fonts.body)
@@ -535,17 +555,15 @@ struct MeetingDocumentView: View {
     }
 
     private func generateSummaryIfMissing() {
-        guard summary.isEmpty, !meeting.transcript.isEmpty, !isSummarizing else { return }
+        guard summary.isEmpty, !transcript.isEmpty, !isSummarizing, !hasEditedNotes else { return }
         isSummarizing = true
-        let transcript = meeting.transcript
+        let sourceTranscript = transcript
         Task { @MainActor in
-            let generated = await MeetingSummarizer.summarize(
-                transcript, meetingDate: meeting.startedAt)
+            let generated = await notesService.notes(meetingID: meeting.id)
             isSummarizing = false
-            guard !generated.isEmpty, summary.isEmpty, !hasEditedNotes else { return }
+            guard !generated.isEmpty, summary.isEmpty, !hasEditedNotes,
+                  transcript == sourceTranscript else { return }
             summary = generated
-            debouncedSave(generated)
-            autosave.flush()
         }
     }
 }
@@ -619,7 +637,10 @@ enum MeetingSummarizer {
     /// then a final pass writes the document. The old single-pass version
     /// read only the first 8,000 characters — a 44-minute meeting's summary
     /// knew nothing past minute ten, which is where the decisions live.
-    static func summarize(_ transcript: String, meetingDate: Date = Date()) async -> String {
+    static func summarize(_ transcript: String, meetingDate: Date = Date(),
+                          progress: @escaping MeetingNotesService.Progress = { _ in }) async -> String {
+        let totalTimer = MeetingProcessingTimer()
+        defer { totalTimer.finish("notes_total") }
         #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else { return "" }
         guard case .available = SystemLanguageModel.default.availability else { return "" }
@@ -641,11 +662,17 @@ enum MeetingSummarizer {
             if transcript.count <= windowSize {
                 body = transcript
             } else {
-                let notes = await compress(transcript)
-                guard !notes.isEmpty else { return "" }
+                let compressionTimer = MeetingProcessingTimer()
+                let notes = await compress(transcript, progress: progress)
+                compressionTimer.finish("notes_compression")
+                guard !Task.isCancelled, !notes.isEmpty else { return "" }
                 windowCount = notes.count
+                await progress("Combining meeting details…")
                 body = await reduceToFit(notes)
             }
+            guard !Task.isCancelled else { return "" }
+            await progress("Writing notes…")
+            let writingTimer = MeetingProcessingTimer()
             let session = LanguageModelSession(
                 instructions: transcript.count <= windowSize ? finalInstructions
                     : finalInstructions + """
@@ -654,13 +681,16 @@ enum MeetingSummarizer {
                         lines. Represent the end as fully as the beginning.
                         """)
             let response = try await session.respond(to: body)
+            writingTimer.finish("notes_writing")
             // The write-up pass is told not to produce action items, but a
             // model that ignores that would reintroduce exactly the invented
             // topic-restatements this replaced. Only the extractor's list ships.
             var document = stripActionItems(
                 response.content.trimmingCharacters(in: .whitespacesAndNewlines))
+            guard !Task.isCancelled else { return "" }
             let actions = await ActionItemExtractor.extract(
-                from: transcript, meetingDate: meetingDate)
+                from: transcript, meetingDate: meetingDate, progress: progress)
+            guard !Task.isCancelled else { return "" }
             if !actions.isEmpty { document += "\n\n## Action items\n\n" + actions }
             Analytics.track("meeting_summarized",
                             ["windows": windowCount,
@@ -696,10 +726,13 @@ enum MeetingSummarizer {
     #if canImport(FoundationModels)
     /// Dense bullet notes for every window of the transcript, in order.
     @available(macOS 26.0, *)
-    private static func compress(_ transcript: String) async -> [String] {
+    private static func compress(_ transcript: String,
+                                 progress: MeetingNotesService.Progress) async -> [String] {
         var notes: [String] = []
         let all = windows(of: transcript, size: windowSize)
         for (index, window) in all.enumerated() {
+            guard !Task.isCancelled else { return [] }
+            await progress("Reading transcript · \(index + 1) of \(all.count)…")
             // Fresh session per window — context does not accumulate.
             let session = LanguageModelSession(instructions: """
                 Compress this slice of a meeting transcript (lines are \
@@ -734,9 +767,11 @@ enum MeetingSummarizer {
         var current = notes
         var pass = 0
         while current.joined(separator: "\n").count > windowSize, pass < 3 {
+            guard !Task.isCancelled else { return "" }
             pass += 1
             var folded: [String] = []
             for group in windows(of: current.joined(separator: "\n\n"), size: windowSize) {
+                guard !Task.isCancelled else { return "" }
                 let session = LanguageModelSession(instructions: """
                     Condense these meeting notes by about half. Keep every \
                     decision, commitment, number, name, and deadline. Bullets \

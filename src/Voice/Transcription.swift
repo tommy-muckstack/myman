@@ -44,26 +44,28 @@ enum SttEngineKind: String, CaseIterable, Identifiable {
 /// compile out of the first dictation.
 @available(macOS 15.0, *)
 final class Qwen3Engine {
-    private var manager: Qwen3AsrManager?
-    var isReady: Bool { manager != nil }
+    private let model = ModelLoadCoordinator<Qwen3AsrManager>()
+    var isReady: Bool { model.value != nil }
 
     func load(progress: @escaping @Sendable (Double) -> Void = { _ in }) async {
-        guard manager == nil else { return }
-        do {
-            let modelDir = try await Qwen3AsrModels.download(variant: .int8) { p in
-                progress(p.fractionCompleted)
+        _ = await model.load {
+            do {
+                let modelDir = try await Qwen3AsrModels.download(variant: .int8) { p in
+                    progress(p.fractionCompleted)
+                }
+                let m = Qwen3AsrManager()
+                try await m.loadModels(from: modelDir)
+                _ = try? await m.transcribe(audioSamples: [Float](repeating: 0, count: 16000))
+                return m
+            } catch {
+                NSLog("My Man [Qwen3] failed to load: \(error)")
+                return nil
             }
-            let m = Qwen3AsrManager()
-            try await m.loadModels(from: modelDir)
-            _ = try? await m.transcribe(audioSamples: [Float](repeating: 0, count: 16000))
-            manager = m
-        } catch {
-            NSLog("My Man [Qwen3] failed to load: \(error)")
         }
     }
 
     func transcribe(_ samples: [Float]) async -> String {
-        guard let manager else { return "" }
+        guard let manager = model.value else { return "" }
         do {
             // Force English — Qwen3 is multilingual and short ambiguous audio
             // ("github") can decode into Chinese under auto-detection.
