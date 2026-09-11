@@ -16,6 +16,7 @@ struct Person: Identifiable, Codable, FetchableRecord, PersistableRecord {
     var meetCount: Int
     var firstMetAt: Date
     var lastMetAt: Date
+    var hidden: Bool = false
 }
 
 enum People {
@@ -30,7 +31,7 @@ enum People {
         let names = Set(regex.matches(in: transcript, range: range).compactMap { match -> String? in
             guard let range = Range(match.range(at: 1), in: transcript) else { return nil }
             let name = String(transcript[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard name.count >= 2, !ignored.contains(name.lowercased()) else { return nil }
+            guard name.count >= 2, !ignored.contains(name.lowercased()), !MeetingSource.genericSpeaker(name) else { return nil }
             return name
         })
         guard !names.isEmpty else { return }
@@ -78,6 +79,7 @@ enum People {
         if let name, !name.isEmpty, !name.contains("@") { return name }
         let address = (name?.contains("@") == true ? name : nil) ?? email
         guard let local = address?.split(separator: "@").first else { return name }
+        if local.contains(where: \.isNumber) { return address }
         let words = local.split(whereSeparator: { "._-".contains($0) })
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .filter { $0.rangeOfCharacter(from: .letters) != nil }
@@ -125,9 +127,9 @@ enum People {
     }
 
     /// Every known person, most-met first.
-    static func all() -> [Person] {
+    static func all(includingHidden: Bool = false) -> [Person] {
         (try? Database.shared.read { db in
-            try Person.order(Column("meetCount").desc, Column("lastMetAt").desc).fetchAll(db)
+            try Person.filter(includingHidden || Column("hidden") == false).order(Column("meetCount").desc, Column("lastMetAt").desc).fetchAll(db)
         }) ?? []
     }
 
@@ -148,8 +150,13 @@ enum People {
         return Array(terms)
     }
 
+    static func setHidden(_ hidden: Bool, id: String) {
+        try? Database.shared.write { try $0.execute(sql: "UPDATE person SET hidden = ? WHERE id = ?", arguments: [hidden, id]) }
+        syncBrain()
+    }
+
     private static func syncBrain() {
-        var content = "# People\n\nTeammates learned from recorded meetings, most-met first.\n\n"
+        var content = "# People\n\nPeople from recorded meetings, most-met first.\n\n"
         for person in all() {
             let email = person.email.map { " — \($0)" } ?? ""
             content += "- **\(person.name)**\(email) — \(person.meetCount) meeting\(person.meetCount == 1 ? "" : "s"), last \(person.lastMetAt.formatted(date: .abbreviated, time: .omitted))\n"
@@ -159,7 +166,11 @@ enum People {
 
     /// Attendees of the calendar event happening right now (±10 min), the
     /// current user excluded.
-    static func currentEventAttendees() -> [(name: String, email: String?)] {
+    @MainActor static func currentEventAttendees(matchingTitle: String? = nil) -> [(name: String, email: String?)] {
+        currentEventParticipants(matchingTitle: matchingTitle).filter { !$0.isOwner }.map { ($0.name, $0.email) }
+    }
+
+    @MainActor static func currentEventParticipants(matchingTitle: String? = nil) -> [MeetingParticipant] {
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
         let store = EKEventStore()
         let now = Date()
@@ -167,18 +178,18 @@ enum People {
             withStart: now.addingTimeInterval(-600),
             end: now.addingTimeInterval(600), calendars: nil)
         guard let event = store.events(matching: predicate)
-            .filter({ !$0.isAllDay && $0.startDate <= now.addingTimeInterval(600) })
+            .filter({ !$0.isAllDay && $0.endDate > now && !CalendarWatcher.isDeclined($0) && CalendarWatcher.meetingURL(in: $0) != nil
+                && (matchingTitle == nil || $0.title == matchingTitle) })
             .sorted(by: { $0.startDate > $1.startDate })
             .first else { return [] }
         return (event.attendees ?? [])
-            .filter { !$0.isCurrentUser }
             .compactMap { participant in
                 let email = participant.url.absoluteString.hasPrefix("mailto:")
                     ? String(participant.url.absoluteString.dropFirst("mailto:".count))
                     : nil
                 let name = displayName(name: participant.name, email: email)
                 guard let name, !name.isEmpty else { return nil }
-                return (name, email)
+                return MeetingParticipant(name: name, email: email, isOwner: participant.isCurrentUser)
             }
     }
 }

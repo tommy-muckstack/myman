@@ -214,6 +214,57 @@ enum Database {
         migrator.registerMigration("v14-unified-retrieval") { db in
             try CaptureSchema.create(in: db)
         }
+        migrator.registerMigration("v15-grounded-meetings") { db in
+            try db.alter(table: "meeting") { t in
+                t.add(column: "kind", .text).notNull().defaults(to: "meeting")
+                t.add(column: "ownerName", .text).notNull().defaults(to: "")
+                t.add(column: "participantsJSON", .text).notNull().defaults(to: "[]")
+                t.add(column: "originalTranscript", .text).notNull().defaults(to: "")
+                t.add(column: "analysisJSON", .text).notNull().defaults(to: "")
+            }
+            // Preserve existing source text before any explicit repair.
+            try db.execute(sql: "UPDATE meeting SET originalTranscript = transcript")
+            try db.alter(table: "task") { t in
+                t.add(column: "archived", .boolean).notNull().defaults(to: false)
+                t.add(column: "sourceMeetingID", .text).references("meeting", onDelete: .cascade)
+                t.add(column: "sourceActionKey", .text)
+            }
+            try db.create(index: "task_meeting_action", on: "task", columns: ["sourceMeetingID", "sourceActionKey"], unique: true)
+            // Reversible quarantine of the old extractor's quoted fragments.
+            try db.execute(sql: """
+                UPDATE task SET archived = 1 WHERE source = 'meeting' AND done = 0
+                AND (trim(title) LIKE '"%' OR trim(title) LIKE '“%')
+                """)
+            // Attach uniquely recoverable legacy fragments to their meeting
+            // so a later source deletion also removes the archived evidence.
+            try db.execute(sql: """
+                UPDATE task SET sourceMeetingID = (
+                    SELECT id FROM meeting
+                    WHERE instr(lower(transcript), lower(trim(task.title, '"“” '))) > 0
+                ) WHERE source = 'meeting' AND archived = 1
+                    AND length(trim(title, '"“” ')) >= 12
+                    AND (SELECT count(*) FROM meeting
+                         WHERE instr(lower(transcript), lower(trim(task.title, '"“” '))) > 0) = 1
+                """)
+            // Preserve useful dictation tasks while removing their old
+            // transcript-style quotes. Invalid meeting fragments stay archived.
+            for var task in try TaskItem.filter(Column("source") == "dictation").fetchAll(db) {
+                if let cleaned = TaskHygiene.cleanQuotedTask(task.title), cleaned != task.title {
+                    task.title = cleaned
+                    try task.update(db)
+                }
+            }
+            try db.alter(table: "person") { t in t.add(column: "hidden", .boolean).notNull().defaults(to: false) }
+            try db.create(table: "vocabularyMention") { t in
+                t.column("term", .text).notNull()
+                t.column("meetingID", .text).notNull().references("meeting", onDelete: .cascade)
+                t.primaryKey(["term", "meetingID"])
+            }
+            try db.create(table: "vocabularyDecision") { t in
+                t.primaryKey("term", .text)
+                t.column("accepted", .boolean).notNull()
+            }
+        }
         return migrator
     }
 }

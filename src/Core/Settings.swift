@@ -234,6 +234,8 @@ struct SettingsPanelView: View {
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
     @State private var automationCopied = false
+    @State private var vocabularySuggestions: [String] = []
+    @State private var knownPeople: [Person] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -260,14 +262,17 @@ struct SettingsPanelView: View {
 
             Divider().overlay(MM.Colors.border)
 
-            Group {
-                switch settingsPage {
-                case .general: generalPage
-                case .dictation: dictationPage
-                case .shortcuts: shortcutsPage
-                case .library: CapturePrivacySettings()
-                }
-            }
+            ScrollView {
+                Group {
+                    switch settingsPage {
+                    case .general: generalPage
+                    case .dictation: dictationPage
+                    case .shortcuts: shortcutsPage
+                    case .library: CapturePrivacySettings()
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(height: MM.Layout.settingsContentHeight)
+
 
             // Update path that never depends on the menu-bar icon — crowded
             // menu bars (notch, corporate agents) silently hide status items.
@@ -405,6 +410,22 @@ struct SettingsPanelView: View {
                 }
             Text("Personal vocabulary — one name, product, or term per line.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            MeetingVocabularyControls(suggestions: vocabularySuggestions, people: knownPeople,
+                accept: { term in
+                    MeetingVocabulary.decide(term, accept: true)
+                    vocabularyText = DictationCleanup.userVocabulary().joined(separator: "\n")
+                    vocabularySuggestions.removeAll { $0 == term }
+                }, dismiss: { term in
+                    MeetingVocabulary.decide(term, accept: false)
+                    vocabularySuggestions.removeAll { $0 == term }
+                }, togglePerson: { person in
+                    People.setHidden(!person.hidden, id: person.id)
+                    knownPeople = People.all(includingHidden: true)
+                })
+            .task {
+                knownPeople = People.all(includingHidden: true)
+                vocabularySuggestions = await MeetingVocabulary.refreshSuggestions()
+            }
         }
     }
 

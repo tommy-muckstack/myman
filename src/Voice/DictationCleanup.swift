@@ -157,7 +157,7 @@ enum DictationCleanup {
     /// a 1-3 word window over the text; if its normalized form fuzzy-matches
     /// a vocabulary term (edit distance ≤2, same first letter, length ≥6, or
     /// exact for shorter), the canonical spelling replaces it.
-    static func applyVocabulary(_ text: String, terms: [String]) -> String {
+    static func applyVocabulary(_ text: String, terms: [String], onCorrection: ((String, String) -> Void)? = nil) -> String {
         let words = text.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
         guard words.count > 0, !terms.isEmpty else { return text }
         func norm(_ s: String) -> String {
@@ -188,6 +188,8 @@ enum DictationCleanup {
                         || (abs(key.count - term.key.count) <= 1 && distance <= 1)
                     )
                     if exact || fuzzy {
+                        let replacement = term.canonical + punctuation
+                        if window != replacement { onCorrection?(window, replacement) }
                         result.replaceSubrange(i..<(i + windowSize),
                                                with: [term.canonical + punctuation])
                         replaced = true

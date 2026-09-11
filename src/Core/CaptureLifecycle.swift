@@ -46,7 +46,9 @@ enum CaptureLifecycle {
         switch hit {
         case .note(let n): Brain.deleteNote(id: n.id, createdAt: n.createdAt)
         case .screenshot(let s): Brain.deleteScreenshot(id: s.id, createdAt: s.createdAt)
-        case .meeting(let m): Brain.deleteMeeting(id: m.id, startedAt: m.startedAt)
+        case .meeting(let m):
+            Brain.deleteMeeting(id: m.id, startedAt: m.startedAt)
+            TasksStore.shared.refresh()
         case .recording(let r): Brain.deleteRecording(id: r.id, createdAt: r.createdAt)
         case .dictation: break
         }
@@ -67,7 +69,7 @@ enum CaptureLifecycle {
         let all = try Database.shared.read { try CaptureItem.fetchAll($0) }
         for item in all { try delete(item) }
         try Database.shared.write { db in
-            try db.execute(sql: "DELETE FROM searchClick; DELETE FROM captureTheme;")
+            try db.execute(sql: "DELETE FROM searchClick; DELETE FROM captureTheme; DELETE FROM task WHERE source = 'meeting' AND archived = 1;")
         }
     }
 }

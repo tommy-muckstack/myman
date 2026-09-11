@@ -71,6 +71,8 @@ enum TaskExtractor {
 
     /// Extract and store tasks. Fire-and-forget; posts a toast when found.
     static func run(text: String, source: Source) {
+        // Meetings use the evidence-checked notes pipeline exclusively.
+        guard source != .meeting else { return }
         guard text.count >= source.minChars else { return }
         if source == .dictation {
             let lowered = text.lowercased()

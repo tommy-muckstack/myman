@@ -104,6 +104,7 @@ enum MM {
         static let radiusSmall: CGFloat = 8
         static let spacing: CGFloat = 12
         static let panelWidth: CGFloat = 620
+        static let settingsContentHeight: CGFloat = 440
     }
 
     // MARK: Motion — named springs; every state change animates with one of these

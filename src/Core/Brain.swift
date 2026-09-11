@@ -123,28 +123,38 @@ enum Brain {
                             endedAt: Date?, summary: String, transcript: String) {
         queue.async {
             guard let current = try? Database.shared.read({ try Meeting.fetchOne($0, key: id) }), current.transcript == transcript, current.summary == summary, current.title == title else { return }
-            // A meeting-length recording with almost no words means the ASR
-            // mostly failed. The file stays (deleting a real meeting is
-            // worse), but a machine-visible flag tells downstream readers not
-            // to treat it as a faithful record.
-            let lowContent = !transcript.isEmpty
-                && transcript.split(whereSeparator: \.isWhitespace).count < 100
-            var content = """
-            ---
-            id: \(id)
-            started: \(iso(startedAt))
-            ended: \(endedAt.map(iso) ?? "")
-            participants:
-            \(yamlList(speakers(in: transcript)))\(lowContent ? "\nlow_content: true" : "")
-            ---
-
-            # \(title)
-
-            """
-            if !summary.isEmpty { content += "\(summary)\n\n" }
-            if !transcript.isEmpty { content += "## Transcript\n\n\(transcript)\n" }
+            let content = meetingMarkdown(current)
             write(content, to: "meetings/\(day(startedAt))-\(id.prefix(8)).md")
         }
+    }
+
+    static func meetingMarkdown(_ meeting: Meeting) -> String {
+        let participants = speakers(in: meeting.transcript).map { label in
+            let name = label == "You" ? (meeting.ownerName.isEmpty ? NSFullUserName() : meeting.ownerName) : label
+            let matches = meeting.participants.filter {
+                $0.name == name || ($0.name.split(separator: " ").first.map(String.init) == name)
+                    || (label == "You" && $0.isOwner)
+            }
+            guard matches.count == 1, let person = matches.first else { return name }
+            return person.name + (person.email.map { " <\($0)>" } ?? "")
+        }
+        let lowContent = !meeting.transcript.isEmpty && meeting.transcript.split(whereSeparator: \.isWhitespace).count < 100
+        var content = """
+        ---
+        id: \(meeting.id)
+        kind: \(meeting.captureKind.rawValue)
+        started: \(iso(meeting.startedAt))
+        ended: \(meeting.endedAt.map(iso) ?? "")
+        participants:
+        \(yamlList(participants))\(lowContent ? "\nlow_content: true" : "")
+        ---
+
+        # \(meeting.title)
+
+        """
+        if !meeting.summary.isEmpty { content += "\(meeting.summary)\n\n" }
+        if !meeting.transcript.isEmpty { content += "## Transcript\n\n\(meeting.transcript)\n" }
+        return content
     }
 
     /// Who spoke, in first-appearance order, read back out of the transcript
@@ -173,7 +183,7 @@ enum Brain {
     /// A YAML block sequence, or `[]` when there is nothing to list.
     private static func yamlList(_ items: [String]) -> String {
         guard !items.isEmpty else { return "  []" }
-        return items.map { "  - \($0.replacingOccurrences(of: "\"", with: "'"))" }
+        return items.map { "  - " + String(decoding: (try? JSONEncoder().encode($0)) ?? Data(), as: UTF8.self) }
             .joined(separator: "\n")
     }
 
