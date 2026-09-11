@@ -18,10 +18,11 @@ final class MeetingTranscriptTests: XCTestCase {
             MeetingTurn(start: 493, end: 497, speaker: "You", text: "Four to six engineers."),
         ]
         let merged = MeetingController.mergeConsecutive(turns)
-        XCTAssertEqual(merged.count, 1)
-        XCTAssertEqual(merged[0].text, "You'd have a PM. A designer. Four to six engineers.")
+        XCTAssertEqual(merged.count, 2)
+        XCTAssertEqual(merged[0].text, "You'd have a PM. A designer.")
+        XCTAssertEqual(merged[1].text, "Four to six engineers.")
         XCTAssertEqual(merged[0].start, 486)
-        XCTAssertEqual(merged[0].end, 497)
+        XCTAssertEqual(merged[0].end, 490)
     }
 
     func testDifferentSpeakersAreNeverMerged() {
@@ -348,14 +349,14 @@ final class MeetingDiagnosisFixTests: XCTestCase {
         XCTAssertFalse(index.supports(owner: "Chris", timestamp: "4:32"))
     }
 
-    func testAnEmptyOwnerNeedsOnlyARealTimestamp() {
+    func testAnEmptyOwnerCannotSupportAttribution() {
         let index = TranscriptIndex(transcript: transcript)
-        XCTAssertTrue(index.supports(owner: "", timestamp: "0:04"))
+        XCTAssertFalse(index.supports(owner: "", timestamp: "0:04"))
     }
 
-    func testTheOldTwoBlockFormatSkipsValidation() {
+    func testTheOldTwoBlockFormatCannotSupportTimestampClaims() {
         let index = TranscriptIndex(transcript: "You:\nHello there.\n\nSpeaker 2:\nHi.")
-        XCTAssertTrue(index.supports(owner: "Anyone", timestamp: "9:99"))
+        XCTAssertFalse(index.supports(owner: "Anyone", timestamp: "9:99"))
     }
 
     // MARK: Group-call speaker folding

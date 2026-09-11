@@ -11,6 +11,9 @@ struct TaskItem: Identifiable, Equatable, Codable, FetchableRecord, PersistableR
     var completedAt: Date?
     var notes: String = ""
     var dueDate: Date?
+    var archived: Bool = false
+    var sourceMeetingID: String?
+    var sourceActionKey: String?
 }
 
 @MainActor
@@ -26,7 +29,7 @@ final class TasksStore: ObservableObject {
     func refresh() {
         openTasks = (try? Database.shared.read { db in
             try TaskItem
-                .filter(Column("done") == false)
+                .filter(Column("done") == false && Column("archived") == false)
                 .order(Column("createdAt").desc)
                 .limit(30)
                 .fetchAll(db)
@@ -36,7 +39,7 @@ final class TasksStore: ObservableObject {
 
     private func syncBrain() {
         let done = (try? Database.shared.read { db in
-            try TaskItem.filter(Column("done") == true)
+            try TaskItem.filter(Column("done") == true && Column("archived") == false)
                 .order(Column("completedAt").desc).limit(100).fetchAll(db)
         }) ?? []
         Brain.syncTasks(
@@ -49,14 +52,18 @@ final class TasksStore: ObservableObject {
     /// Returns how many were actually added.
     @discardableResult
     func addExtracted(_ titles: [String], source: String) -> Int {
-        let existing = Set(openTasks.map { Self.normalize($0.title) })
+        guard source != "meeting" else { return 0 }
+        var existing = Set(((try? Database.shared.read { try TaskItem.filter(Column("done") == false && Column("archived") == false).fetchAll($0) }) ?? []).map { Self.normalize($0.title) })
         var added = 0
         for title in titles {
-            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let raw = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let quoted = raw.hasPrefix("\"") || raw.hasPrefix("“")
+            guard let trimmed = quoted ? TaskHygiene.cleanQuotedTask(raw) : raw else { continue }
             guard trimmed.count > 3, !existing.contains(Self.normalize(trimmed)) else { continue }
             let task = TaskItem(id: UUID().uuidString, title: trimmed, source: source,
                                 done: false, createdAt: Date(), completedAt: nil)
-            try? Database.shared.write { try task.insert($0) }
+            do { try Database.shared.write { try task.insert($0) } } catch { continue }
+            existing.insert(Self.normalize(trimmed))
             Analytics.track("task_created", ["source": source])
             added += 1
         }

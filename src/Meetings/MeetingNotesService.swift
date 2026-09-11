@@ -12,19 +12,17 @@ final class MeetingNotesService: ObservableObject {
     @Published private(set) var stages: [String: String] = [:]
     private struct Job {
         let token: UUID
-        let transcript: String
+        let input: String
         let task: Task<String, Never>
     }
     private var jobs: [String: Job] = [:]
     private var tail: Task<String, Never>?
     private let database: DatabaseQueue?
-    private let generate: Generate
+    private let generate: Generate?
     private var db: DatabaseQueue { database ?? Database.shared }
 
     init(database: DatabaseQueue? = nil,
-         generate: @escaping Generate = { text, date, progress in
-             await MeetingSummarizer.summarize(text, meetingDate: date, progress: progress)
-         }) {
+         generate: Generate? = nil) {
         self.database = database
         self.generate = generate
     }
@@ -49,7 +47,8 @@ final class MeetingNotesService: ObservableObject {
     private func job(for id: String) -> Task<String, Never>? {
         guard let meeting = try? db.read({ try Meeting.fetchOne($0, key: id) }),
               meeting.summary.isEmpty, !meeting.transcript.isEmpty else { return nil }
-        if let current = jobs[id], current.transcript == meeting.transcript { return current.task }
+        let input = [meeting.transcript, meeting.kind, meeting.ownerName, meeting.participantsJSON].joined(separator: "\u{0}")
+        if let current = jobs[id], current.input == input { return current.task }
         cancel(meetingID: id)
         let token = UUID()
         let previous = tail
@@ -66,23 +65,35 @@ final class MeetingNotesService: ObservableObject {
             _ = await previous?.value
             guard !Task.isCancelled, isCurrent(meeting) else { return "" }
             queueTimer.finish("notes_queue")
-            let generated = await generate(meeting.transcript, meeting.startedAt) { [weak self] stage in
+            let progress: Progress = { [weak self] stage in
                 await self?.setStage(stage, id: id, token: token)
             }
+            let analysis: MeetingAnalysis
+            if let generate {
+                analysis = MeetingAnalysis(markdown: await generate(meeting.transcript, meeting.startedAt, progress))
+            } else {
+                analysis = await GroundedMeetingNotes.generate(meeting, progress: progress)
+            }
+            let generated = analysis.markdown
             guard !Task.isCancelled, !generated.isEmpty else { return "" }
             do {
                 let saved: Meeting? = try await db.write { db in
                     // Field-only, conditional update: never overwrite edits,
                     // resurrect a deletion, or save notes for an old transcript.
                     try db.execute(sql: """
-                        UPDATE meeting SET summary = ?
+                        UPDATE meeting SET summary = ?, analysisJSON = ?
                         WHERE id = ? AND summary = '' AND transcript = ?
-                        """, arguments: [generated, id, meeting.transcript])
+                            AND kind = ? AND ownerName = ? AND participantsJSON = ?
+                        """, arguments: [generated, String(decoding: try JSONEncoder().encode(analysis), as: UTF8.self), id, meeting.transcript,
+                                          meeting.kind, meeting.ownerName, meeting.participantsJSON])
                     guard db.changesCount == 1 else { return nil }
+                    try TaskHygiene.store(analysis.actions, meeting: meeting, in: db)
+                    try MeetingVocabulary.record(meeting, in: db)
                     return try Meeting.fetchOne(db, key: id)
                 }
                 guard let saved else { return "" }
                 if database == nil {
+                    TasksStore.shared.refresh()
                     Brain.syncMeeting(id: saved.id, title: saved.title,
                                       startedAt: saved.startedAt, endedAt: saved.endedAt,
                                       summary: saved.summary, transcript: saved.transcript)
@@ -93,7 +104,7 @@ final class MeetingNotesService: ObservableObject {
                 return ""
             }
         }
-        jobs[id] = Job(token: token, transcript: meeting.transcript, task: task)
+        jobs[id] = Job(token: token, input: input, task: task)
         tail = task
         return task
     }
@@ -101,6 +112,8 @@ final class MeetingNotesService: ObservableObject {
     private func isCurrent(_ meeting: Meeting) -> Bool {
         guard let current = try? db.read({ try Meeting.fetchOne($0, key: meeting.id) }) else { return false }
         return current.summary.isEmpty && current.transcript == meeting.transcript
+            && current.kind == meeting.kind && current.ownerName == meeting.ownerName
+            && current.participantsJSON == meeting.participantsJSON
     }
 
     private func setStage(_ stage: String, id: String, token: UUID) {
