@@ -1,6 +1,20 @@
 import AppKit
 import SwiftUI
 
+struct CustomBackdropPicker: View {
+    @ObservedObject var model: EditorModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing) {
+            ColorPicker("Background color", selection: Binding(
+                get: { Color(nsColor: model.customBackdropColor) },
+                set: { model.customBackdropColor = NSColor($0); model.backdrop = .custom }
+            ), supportsOpacity: false).font(MM.Fonts.body).clickable()
+            Text("Your color is saved for future screenshots.")
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+        }
+    }
+}
+
 enum EditorTool: String, CaseIterable, Identifiable {
     case select, arrow, box, highlight, text, pixelate, crop, ocr
     var id: String { rawValue }
@@ -58,6 +72,7 @@ struct EditorView: View {
     /// value — opening a group closes whichever other one was open.
     private enum ToolbarGroup { case draw, backdrop, color }
     @State private var expandedGroup: ToolbarGroup?
+    @State private var showCustomBackdrop = false
     /// What the collapsed draw chip shows while a non-draw tool is active.
     @State private var lastDrawTool: EditorTool = .arrow
     private static let drawTools: [EditorTool] = [.arrow, .box, .highlight, .text]
@@ -376,10 +391,19 @@ struct EditorView: View {
     /// Backdrop chips collapse to the current backdrop's swatch.
     @ViewBuilder private var backdropGroup: some View {
         if expandedGroup == .backdrop {
-            ForEach(BackdropStyle.allCases) { style in
+            ForEach(BackdropStyle.allCases.filter { $0 != .custom }) { style in
                 backdropChip(style)
                     .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
+            Button { model.backdrop = .custom; showCustomBackdrop = true } label: {
+                backdropSwatch(.custom)
+                    .overlay(Image(systemName: "plus").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textPrimary))
+                    .overlay(Circle().strokeBorder(model.backdrop == .custom ? MM.Colors.textPrimary : .clear, lineWidth: 1.5).padding(-3))
+                    .clickable(minSize: 24)
+            }.buttonStyle(.plain).accessibilityLabel("Custom background color").help("Custom background color — saved for next time")
+                .popover(isPresented: $showCustomBackdrop) {
+                    CustomBackdropPicker(model: model).padding(MM.Layout.padding)
+                }
         } else {
             groupChip(help: "Backdrop — click to choose",
                       action: { expand(.backdrop) }) {
@@ -473,7 +497,7 @@ struct EditorView: View {
     /// group chip.
     private func backdropSwatch(_ style: BackdropStyle) -> some View {
         Group {
-            if let colors = style.colors {
+            if let colors = style == .custom ? [model.customBackdropColor, model.customBackdropColor] : style.colors {
                 Circle().fill(
                     LinearGradient(
                         colors: colors.map { Color(nsColor: $0) },
@@ -631,7 +655,7 @@ struct EditorView: View {
 
     private var backdropPreview: some View {
         Group {
-            if let colors = model.backdrop.colors {
+            if let colors = model.backdropColors {
                 RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
                     .fill(LinearGradient(
                         colors: colors.map { Color(nsColor: $0) },

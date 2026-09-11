@@ -24,17 +24,19 @@ struct HighlightedCaptureText: View {
 struct CaptureThumbnail: View {
     let path: String
     var revision: Int = 0
+    var width: CGFloat = 48
+    var height: CGFloat = 38
     @State private var image: NSImage?
     var body: some View {
         Group {
-            if let image { Image(nsImage: image).resizable().scaledToFill() }
+            if let image { Image(nsImage: image).resizable().scaledToFit() }
             else { Image(systemName: "photo").foregroundStyle(MM.Colors.textTertiary) }
         }
-        .frame(width: 48, height: 38)
+        .frame(width: width, height: height)
         .background(MM.Colors.surface)
         .clipShape(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
         .task(id: "\(path):\(revision)") {
-            let loaded = await Task.detached(priority: .utility) { CaptureThumbnailCache.load(path: path) }.value
+            let loaded = await Task.detached(priority: .utility) { CaptureThumbnailCache.load(path: path, size: max(100, Int(width * 2))) }.value
             guard !Task.isCancelled else { return }
             image = loaded
         }

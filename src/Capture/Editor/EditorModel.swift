@@ -31,12 +31,13 @@ enum BackdropStyle: String, CaseIterable, Identifiable {
     case ocean = "Ocean"
     case meadow = "Meadow"
     case slate = "Slate"
+    case custom = "Custom"
 
     var id: String { rawValue }
 
     var colors: [NSColor]? {
         switch self {
-        case .none: return nil
+        case .none, .custom: return nil
         case .dusk: return [NSColor(red: 0.98, green: 0.62, blue: 0.42, alpha: 1),
                             NSColor(red: 0.58, green: 0.32, blue: 0.62, alpha: 1)]
         case .ocean: return [NSColor(red: 0.30, green: 0.62, blue: 0.94, alpha: 1),
@@ -53,6 +54,16 @@ final class EditorModel: ObservableObject {
     @Published var image: NSImage
     @Published var annotations: [Annotation] = []
     @Published var backdrop: BackdropStyle = .none
+    @Published var customBackdropColor: NSColor {
+        didSet {
+            guard let color = customBackdropColor.usingColorSpace(.sRGB) else { return }
+            preferences.set([Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent)], forKey: "screenshotCustomBackdropRGB")
+        }
+    }
+    private let preferences: UserDefaults
+    var backdropColors: [NSColor]? {
+        backdrop == .custom ? [customBackdropColor, customBackdropColor] : backdrop.colors
+    }
     @Published var isRemovingBackground = false
     @Published var backgroundRemoved = false
     /// Rounded-corner radius applied to the image itself (0 = square).
@@ -87,9 +98,14 @@ final class EditorModel: ObservableObject {
         backdrop == .none ? cornerRadius : max(cornerRadius, 12)
     }
 
-    init(image: NSImage, fileURL: URL) {
+    init(image: NSImage, fileURL: URL, preferences: UserDefaults = .standard) {
         self.image = image
         self.fileURL = fileURL
+        self.preferences = preferences
+        if let rgb = preferences.array(forKey: "screenshotCustomBackdropRGB") as? [Double], rgb.count == 3,
+           rgb.allSatisfy({ $0.isFinite && (0...1).contains($0) }) {
+            customBackdropColor = NSColor(srgbRed: rgb[0], green: rgb[1], blue: rgb[2], alpha: 1)
+        } else { customBackdropColor = BackdropStyle.ocean.colors![0] }
     }
 
     var imageSize: CGSize { image.size }
@@ -421,12 +437,23 @@ final class EditorModel: ObservableObject {
         let pad = backdrop == .none ? 0 : max(32, contentSize.width * 0.06)
         let canvasSize = CGSize(width: contentSize.width + pad * 2, height: contentSize.height + pad * 2)
 
-        let result = NSImage(size: canvasSize)
-        result.lockFocusFlipped(false)
-        defer { result.unlockFocus() }
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
+        // A defined export color space keeps picked sRGB colors stable across
+        // displays. Preserve the capture's pixel density rather than lockFocus's
+        // current-screen backing scale.
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: Int(ceil(canvasSize.width * pixelScale)),
+                                  height: Int(ceil(canvasSize.height * pixelScale)), bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
+        ctx.scaleBy(x: pixelScale, y: pixelScale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        defer { NSGraphicsContext.restoreGraphicsState() }
 
-        if let colors = backdrop.colors {
+        if backdrop == .custom {
+            customBackdropColor.setFill()
+            NSRect(origin: .zero, size: canvasSize).fill()
+        } else if let colors = backdropColors {
             let gradient = NSGradient(colors: colors)
             gradient?.draw(in: NSRect(origin: .zero, size: canvasSize), angle: -60)
         } else if effectiveCornerRadius > 0, !backgroundRemoved {
@@ -508,8 +535,8 @@ final class EditorModel: ObservableObject {
             }
         }
 
-        _ = pixelScale // full-res render comes via draw(in:) of the original reps
-        return result
+        guard let output = ctx.makeImage() else { return image }
+        return NSImage(cgImage: output, size: canvasSize)
     }
 
     private func drawArrow(from: CGPoint, to: CGPoint, in ctx: CGContext) {

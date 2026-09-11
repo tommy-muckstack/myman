@@ -301,16 +301,7 @@ struct LauncherView: View {
                 .opacity(hoveredRowID == hit.id || copiedRowID == hit.id ? 0 : 1)
 
             case .screenshot(let shot):
-                IconView(icon: .screenshot, size: 16, color: MM.Colors.textSecondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Screenshot")
-                        .font(MM.Fonts.body)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                    Text(shot.ocrText.split(separator: "\n").first.map(String.init) ?? "")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textSecondary)
-                        .lineLimit(1)
-                }
+                RecentScreenshotContent(shot: shot)
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 2) {
                     kindBadge(hit)
