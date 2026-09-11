@@ -15,7 +15,7 @@ set -euo pipefail
 #   (same Apple account/team; notary creds aren't app-specific).
 #   Sparkle EdDSA key from Keychain account "myman" (NOT Mumbls' default key).
 #   Vercel Blob token from .vercel/.env or .env.local.
-#   Prereqs: `create-dmg`, `vercel` CLI, notarytool profile.
+#   Prereqs: `create-dmg`, Node/npm, notarytool profile.
 #
 # CI MODE (auto-detected when env vars are present):
 #   CERT_P12_BASE64 / CERT_PASSWORD / APPLE_ID / APPLE_TEAM_ID /
@@ -385,13 +385,13 @@ APPCAST
 
     if [[ -n "${BLOB_READ_WRITE_TOKEN:-}" ]]; then
         echo "==> Uploading to Vercel Blob..."
-        vercel blob put "$DMG_PATH" --pathname "$VERSIONED_DMG_NAME" \
+        npx --yes vercel@51.6.1 blob put "$DMG_PATH" --pathname "$VERSIONED_DMG_NAME" \
             --access public --allow-overwrite true --content-type application/x-apple-diskimage \
             --cache-control-max-age 31536000
-        vercel blob put "$DMG_PATH" --pathname "$SLUG.dmg" \
+        npx --yes vercel@51.6.1 blob put "$DMG_PATH" --pathname "$SLUG.dmg" \
             --access public --allow-overwrite true --content-type application/x-apple-diskimage \
             --cache-control-max-age 300
-        vercel blob put "$APPCAST_PATH" --pathname "$SLUG-appcast.xml" \
+        npx --yes vercel@51.6.1 blob put "$APPCAST_PATH" --pathname "$SLUG-appcast.xml" \
             --access public --allow-overwrite true --content-type application/rss+xml \
             --cache-control-max-age 300
     else
