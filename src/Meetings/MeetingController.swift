@@ -1671,7 +1671,7 @@ struct MeetingPillView: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Use My Man")
-                        .font(MM.Fonts.outfit(16, .semiBold))
+                        .font(MM.Fonts.gellix(16, .semiBold))
                         .foregroundStyle(MM.Colors.textPrimary)
                     Text("Listening — nothing is saved unless you start")
                         .font(MM.Fonts.metadata)
@@ -1808,7 +1808,7 @@ struct MeetingPillView: View {
         }
     }
 
-    /// Fixed-width timer: Outfit has no monospaced digits, so free-width
+    /// Fixed-width timer: use monospaced digits so free-width
     /// text changed size every second — and a size change means a window
     /// re-layout, which reads as flicker. The frame pins it.
     private func timerText(since start: Date) -> some View {

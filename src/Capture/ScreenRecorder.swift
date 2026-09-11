@@ -975,7 +975,7 @@ private struct RecordCountdownView: View {
                 .font(MM.Fonts.secondary)
                 .foregroundStyle(MM.Colors.textSecondary)
             Text("\(count)")
-                .font(MM.Fonts.outfit(22, .bold))
+                .font(MM.Fonts.gellix(22, .bold))
                 .foregroundStyle(MM.Colors.textPrimary)
                 .contentTransition(.numericText())
                 .frame(width: 28)

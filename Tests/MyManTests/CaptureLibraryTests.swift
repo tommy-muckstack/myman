@@ -227,9 +227,9 @@ final class CaptureLibraryTests: XCTestCase {
         let queue = try database()
         let image = NSImage(size: NSSize(width: 800, height: 500), flipped: true) { bounds in
             NSColor.windowBackgroundColor.setFill(); bounds.fill()
-            ("HuddleUp registration" as NSString).draw(at: NSPoint(x: 70, y: 70), withAttributes: [.font: NSFont(name: "Outfit-Medium", size: 32)!, .foregroundColor: NSColor.labelColor])
-            ("$49 per month" as NSString).draw(at: NSPoint(x: 70, y: 160), withAttributes: [.font: NSFont(name: "Outfit-Regular", size: 28)!, .foregroundColor: NSColor.labelColor])
-            ("https://huddleup.example/pricing" as NSString).draw(at: NSPoint(x: 70, y: 250), withAttributes: [.font: NSFont(name: "Outfit-Regular", size: 22)!, .foregroundColor: NSColor.labelColor])
+            ("HuddleUp registration" as NSString).draw(at: NSPoint(x: 70, y: 70), withAttributes: [.font: NSFont(name: "Gellix-Medium", size: 32)!, .foregroundColor: NSColor.labelColor])
+            ("$49 per month" as NSString).draw(at: NSPoint(x: 70, y: 160), withAttributes: [.font: NSFont(name: "Gellix-Regular", size: 28)!, .foregroundColor: NSColor.labelColor])
+            ("https://huddleup.example/pricing" as NSString).draw(at: NSPoint(x: 70, y: 250), withAttributes: [.font: NSFont(name: "Gellix-Regular", size: 22)!, .foregroundColor: NSColor.labelColor])
             return true
         }
         let source = URL(fileURLWithPath: "/private/tmp/man-preview-source.png")

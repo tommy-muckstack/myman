@@ -13,7 +13,11 @@ import FoundationModels
 final class MeetingDocumentController {
     static let shared = MeetingDocumentController()
     private var windows: [String: NSWindow] = [:]
-    func close(id: String) { let window = windows.removeValue(forKey: id); window?.contentView = nil; window?.close() }
+    func close(id: String) {
+        let window = windows.removeValue(forKey: id)
+        (window as? DocumentWindow)?.autosave?.discardPendingChanges()
+        window?.contentView = nil; window?.close()
+    }
 
     func open(meetingID: String) {
         if let existing = windows[meetingID] {
@@ -25,7 +29,7 @@ final class MeetingDocumentController {
             try Meeting.fetchOne(db, key: meetingID)
         }) else { return }
 
-        let window = NSWindow(
+        let window = DocumentWindow(
             contentRect: .zero,
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -35,9 +39,12 @@ final class MeetingDocumentController {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 680, height: 640))
+        window.setContentSize(MM.Document.windowSize)
+        window.minSize = NSSize(width: 560, height: 420)
+        let autosave = DocumentAutosave()
+        window.autosave = autosave
         window.center()
-        window.contentView = NSHostingView(rootView: MeetingDocumentView(meeting: meeting))
+        window.contentView = NSHostingView(rootView: MeetingDocumentView(meeting: meeting, autosave: autosave))
         windows[meetingID] = window
         Analytics.track("meeting_document_opened")
         NSApp.activate(ignoringOtherApps: true)
@@ -145,18 +152,24 @@ struct MeetingDocumentView: View {
     @State private var slidePaths: [String]
     @State private var showTranscript = false
     @State private var isSummarizing = false
-    @State private var saveTask: Task<Void, Never>?
-    @State private var titleSaveTask: Task<Void, Never>?
-    @State private var saveState: SaveState = .idle
-    @State private var linkCopied = false
+    @StateObject private var autosave: DocumentAutosave
+    @StateObject private var editor = RichEditorSession()
+    @State private var hasEditedNotes = false
+    @State private var showRelated = false
+    @State private var showSlides = false
+    private let database: DatabaseQueue?
+    private let automaticallySummarize: Bool
+    private var db: DatabaseQueue { database ?? Database.shared }
     @Namespace private var tabNamespace
-    @State private var headerHovering = false
     /// Transcript tab defaults to the formatted reading view; this flips to
     /// the raw text editor for corrections.
     @State private var editingTranscript = false
 
-    init(meeting: Meeting) {
+    init(meeting: Meeting, autosave: DocumentAutosave? = nil, database: DatabaseQueue? = nil, automaticallySummarize: Bool = true) {
         self.meeting = meeting
+        self.database = database
+        self.automaticallySummarize = automaticallySummarize
+        _autosave = StateObject(wrappedValue: autosave ?? DocumentAutosave())
         _title = State(initialValue: meeting.title)
         _summary = State(initialValue: meeting.summary)
         _transcript = State(initialValue: meeting.transcript)
@@ -166,25 +179,31 @@ struct MeetingDocumentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if !slidePaths.isEmpty {
-                slideCarousel
-            }
-            Divider().overlay(MM.Colors.border)
+            if showSlides, !slidePaths.isEmpty { slideCarousel }
             if showTranscript {
                 transcriptEditor
-            } else if summary.isEmpty {
-                summaryEmptyState
+                HStack { Spacer(); SaveIndicator(state: autosave.state) }
+                    .padding(.horizontal, MM.Document.margin).padding(.vertical, MM.Layout.spacing)
             } else {
-                RichMarkdownEditor(markdown: $summary, firstLineIsTitle: false)
-                    .onChange(of: summary) { _, newValue in
-                        debouncedSave(newValue)
-                    }
+                if isSummarizing {
+                    HStack(spacing: MM.Layout.spacing) {
+                        ProgressView().controlSize(.mini)
+                        Text("Preparing notes… You can start writing here.").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                    }.padding(.horizontal, MM.Document.margin)
+                }
+                RichMarkdownEditor(markdown: Binding(get: { summary }, set: { text in
+                    summary = text; hasEditedNotes = true; debouncedSave(text)
+                }), firstLineIsTitle: false, session: editor,
+                                   placeholder: "Write your notes…")
+                DocumentFooter(session: editor, text: summary, autosave: autosave)
             }
+            if showRelated { CaptureRelatedSection(itemID: "meeting-" + meeting.id).padding(MM.Layout.padding) }
         }
         .background(MM.Colors.background)
         .frame(minWidth: 560, minHeight: 420)
-        .safeAreaInset(edge: .bottom) { CaptureRelatedSection(itemID: "meeting-" + meeting.id).padding(MM.Layout.padding).background(MM.Colors.background) }
-        .onAppear(perform: generateSummaryIfMissing)
+        .onAppear { if automaticallySummarize { generateSummaryIfMissing() } }
+        .onChange(of: showTranscript) { _, _ in autosave.flush() }
+        .onDisappear { autosave.flush() }
     }
 
     /// One centralized rename spot: every speaker in the transcript, as an
@@ -240,26 +259,9 @@ struct MeetingDocumentView: View {
     /// exists while the Summary tab is showing, so a rename made from the
     /// Transcript tab must not rely on the debounced per-field saves.
     private func saveEverything() {
-        saveTask?.cancel()
-        saveState = .pending
-        let id = meeting.id
-        let transcript = transcript
-        let summary = summary
-        saveTask = Task { @MainActor in
-            try? await Database.shared.write { db in
-                try db.execute(sql: "UPDATE meeting SET transcript = ?, summary = ? WHERE id = ?",
-                               arguments: [transcript, summary, id])
-            }
-            People.learnSpeakerNames(from: transcript)
-            Brain.syncMeeting(id: id, title: title,
-                              startedAt: meeting.startedAt, endedAt: meeting.endedAt,
-                              summary: summary, transcript: transcript)
-            saveState = .saved
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(2))
-                if saveState == .saved { saveState = .idle }
-            }
-        }
+        debouncedSaveTranscript(transcript)
+        debouncedSave(summary)
+        autosave.flush()
     }
 
     private var transcriptEditor: some View {
@@ -289,15 +291,15 @@ struct MeetingDocumentView: View {
             if let turns, !editingTranscript {
                 formattedTranscript(turns)
             } else {
-                TextEditor(text: $transcript)
+                TextEditor(text: Binding(get: { transcript }, set: { text in
+                    transcript = text; debouncedSaveTranscript(text)
+                }))
                     .font(MM.Fonts.body)
                     .foregroundStyle(MM.Colors.textPrimary)
                     .scrollContentBackground(.hidden)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 16)
-                    .onChange(of: transcript) { _, newValue in
-                        debouncedSaveTranscript(newValue)
-                    }
+
             }
         }
     }
@@ -364,7 +366,7 @@ struct MeetingDocumentView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(turn.speaker)
-                                .font(MM.Fonts.outfit(13, .semiBold))
+                                .font(MM.Fonts.gellix(13, .semiBold))
                                 .foregroundStyle(colors[turn.speaker] ?? MM.Colors.textPrimary)
                             Text(turn.time)
                                 .font(MM.Fonts.metadata)
@@ -426,180 +428,96 @@ struct MeetingDocumentView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("Untitled meeting", text: $title)
-                .font(MM.Fonts.outfit(24, .semiBold))
-                .foregroundStyle(MM.Colors.textPrimary)
-                .textFieldStyle(.plain)
-                .onChange(of: title) { _, newValue in
-                    debouncedSaveTitle(newValue)
-                }
+        VStack(alignment: .leading, spacing: MM.Layout.spacing) {
             HStack(spacing: MM.Layout.spacing) {
                 Text(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textTertiary)
-                if let ended = meeting.endedAt {
-                    Text("\(Int(ended.timeIntervalSince(meeting.startedAt) / 60)) min")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textTertiary)
-                }
-                copyLinkButton
-                    .opacity(headerHovering ? 1 : 0)
-                    .animation(MM.Motion.gentle, value: headerHovering)
+                if let ended = meeting.endedAt { Text("\(Int(ended.timeIntervalSince(meeting.startedAt) / 60)) min") }
                 Spacer()
-                SaveIndicator(state: saveState)
-                HStack(spacing: 3) {
-                    tab("Summary", active: !showTranscript) {
-                        withAnimation(MM.Motion.silky) { showTranscript = false }
-                    }
-                    tab("Transcript", active: showTranscript) {
-                        withAnimation(MM.Motion.silky) { showTranscript = true }
-                    }
+                if !slidePaths.isEmpty {
+                    Button { showSlides.toggle() } label: { Label("\(slidePaths.count)", systemImage: "photo.on.rectangle").clickable(minSize: 28) }
+                        .buttonStyle(.plain).help("Show captured slides")
                 }
-                .padding(3)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(MM.Colors.surface)
-                )
+                Button { showRelated.toggle() } label: { Image(systemName: "square.stack.3d.up").clickable(minSize: 28) }
+                    .buttonStyle(.plain).help("Related captures").accessibilityLabel("Related captures")
+                Menu {
+                    Button("Copy notes") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(MarkdownRich.plainText(summary), forType: .string)
+                    }
+                    Button("Copy Markdown") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(summary, forType: .string)
+                    }
+                    Button("Copy transcript") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(transcript, forType: .string)
+                    }
+                    Button("Copy file path") {
+                        autosave.flush()
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(Brain.meetingFilePath(id: meeting.id, startedAt: meeting.startedAt), forType: .string)
+                    }
+                } label: { Image(systemName: "ellipsis").clickable(minSize: 28) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Meeting actions").accessibilityLabel("Meeting actions")
             }
-            if !speakerLabels.isEmpty {
-                speakerLegend
-            }
+            .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            TextField("Untitled meeting", text: Binding(get: { title }, set: { text in
+                title = text; debouncedSaveTitle(text)
+            }), axis: .vertical)
+                .font(MM.Document.title)
+                .foregroundStyle(MM.Colors.textPrimary)
+                .textFieldStyle(.plain)
+            HStack(spacing: MM.Layout.paddingLarge) {
+                tab("Notes", active: !showTranscript) { showTranscript = false }
+                tab("Transcript", active: showTranscript) { showTranscript = true }
+                Spacer()
+                if autosave.state == .failed {
+                    Button("Retry save") { autosave.flush() }.buttonStyle(.plain).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.danger).clickable()
+                }
+            }.padding(.top, MM.Layout.spacing)
+            if showTranscript, !speakerLabels.isEmpty { speakerLegend }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 28)
-        .padding(.bottom, 14)
-        .contentShape(Rectangle())
-        .onHover { headerHovering = $0 }
-    }
-
-    private var copyLinkButton: some View {
-        Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(
-                Brain.meetingFilePath(id: meeting.id, startedAt: meeting.startedAt),
-                forType: .string)
-            linkCopied = true
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(2))
-                linkCopied = false
-            }
-        } label: {
-            HStack(spacing: 4) {
-                IconView(icon: .copy, size: 12,
-                         color: linkCopied ? .green : MM.Colors.textTertiary)
-                Text(linkCopied ? "Copied" : "Copy link")
-            }
-            .font(MM.Fonts.metadata)
-            .foregroundStyle(linkCopied ? .green : MM.Colors.textTertiary)
-            .clickable(minSize: 22)
-        }
-        .buttonStyle(.plain)
-        .help("Copy this meeting's file path — paste it to Claude or any agent")
+        .padding(.horizontal, MM.Document.margin)
+        .padding(.top, MM.Layout.paddingLarge)
+        .padding(.bottom, MM.Layout.spacing)
+        .frame(maxWidth: MM.Document.columnWidth + MM.Document.margin * 2)
+        .frame(maxWidth: .infinity)
     }
 
     private func tab(_ label: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(label)
-                .font(MM.Fonts.secondary)
-                .foregroundStyle(active ? MM.Colors.background : MM.Colors.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background {
-                    // One shared pill that SLIDES between tabs.
-                    if active {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(MM.Colors.textPrimary)
-                            .matchedGeometryEffect(id: "activeTab", in: tabNamespace)
-                    }
+            Text(label).font(MM.Fonts.secondary)
+                .foregroundStyle(active ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                .padding(.vertical, MM.Layout.spacing)
+                .overlay(alignment: .bottom) {
+                    if active { Capsule().fill(MM.Colors.textPrimary).frame(height: 2).matchedGeometryEffect(id: "activeTab", in: tabNamespace) }
                 }
-                .clickable(minSize: 24)
-        }
-        .buttonStyle(.plain)
+                .clickable(minSize: 28)
+        }.buttonStyle(.plain)
     }
 
-    private var summaryEmptyState: some View {
-        VStack(spacing: 8) {
-            if isSummarizing {
-                ProgressView().controlSize(.small)
-                Text("Writing your summary…")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textSecondary)
-            } else {
-                Text("No summary yet.")
-                    .font(MM.Fonts.body)
-                    .foregroundStyle(MM.Colors.textSecondary)
-                Text("Summaries are written on-device right after a meeting ends (macOS 26+). The transcript is always available.")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textTertiary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 360)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+    private func debouncedSave(_ text: String) { saveField("summary", text: text) }
+    private func debouncedSaveTitle(_ text: String) { saveField("title", text: text) }
+    private func debouncedSaveTranscript(_ text: String) { saveField("transcript", text: text) }
 
-    private func debouncedSave(_ text: String) {
-        saveTask?.cancel()
-        saveState = .pending
-        let id = meeting.id
-        saveTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
-            defer {
-                saveState = .saved
-                Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(2))
-                    if saveState == .saved { saveState = .idle }
-                }
+    private func saveField(_ field: String, text: String) {
+        guard ["title", "summary", "transcript"].contains(field) else { return }
+        autosave.submit(field) {
+            try db.write { db in
+                try db.execute(sql: "UPDATE meeting SET \(field) = ? WHERE id = ?", arguments: [text, meeting.id])
+                guard db.changesCount > 0 else { throw CocoaError(.fileNoSuchFile) }
             }
-            try? await Database.shared.write { db in
-                try db.execute(sql: "UPDATE meeting SET summary = ? WHERE id = ?",
-                               arguments: [text, id])
+            if database == nil {
+                if field == "transcript" { People.learnSpeakerNames(from: text) }
+                syncSavedMeeting()
             }
-            Brain.syncMeeting(id: id, title: title,
-                              startedAt: meeting.startedAt, endedAt: meeting.endedAt,
-                              summary: text, transcript: meeting.transcript)
         }
     }
 
-    private func debouncedSaveTitle(_ text: String) {
-        titleSaveTask?.cancel()
-        saveState = .pending
-        let id = meeting.id
-        titleSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.5))
-            guard !Task.isCancelled else { return }
-            try? await Database.shared.write { db in
-                try db.execute(sql: "UPDATE meeting SET title = ? WHERE id = ?",
-                               arguments: [text, id])
-            }
-            Brain.syncMeeting(id: id, title: text,
-                              startedAt: meeting.startedAt, endedAt: meeting.endedAt,
-                              summary: summary, transcript: meeting.transcript)
-            saveState = .saved
-        }
-    }
-
-    private func debouncedSaveTranscript(_ text: String) {
-        saveTask?.cancel()
-        saveState = .pending
-        let id = meeting.id
-        saveTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.7))
-            guard !Task.isCancelled else { return }
-            try? await Database.shared.write { db in
-                try db.execute(sql: "UPDATE meeting SET transcript = ? WHERE id = ?",
-                               arguments: [text, id])
-            }
-            // This only extracts explicit transcript speaker labels. It never
-            // mines arbitrary spoken text for names.
-            People.learnSpeakerNames(from: text)
-            Brain.syncMeeting(id: id, title: title,
-                              startedAt: meeting.startedAt, endedAt: meeting.endedAt,
-                              summary: summary, transcript: text)
-            saveState = .saved
-        }
+    private func syncSavedMeeting() {
+        guard let saved = try? db.read({ try Meeting.fetchOne($0, key: meeting.id) }) else { return }
+        Brain.syncMeeting(id: saved.id, title: saved.title, startedAt: saved.startedAt, endedAt: saved.endedAt,
+                          summary: saved.summary, transcript: saved.transcript)
     }
 
     private func removeSlide(_ path: String) {
@@ -620,20 +538,14 @@ struct MeetingDocumentView: View {
         guard summary.isEmpty, !meeting.transcript.isEmpty, !isSummarizing else { return }
         isSummarizing = true
         let transcript = meeting.transcript
-        let id = meeting.id
         Task { @MainActor in
             let generated = await MeetingSummarizer.summarize(
                 transcript, meetingDate: meeting.startedAt)
             isSummarizing = false
-            guard !generated.isEmpty else { return }
+            guard !generated.isEmpty, summary.isEmpty, !hasEditedNotes else { return }
             summary = generated
-            try? await Database.shared.write { db in
-                try db.execute(sql: "UPDATE meeting SET summary = ? WHERE id = ?",
-                               arguments: [generated, id])
-            }
-            Brain.syncMeeting(id: id, title: title,
-                              startedAt: meeting.startedAt, endedAt: meeting.endedAt,
-                              summary: generated, transcript: meeting.transcript)
+            debouncedSave(generated)
+            autosave.flush()
         }
     }
 }

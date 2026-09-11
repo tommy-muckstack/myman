@@ -46,34 +46,52 @@ enum MM {
         static let flame = Color(red: 0.910, green: 0.267, blue: 0.165)
     }
 
-    // MARK: Type — Outfit everywhere (the MuckStack family font); weight IS the hierarchy
+    // MARK: Type — Gellix, including its true italic faces
 
     enum Fonts {
         static func registerFonts() {
-            for weight in ["Light", "Regular", "Medium", "SemiBold", "Bold"] {
+            for weight in ["Light", "Regular", "Medium", "SemiBold", "LightItalic", "RegularItalic", "MediumItalic", "SemiBoldItalic"] {
                 guard let url = Bundle.module.url(
-                    forResource: "Fonts/Outfit-\(weight)", withExtension: "ttf")
-                    ?? Bundle.module.url(forResource: "Outfit-\(weight)", withExtension: "ttf")
+                    forResource: "Fonts/Gellix-\(weight)", withExtension: "ttf")
+                    ?? Bundle.module.url(forResource: "Gellix-\(weight)", withExtension: "ttf")
                 else { continue }
                 CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
             }
         }
 
-        static func outfit(_ size: CGFloat, _ weight: OutfitWeight = .regular) -> Font {
-            .custom("Outfit-\(weight.rawValue)", size: size)
+        static func gellix(_ size: CGFloat, _ weight: GellixWeight = .regular) -> Font {
+            .custom("Gellix-\(weight == .bold ? "SemiBold" : weight.rawValue)", size: size)
         }
 
-        enum OutfitWeight: String {
+        static func native(_ size: CGFloat, _ weight: GellixWeight = .regular, italic: Bool = false) -> NSFont {
+            let face = weight == .bold ? "SemiBold" : weight.rawValue
+            return NSFont(name: "Gellix-\(face)\(italic ? "-Italic" : "")", size: size)
+                ?? NSFont.systemFont(ofSize: size, weight: weight == .semiBold || weight == .bold ? .semibold : .regular)
+        }
+
+        enum GellixWeight: String {
             case light = "Light", regular = "Regular", medium = "Medium"
             case semiBold = "SemiBold", bold = "Bold"
         }
 
-        static let title = outfit(20, .medium)
-        static let body = outfit(15)
-        static let bodyInput = outfit(16)
-        static let secondary = outfit(13, .light)
-        static let metadata = outfit(11.5, .light)
-        static let hint = outfit(11, .light)
+        static let title = gellix(20, .medium)
+        static let body = gellix(15)
+        static let bodyInput = gellix(16)
+        static let secondary = gellix(13)
+        static let metadata = gellix(11.5)
+        static let hint = gellix(11)
+    }
+
+    enum Document {
+        static let columnWidth: CGFloat = 680
+        static let margin: CGFloat = 40
+        static let titleSize: CGFloat = 34
+        static let bodySize: CGFloat = 17
+        static let lineSpacing: CGFloat = 6
+        static let paragraphSpacing: CGFloat = 10
+        static let title = Fonts.gellix(titleSize, .semiBold)
+        static let body = Fonts.gellix(bodySize)
+        static let windowSize = NSSize(width: 820, height: 760)
     }
 
     // MARK: Layout

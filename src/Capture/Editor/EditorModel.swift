@@ -101,7 +101,7 @@ final class EditorModel: ObservableObject {
     var annotationFontSize: CGFloat { max(14, imageSize.width / 40) }
 
     private var annotationFont: NSFont {
-        NSFont(name: "Outfit-SemiBold", size: annotationFontSize)
+        NSFont(name: "Gellix-SemiBold", size: annotationFontSize)
             ?? NSFont.boldSystemFont(ofSize: annotationFontSize)
     }
 
@@ -496,7 +496,7 @@ final class EditorModel: ObservableObject {
 
             case .text(_, let string, let origin):
                 let attributes: [NSAttributedString.Key: Any] = [
-                    .font: NSFont(name: "Outfit-SemiBold", size: annotationFontSize)
+                    .font: NSFont(name: "Gellix-SemiBold", size: annotationFontSize)
                         ?? NSFont.boldSystemFont(ofSize: annotationFontSize),
                     .foregroundColor: annotationColor,
                 ]

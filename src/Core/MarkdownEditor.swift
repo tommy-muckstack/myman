@@ -90,7 +90,7 @@ final class MarkdownTextView: NSTextView {
         let source = string as NSString
 
         func font(_ size: CGFloat, _ weight: String) -> NSFont {
-            NSFont(name: "Outfit-\(weight)", size: size)
+            NSFont(name: "Gellix-\(weight)", size: size)
                 ?? NSFont.systemFont(ofSize: size, weight: weight == "Regular" ? .regular : .semibold)
         }
 
