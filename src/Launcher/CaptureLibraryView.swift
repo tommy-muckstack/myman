@@ -111,7 +111,7 @@ struct CaptureLibraryView: View {
     private var visibleThemes: [CaptureTheme] {
         guard !query.isEmpty else { return model.themes }
         let terms = CaptureText.words(CaptureQuery.resolve(query, filter: filter).text)
-        return model.themes.filter { theme in model.matchingThemeIDs.contains(theme.id) || terms.allSatisfy { theme.title.localizedCaseInsensitiveContains($0) } }
+        return model.themes.filter { theme in model.matchingThemeIDs.contains(theme.id) || terms.allSatisfy { (theme.title + " " + theme.description).localizedCaseInsensitiveContains($0) } }
     }
     var body: some View {
         VStack(spacing: 0) {
@@ -230,7 +230,10 @@ struct CaptureLibraryView: View {
             HStack(spacing: MM.Layout.spacing) {
                 Image(systemName: "square.stack").foregroundStyle(MM.Colors.accent).frame(width: 48)
                 VStack(alignment: .leading, spacing: 4) {
-                    HighlightedCaptureText(text: theme.title, terms: CaptureText.words(query)).font(MM.Fonts.body)
+                    HighlightedCaptureText(text: theme.title, terms: CaptureText.words(query)).font(MM.Fonts.body).lineLimit(2)
+                    if !theme.description.isEmpty {
+                        Text(theme.description).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary).lineLimit(1)
+                    }
                     Text("Theme · \(theme.typeCounts)")
                         .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                 }

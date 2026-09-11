@@ -109,7 +109,8 @@ enum BrainAgentExport {
             guard let latest = members.last?.capturedAt else { continue }
             let path = "themes/\(id).md"
             entries.append(Entry(path: path, kind: "themes", title: title, timestamp: iso(latest), pinned: pinned))
-            let body = "Saved MyMan Theme · \(members.count) items\n\n" + members.compactMap { item -> String? in
+            let description: String = theme["description"]
+            let body = (description.isEmpty ? "" : description + "\n\n") + "Saved MyMan Theme · \(members.count) items\n\n" + members.compactMap { item -> String? in
                 guard let source = itemPaths[item.id] else { return nil }
                 return "- \(iso(item.capturedAt)) · \(item.kind) · \(scalar(item.title)) · \(source)"
             }.joined(separator: "\n")

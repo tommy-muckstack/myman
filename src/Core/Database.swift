@@ -265,6 +265,12 @@ enum Database {
                 t.column("accepted", .boolean).notNull()
             }
         }
+        migrator.registerMigration("v16-conceptual-themes") { db in
+            try db.alter(table: "captureTheme") { t in
+                t.add(column: "description", .text).notNull().defaults(to: "")
+                t.add(column: "conceptDigest", .text).notNull().defaults(to: "")
+            }
+        }
         return migrator
     }
 }

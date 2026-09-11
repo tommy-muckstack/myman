@@ -32,6 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         Brain.bootstrap()
         BrainAgentExportObserver.shared.start()
         Brain.backfillScreenshots()
+        ConceptThemeWorker.foregroundBusy = { [weak self] in
+            guard let self else { return false }
+            if self.meetings.phase != .idle || self.meetings.isTranscribing || !MeetingNotesService.shared.stages.isEmpty { return true }
+            switch self.voice.phase {
+            case .idle, .done: return false
+            default: return true
+            }
+        }
         CaptureEnrichment.shared.start()
         // Crashed sessions can leave phantom aggregate audio devices behind.
         SystemAudioTap.cleanupStaleDevices()

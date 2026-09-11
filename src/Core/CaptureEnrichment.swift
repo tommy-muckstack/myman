@@ -92,14 +92,13 @@ final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
             let more = try Database.shared.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM capturePending") ?? 0 }
             if more > 0 { schedule(); return }
             try rebuildRelationships()
+            Task(priority: .background) { await ConceptThemeWorker.shared.schedule() }
             ThemeStore.notify()
         } catch { NSLog("Man: capture enrichment will retry after the next change: %@", error.localizedDescription) }
     }
 
     private func rebuildRelationships() throws {
         let snapshot = try Database.shared.read { try CaptureItem.filter(Column("excluded") == false).fetchAll($0) }
-        let themesEnabled = UserDefaults.standard.object(forKey: "automaticCaptureThemes") as? Bool ?? true
-        let themeCandidates = themesEnabled ? ThemeStore.candidates(for: snapshot) : [:]
         // Compute thematic evidence off the DB queue, then apply short writes.
         // Candidate pruning uses shared terms or nearby dates, not every pair.
         var inverted: [String: Set<Int>] = [:]
@@ -131,7 +130,6 @@ final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
             // A changed snapshot is retried rather than applied over edits.
             let current = try CaptureItem.filter(Column("excluded") == false).fetchAll(db)
             guard Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0.revision) }) == Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0.revision) }) else { return }
-            try ThemeStore.infer(in: db, items: current, enabled: themesEnabled && (UserDefaults.standard.object(forKey: "automaticCaptureThemes") as? Bool ?? true), prepared: themeCandidates)
             try db.execute(sql: "DELETE FROM captureRelation")
             for edge in edges {
                 try db.execute(sql: "INSERT OR REPLACE INTO captureRelation(sourceID,targetID,score,kind,reason) VALUES (?,?,?,?,?)", arguments: [edge.0, edge.1, edge.2, edge.3, edge.4])
