@@ -8,6 +8,8 @@ import SwiftUI
 final class FloatingPanel: NSPanel {
 
     var onDismiss: (() -> Void)?
+    var onCancel: (() -> Void)?
+    var onResignKey: (() -> Void)?
 
     /// Transient surfaces (launcher, pills) die on focus loss; composers
     /// (tasks, note capture) hold half-typed work while the user goes to
@@ -64,11 +66,12 @@ final class FloatingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     override func cancelOperation(_ sender: Any?) {
-        dismiss()
+        if let onCancel { onCancel() } else { dismiss() }
     }
 
     override func resignKey() {
         super.resignKey()
+        onResignKey?()
         if dismissesOnResign { dismiss() }
     }
 
