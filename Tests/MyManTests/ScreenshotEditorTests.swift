@@ -28,8 +28,10 @@ final class ScreenshotEditorTests: XCTestCase {
         model.customBackdropColor = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.7, alpha: 1)
         model.backdrop = .custom
         let restored = EditorModel(image: image, fileURL: url, preferences: preferences)
-        XCTAssertEqual(restored.backdrop, .custom)
+        // Reopening an already-edited PNG must not add a second backdrop.
+        XCTAssertEqual(restored.backdrop, .none)
         XCTAssertEqual(restored.customBackdropColor.usingColorSpace(.sRGB)!.blueComponent, 0.7, accuracy: 0.01)
+        restored.backdrop = .custom
         let rendered = restored.renderFinal()
         XCTAssertGreaterThan(rendered.size.width, image.size.width)
         // Inspect the actual export representation, not NSImage's display-

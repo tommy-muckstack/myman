@@ -53,9 +53,7 @@ enum BackdropStyle: String, CaseIterable, Identifiable {
 final class EditorModel: ObservableObject {
     @Published var image: NSImage
     @Published var annotations: [Annotation] = []
-    @Published var backdrop: BackdropStyle = .none {
-        didSet { preferences.set(backdrop.rawValue, forKey: "screenshotBackdrop") }
-    }
+    @Published var backdrop: BackdropStyle = .none
     @Published var customBackdropColor: NSColor {
         didSet {
             guard let color = customBackdropColor.usingColorSpace(.sRGB) else { return }
@@ -108,7 +106,6 @@ final class EditorModel: ObservableObject {
            rgb.allSatisfy({ $0.isFinite && (0...1).contains($0) }) {
             customBackdropColor = NSColor(srgbRed: rgb[0], green: rgb[1], blue: rgb[2], alpha: 1)
         } else { customBackdropColor = BackdropStyle.ocean.colors![0] }
-        backdrop = preferences.string(forKey: "screenshotBackdrop").flatMap(BackdropStyle.init(rawValue:)) ?? .none
     }
 
     var imageSize: CGSize { image.size }

@@ -8,8 +8,9 @@ titles finish. Search and History share the same bounded thumbnail cache.
 
 In the screenshot editor, expand the background swatches and choose the +
 swatch for a custom color. The native Mac color picker changes the background;
-the chosen RGB color and last backdrop are saved in the Mac user’s preferences.
-Choosing None restores a plain screenshot while retaining the custom color.
+the chosen RGB color is saved in the Mac user’s preferences and available from
+the custom swatch next time. Reopening an edited image does not automatically
+add another backdrop. Choosing None also retains the custom color.
 Preview and PNG export use the chosen color; export preserves source pixel
 density and uses an explicit sRGB rendering context.
 
