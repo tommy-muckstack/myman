@@ -103,10 +103,13 @@ Then call `myman screenshot`, `myman note`, `myman dictation`, `myman meeting`, 
 
 ## My Man Brain plugin
 
-The optional [Brain plugin](integrations/brain/README.md) lets agents search
-meeting transcripts, notes, tasks, and capture text with source citations.
+The optional [Brain plugin](integrations/brain/README.md) lets agents collect
+meetings, notes, complete tasks, dictation, screenshots, and saved Themes by
+time period, people, keywords, and topic, with source citations. Agents can
+read full evidence and explicitly inspect original screenshots.
 It includes a local MCP server, a JSON CLI for Grok Bot's local execution, and
-a packaged skill. Requires Node.js 22+ on the Mac; no app rebuild is needed.
+a packaged skill. Requires Node.js 22+ on the Mac; update and open MyMan to
+export the complete catalog. Older Brain folders work with limited coverage.
 
 ```bash
 npm ci --ignore-scripts --prefix integrations/brain
@@ -114,7 +117,7 @@ node integrations/brain/cli.mjs status
 ```
 
 The plugin is read-only and makes no network calls itself. A hosted agent such
-as Grok receives the excerpts you ask it to retrieve; this optional integration
+as Grok receives the excerpts and images you ask it to retrieve; this optional integration
 is separate from MyMan's on-device AI. Grok Bot marketplace availability has
 not yet been verified. See the setup guide for the local-command route.
 

@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         Analytics.setup()
         _ = Database.shared
         Brain.bootstrap()
+        BrainAgentExportObserver.shared.start()
         Brain.backfillScreenshots()
         CaptureEnrichment.shared.start()
         // Crashed sessions can leave phantom aggregate audio devices behind.

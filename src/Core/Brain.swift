@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import GRDB
+import CryptoKit
 
 // The user's brain: a plain folder of markdown files mirroring everything
 // My Man captures — notes, meeting summaries + transcripts, tasks. It's a
@@ -22,7 +23,7 @@ enum Brain {
         queue.async {
             let fm = FileManager.default
             let existed = fm.fileExists(atPath: root.path)
-            for sub in ["notes", "meetings", "screenshots", "recordings"] {
+            for sub in ["notes", "meetings", "screenshots", "recordings", "dictations", "task-items", "themes"] {
                 try? fm.createDirectory(at: root.appendingPathComponent(sub),
                                         withIntermediateDirectories: true)
             }
@@ -40,6 +41,10 @@ enum Brain {
             - `meetings/` — one file per recorded meeting (summary + speaker transcript + slide paths)
             - `screenshots/` — one file per screenshot (OCR text + path to the image)
             - `recordings/` — one file per screen recording (transcript + path to the video)
+            - `dictations/` — dictated text with capture times
+            - `task-items/` — complete task details and dates, including completed tasks
+            - `themes/` — saved MyMan Themes and their source items
+            - `catalog.json` — current searchable items, titles, dates, theme membership, and pinning; excluded items are omitted
             - `tasks.md` — your open and completed tasks
             - `people.md` — teammates learned from recorded meetings
             - `vocabulary.md` — proper nouns that tune dictation
@@ -50,6 +55,14 @@ enum Brain {
             # My Man Brain — agent instructions
 
             Canonical, auto-synced record of the user's My Man captures.
+            Use the Brain companion's `collect` tool for time ranges, types,
+            people, keywords/phrases, and saved Themes. Follow every pagination
+            cursor and read full source documents for comprehensive summaries.
+            `catalog.json` is the current allowlist; old or excluded files may
+            remain in this user-owned folder or its git history. Respect that
+            allowlist. `dictations/`, `task-items/`, and `themes/` extend the
+            capture exports with dictated text, complete tasks, and saved Themes.
+            Inferred themes in your answer are distinct from saved app Themes.
             `notes/` (frontmatter + markdown), `meetings/` (summary + speaker
             transcript), `recordings/` (screen-recording transcripts;
             frontmatter `file:` is the video path), `screenshots/` (frontmatter
@@ -296,11 +309,54 @@ enum Brain {
 
     // MARK: Plumbing (all on `queue`)
 
+    private static var pendingAgentExport: DispatchWorkItem?
+    private static var writtenHashes: [String: SHA256.Digest] = [:]
+    static func scheduleAgentExport() {
+        queue.async {
+            pendingAgentExport?.cancel()
+            let work = DispatchWorkItem {
+                do {
+                    let source = try Database.shared.read { try BrainAgentExport.source(in: $0) }
+                    let snapshot = BrainAgentExport.snapshot(source: source)
+                    let previous = (try? Data(contentsOf: root.appendingPathComponent("catalog.json")))
+                        .flatMap { try? JSONDecoder().decode(BrainAgentExport.Catalog.self, from: $0) }
+                    // The catalog is written last. A failed export never claims
+                    // newly generated evidence is available to an agent.
+                    for (path, content) in snapshot.documents { try writeAgentFile(content, to: path) }
+                    let current = Set(snapshot.documents.keys)
+                    for entry in previous?.exports ?? [] where !current.contains(entry.path) {
+                        let parts = entry.path.split(separator: "/", omittingEmptySubsequences: false)
+                        guard parts.count == 2, ["dictations", "task-items", "themes"].contains(String(parts[0])),
+                              String(parts[1]).range(of: #"^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}-[A-Fa-f0-9]{8}|[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})\.md$"#, options: .regularExpression) != nil else { continue }
+                        try? FileManager.default.removeItem(at: root.appendingPathComponent(entry.path))
+                        writtenHashes.removeValue(forKey: entry.path)
+                    }
+                    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+                    let data = try encoder.encode(snapshot.catalog)
+                    try data.write(to: root.appendingPathComponent("catalog.json"), options: .atomic)
+                    commitSoon()
+                } catch { NSLog("Man: agent export will retry after the next change: %@", error.localizedDescription) }
+            }
+            pendingAgentExport = work
+            queue.asyncAfter(deadline: .now() + 0.75, execute: work)
+        }
+    }
+
+    private static func writeAgentFile(_ content: String, to relativePath: String) throws {
+        let data = Data(content.utf8), hash = SHA256.hash(data: Data(content.utf8))
+        let url = root.appendingPathComponent(relativePath)
+        if writtenHashes[relativePath] == hash && FileManager.default.fileExists(atPath: url.path) { return }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if (try? Data(contentsOf: url)) != data { try data.write(to: url, options: .atomic) }
+        writtenHashes[relativePath] = hash
+    }
+
     private static func write(_ content: String, to relativePath: String) {
         let url = root.appendingPathComponent(relativePath)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         try? content.write(to: url, atomically: true, encoding: .utf8)
+        writtenHashes.removeValue(forKey: relativePath)
         commitSoon()
     }
 
@@ -329,7 +385,7 @@ enum Brain {
     /// a user's first launch.
     private static func stageManagedFiles() {
         let paths = ["README.md", "CLAUDE.md", "notes", "meetings", "screenshots", "recordings",
-                     "tasks.md", "people.md", "vocabulary.md", "assets"]
+                     "tasks.md", "people.md", "vocabulary.md", "assets", "dictations", "task-items", "themes", "catalog.json"]
             .filter { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }
         guard !paths.isEmpty else { return }
         _ = git(["add", "-A", "--"] + paths)
@@ -348,11 +404,11 @@ enum Brain {
         return process.terminationStatus
     }
 
-    private static func iso(_ date: Date) -> String {
+    static func iso(_ date: Date) -> String {
         ISO8601DateFormatter().string(from: date)
     }
 
-    private static func day(_ date: Date) -> String {
+    static func day(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "myman-brain",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Search your local MyMan meeting memory, notes, tasks, and capture transcripts with source citations.",
   "author": { "name": "MuckStack, LLC" },
   "homepage": "https://github.com/tommy-muckstack/myman#my-man-brain-plugin",
