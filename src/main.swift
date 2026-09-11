@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             default: return true
             }
         }
+        capture.meetingIDProvider = { [weak self] in self?.meetings.activeCaptureMeetingID }
         CaptureEnrichment.shared.start()
         // Crashed sessions can leave phantom aggregate audio devices behind.
         SystemAudioTap.cleanupStaleDevices()

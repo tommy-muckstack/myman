@@ -6,28 +6,37 @@ screenshot OCR/images. The companion reads
 `~/MyManBrain` and returns JSON with file paths, line citations, and pagination.
 It does not open MyMan's database or change captures.
 
-## Install on the Mac
+## Use the companion shipped with MyMan
 
-Install Node.js **22 or later**, then clone this repository to a stable location
-on the Mac that runs MyMan. From the repository root:
+Open the updated app once. The Brain includes a standalone CLI and local MCP
+server under `~/MyManBrain/tools/`. Node.js 22+ is required; no clone or npm
+install is needed for these bundled files.
 
 ```bash
-npm ci --ignore-scripts --prefix integrations/brain
-node integrations/brain/cli.mjs status
-node integrations/brain/cli.mjs recent '{"kind":"meetings","limit":5}'
-node integrations/brain/cli.mjs tasks
+node ~/MyManBrain/tools/cli.mjs screenshots --meeting "Jared demo" --exclude-tag slide-deck --unique
+node ~/MyManBrain/tools/cli.mjs screenshots --after "2026-09-11T09:00:00-04:00" --before "2026-09-11T10:00:00-04:00" --app Chrome --tag web-app
+node ~/MyManBrain/tools/cli.mjs meetings --participant Jared --after "2026-09-01T00:00:00-04:00"
+node ~/MyManBrain/tools/cli.mjs recordings --query "pricing"
+node ~/MyManBrain/tools/cli.mjs status
+node ~/MyManBrain/tools/cli.mjs --help
 ```
 
-Open MyMan at least once to create the Brain. A missing folder is an error,
-not an empty knowledge base. The companion works while MyMan is closed, using
-the last exported files. It is distributed from source separately from the
-signed Mac app. Update and open the app to generate `catalog.json`, dictation,
-complete task exports, and saved Themes. The companion also reads older Brain
-folders, reporting their limited coverage. Run `npm ci` again after updating.
+`--meeting` accepts an ID, export path, or title/participant/topic description.
+An ambiguous description returns candidates; select a returned ID/path rather
+than silently taking the most recent call. `--unique` chooses one representative
+per known visual sequence; omit it when small changes matter. Queries return
+JSON metadata, not image bytes. `image` with `size: thumbnail` explicitly returns
+a compact preview; use `size: original` for detailed visual inspection.
 
-For another export folder, pass `--root /absolute/path/to/MyManBrain` to the
-CLI, or set `MYMAN_BRAIN_ROOT` in the process environment. The root must be a
-real directory, not a symlink. Never configure your home directory as the root.
+The companion works while the app is closed using the last export. With another
+Brain folder, pass `--root /absolute/path/to/MyManBrain` or set `MYMAN_BRAIN_ROOT`.
+A missing folder is an error, not an empty history. Older Brain folders have
+limited coverage; open the updated app to regenerate its catalog and tools.
+
+For source development instead, run `npm ci --ignore-scripts --prefix
+integrations/brain`, then `node integrations/brain/cli.mjs status`. After edits,
+run `npm run bundle --prefix integrations/brain`; committed resource bundles
+are checked in CI and ship through SwiftPM with third-party licenses.
 
 ## Use with Grok Bot
 
@@ -37,10 +46,10 @@ desktop's existing execution policy applies. Node must be available to that
 local process; use the absolute Node executable path if its PATH differs from
 your interactive terminal.
 
-Give Grok Bot this setup prompt after replacing the checkout path:
+Give Grok Bot this setup prompt:
 
 > MyMan is installed on my Mac, and its companion is at
-> `/absolute/path/to/myman/integrations/brain/cli.mjs`. Use your local-computer
+> `~/MyManBrain/tools/cli.mjs`. Use your local-computer
 > execution capability on that Mac to run `node` with that file and `status`.
 > Then run `recent` with the JSON argument `{"kind":"meetings","limit":3}`.
 > Tell me the three meeting titles and dates, with source paths. Read only the
@@ -74,13 +83,13 @@ For clients using native MCP configuration instead of Agent Plugins, use:
   "mcpServers": {
     "myman-brain": {
       "command": "node",
-      "args": ["/absolute/path/to/myman/integrations/brain/server.mjs"]
+      "args": ["/Users/YOUR_USERNAME/MyManBrain/tools/server.mjs"]
     }
   }
 }
 ```
 
-Use an absolute path for Node too if required by the client's environment. A
+Replace YOUR_USERNAME with the Mac account name. Use an absolute path for Node too if required by the client's environment. A
 remote/cloud client cannot see the Mac's files merely by loading this config.
 There is no HTTP listener, tunnel, hosted connector, account, or OAuth flow in
 this version.
@@ -94,9 +103,10 @@ this version.
 | `myman_brain_recent` | `recent` | optional `kind`, `limit`, `offset` |
 | `myman_brain_collect` | `collect` | optional `kinds`, `query`, `match`, `after`, `before`, `during`, `date_field`, `participants`, `theme`, `pinned_only`, `state`, `limit`, `offset` |
 | `myman_brain_meetings` | `meetings` | optional `query`, `participants`, `started_after`, `started_before`, `limit`, `offset` |
+| `myman_brain_screenshots` | `screenshots` | optional `meeting`, `after`, `before`, `app`, `tags`, `exclude_tags`, `unique`, `query`, `limit`, `offset` |
 | `myman_brain_meeting_screenshots` | `meeting_screenshots` | `meeting_path`, optional `limit`, `offset` |
 | `myman_brain_read` | `read` | `path`, optional `offset`, `max_chars` |
-| `myman_brain_image` | `image` | screenshot export `path` (requires app catalog; explicit original PNG access) |
+| `myman_brain_image` | `image` | screenshot export `path`, optional `size`: `original` or `thumbnail` (requires app catalog) |
 | `myman_brain_tasks` | `tasks` | optional `state`: `open`/`done`/`all`, `limit`, `offset` |
 
 Kinds: `meetings`, `notes`, `recordings`, `screenshots`, `dictations`, `themes`, `tasks`, `people`,
@@ -107,7 +117,7 @@ returns a `read_offset` to jump to the excerpt. `timestamp` is capture time if
 present; `exported_at` is modification time, which can change during resync.
 
 Only known top-level export files and one level of `.md` files under the capture
-capture folders are read. Hidden files, nested folders, symlinks, hard links,
+folders are read. Hidden files, nested folders, symlinks, hard links,
 media, and arbitrary paths are excluded from text retrieval. Documents above 2 MiB are rejected;
 scans stop at 10,000 directory entries or 64 MiB of document bytes. Scan
 warnings identify incomplete results; `partial: true` is not a zero-match claim.
@@ -142,7 +152,9 @@ a saved Theme uses its latest member time. For tasks, choose
 `date_field: task_completed` or `task_due` to filter completion or due dates. File modification times never
 establish time-based relationships. Undated items are reported separately.
 
-For “screenshots from my call with Jared and Zoe,” first use `meetings` with
+For the common “screenshots from the Jared demo” request, use `screenshots` with
+`meeting: "Jared demo"`. The tool resolves the call and collects its screenshots
+in one request. For precise participant selection, first use `meetings` with
 `participants: ["Jared","Zoe"]` and optional topic/date filters. Resolve a
 singular ambiguous call from returned titles/dates. Then call `collect` with
 `kinds: ["screenshots"]` and `during: "<returned meeting path>"`; the same
@@ -172,7 +184,41 @@ checklist with individual task documents containing notes and dates. It includes
 all non-archived tasks. The companion rejects reads of captures absent from the
 catalog, even if a stale markdown file remains. A broken catalog is an error,
 never a reason to fall back to excluded files. Existing user-owned files and git
-history are not a secure erase boundary. No app database migration is needed.
+history are not a secure erase boundary. Migration v17 adds capture context to the app database; the companion still reads only exports.
+
+## Visual metadata
+
+Screenshots are primary sources when the task concerns a design, slide, screen,
+or visual reference. OCR helps find candidates; it cannot establish layout or
+colors. The markdown frontmatter contains full `ocr_text` as a YAML literal,
+with a short description in the body. Titles prefer prominent OCR headings
+instead of search/navigation text and preserve explicit user titles.
+
+Screenshot `meetings` links distinguish `recorded_during` from historical
+`time_overlap`. Meeting notes include the reverse `screenshots` list. Neither
+association establishes that the image is about that call. UTC capture times
+have `captured_local`, `timezone`/`tz`, and `timezone_source`: `capture` for a
+saved capture timezone, or `export_mac` for older records. The latter is a
+convenience conversion, not a claim about historical location.
+
+Optional app/window/browser URL metadata is controlled in Settings → Library.
+It is collected only for the selected window during intentional screenshots.
+App exclusions and disabling the option remove saved window details. Browser
+URLs require existing Accessibility access and browser support; query strings,
+fragments, and userinfo are omitted. Old app/window details are not reconstructed.
+`items_without_app_metadata` reports gaps in app-filtered queries.
+
+Tags (`slide-deck`, `web-app`, `email`, `document`, `code`) carry heuristic scores,
+not calibrated probabilities. `contains_pii` and `contains_confidential` are
+`likely`, `not_detected`, or `unknown`. They can help identify material to review;
+they are not permission to disclose/reuse content, and absence of a hint is not
+proof of safety. `similar_to` and `sequence_id` identify visual near-duplicates
+within two minutes, without changing or deleting originals.
+
+The 400px thumbnail path appears in frontmatter/catalog. Explicit `image` reads
+with `size: thumbnail` return only current, owned PNG thumbnails (up to 1 MiB).
+No thumbnail request silently falls back to a full original. Derived context
+and current thumbnail exports are removed when the capture is deleted/hidden.
 
 ## Privacy and write behavior
 
@@ -189,6 +235,7 @@ Missing `tasks.md` is reported separately from an existing empty legacy task lis
 
 ```bash
 npm test --prefix integrations/brain
+npm run check-bundle --prefix integrations/brain
 ```
 
 Tests use temporary synthetic exports, including SDK client/server calls over

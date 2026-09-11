@@ -58,6 +58,7 @@ final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
 
     static func generatedTitle(_ item: CaptureItem) -> String {
         guard item.rawTitle.isEmpty, ["screenshot", "recording", "dictation"].contains(item.kind) else { return "" }
+        if item.kind == "screenshot" { return ScreenshotIntelligence.title(text: item.body) }
         let candidates = item.body.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         let line = candidates.first { value in
             let words = CaptureText.words(value)
@@ -75,7 +76,10 @@ final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
             let semantics = UserDefaults.standard.object(forKey: "captureSemanticSearch") as? Bool ?? true
             for item in batch {
                 let chunks = Self.chunks(item).map { field, text in (field, text, semantics ? SearchService.embedding(for: text) : nil) }
-                let title = Self.generatedTitle(item)
+                let title: String
+                if item.kind == "screenshot", let context = try Database.shared.read({ try ScreenshotContext.fetchOne($0, key: item.id) }), !context.imageVersion.isEmpty {
+                    title = item.generatedTitle.isEmpty ? ScreenshotIntelligence.title(text: item.body, window: context.windowTitle) : item.generatedTitle
+                } else { title = Self.generatedTitle(item) }
                 try Database.shared.write { db in
                     // Edits/deletes during inference must not reintroduce stale
                     // text or resurrect a deleted capture.

@@ -3,6 +3,8 @@ import { BrainError, kinds } from './brain.mjs';
 
 const kind = z.enum(kinds).optional();
 const limit = z.number().int().min(1).max(50).default(10);
+const tagList = z.array(z.enum(['slide-deck', 'web-app', 'document', 'email', 'code'])).max(5).default([]);
+const visualFilters = { app: z.string().trim().min(1).max(200).optional(), tags: tagList, exclude_tags: tagList, unique: z.boolean().default(false) };
 const offset = z.number().int().min(0).max(2 * 1024 * 1024).default(0);
 
 export const tools = {
@@ -33,7 +35,11 @@ export const tools = {
       date_field: z.enum(['captured', 'task_completed', 'task_due']).default('captured').describe('Date to filter: original capture/task creation by default, or task completion/due date with kinds=[tasks].'),
       participants: z.array(z.string().trim().min(1).max(200)).max(20).default([]),
       theme: z.string().trim().min(1).max(200).optional(), pinned_only: z.boolean().default(false),
-      state: z.enum(['all', 'open', 'done']).default('all'), limit: limit.default(20), offset }).strict(),
+      state: z.enum(['all', 'open', 'done']).default('all'), ...visualFilters, limit: limit.default(20), offset }).strict(),
+  },
+  screenshots: {
+    description: 'One-call screenshot retrieval by meeting ID, export path, or description such as Jared demo; or explicit time range. Ambiguous calls return candidates instead of guessing. Filter optional app, tags, exclude_tags, OCR query, and unique (one representative per near-duplicate sequence). Returns file paths, titles, local times, links, heuristic tags/sensitivity hints, and thumbnail references. Screenshots are primary sources for visual/design tasks. Use image size=thumbnail to triage candidates before requesting originals.',
+    schema: z.object({ meeting: z.string().trim().min(1).max(500).optional(), after: z.iso.datetime({ offset: true }).optional(), before: z.iso.datetime({ offset: true }).optional(), query: z.string().trim().min(1).max(300).optional(), ...visualFilters, limit: limit.default(50), offset }).strict(),
   },
   meeting_screenshots: {
     description: 'Retrieve screenshots captured during one resolved call using its actual start (inclusive) and end (exclusive). Returns chronological screenshot export citations, capture times, and original image_path references. Follow every next_offset to retrieve all. No OCR keyword filter or arbitrary recent-item cutoff. Times establish proximity, not subject matter. Requires a completed meeting; never reads image bytes.',
@@ -44,8 +50,8 @@ export const tools = {
     schema: z.object({ path: z.string().min(1).max(500), offset, max_chars: z.number().int().min(1).max(20000).default(12000) }).strict(),
   },
   image: {
-    description: 'Explicitly inspect one original MyMan screenshot for visual descriptors not present in OCR. Requires its source-relative screenshot export path and a current app catalog. Returns original PNG image content (up to 8 MiB), never follows markdown links or arbitrary file arguments. Image content is shared with the requesting model; collect metadata/OCR first and request images only as needed.',
-    schema: z.object({ path: z.string().min(1).max(500) }).strict(),
+    description: 'Explicitly inspect a MyMan screenshot (size=thumbnail for a 400px preview, or original) for visual descriptors not present in OCR. Requires its source-relative screenshot export path and a current app catalog. Returns original PNG image content (up to 8 MiB), never follows markdown links or arbitrary file arguments. Image content is shared with the requesting model; collect metadata/OCR first and request images only as needed.',
+    schema: z.object({ path: z.string().min(1).max(500), size: z.enum(['original', 'thumbnail']).default('original') }).strict(),
   },
   tasks: {
     description: 'List open, done, or all tasks. With the app catalog, returns complete task exports including notes and dates via read; otherwise uses legacy tasks.md with capped history. This is an export snapshot. Follow next_offset for more.',

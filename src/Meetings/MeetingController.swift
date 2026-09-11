@@ -112,6 +112,10 @@ final class MeetingController: ObservableObject {
     private var micDrainTimer: Timer?
     private var systemWriter: WavWriter?
     private var micWriter: WavWriter?
+    var activeCaptureMeetingID: String? {
+        guard case .recording = phase, !isProvisional else { return nil }
+        return meeting?.id
+    }
     private var meeting: Meeting?
     private var panel: FloatingPanel?
     private var pausedMusic = false

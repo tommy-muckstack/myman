@@ -15,6 +15,7 @@ jobs:
           cache-dependency-path: integrations/brain/package-lock.json
       - run: npm ci --ignore-scripts --prefix integrations/brain
       - run: npm test --prefix integrations/brain
+      - run: npm run check-bundle --prefix integrations/brain
   build:
     runs-on: macos-latest
     steps:

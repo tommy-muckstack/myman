@@ -16,6 +16,11 @@ struct Screenshot: Codable, FetchableRecord, PersistableRecord {
 final class CaptureController: SelectionOverlayDelegate {
     private var overlay: SelectionOverlayCoordinator?
     private var frozenCapture: CompositeCapture?
+    var meetingIDProvider: () -> String? = { nil }
+    private var capturedAt = Date()
+    private var capturedMeetingID: String?
+    private var windowsTask: Task<CaptureWindowSnapshot, Never>?
+    private var captureMainDisplayHeight: CGFloat = 0
     private var thumbnail: ThumbnailPanel?
     private lazy var editor = EditorWindowController { [weak self] image, fileURL in
         self?.showThumbnail(image: image, fileURL: fileURL)
@@ -35,6 +40,9 @@ final class CaptureController: SelectionOverlayDelegate {
             }
 
             // Freeze the screen first, then select on top of the frozen image.
+            capturedAt = Date(); capturedMeetingID = meetingIDProvider()
+            captureMainDisplayHeight = NSScreen.screens.first?.frame.height ?? 0
+            windowsTask = Task.detached(priority: .utility) { CaptureWindowSnapshot.take() }
             let frozen = try? await engine.captureAllDisplaysComposite()
             frozenCapture = frozen
             // Recreate per capture — screens may have changed since last time.
@@ -70,18 +78,19 @@ final class CaptureController: SelectionOverlayDelegate {
         overlay = nil
         guard let cropped = frozenCapture?.crop(to: rect) else { return }
         frozenCapture = nil
-        save(cropped)
+        save(cropped, rect: rect)
     }
 
     func selectionOverlayDidCancel() {
         overlay?.hideAll()
         overlay = nil
         frozenCapture = nil
+        windowsTask?.cancel(); windowsTask = nil
     }
 
     // MARK: Save pipeline
 
-    private func save(_ image: NSImage) {
+    private func save(_ image: NSImage, rect: CGRect) {
         guard let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [.compressionFactor: 1.0])
@@ -106,8 +115,26 @@ final class CaptureController: SelectionOverlayDelegate {
         pasteboard.clearContents()
         pasteboard.setData(png, forType: .png)
 
-        let record = Screenshot(id: UUID().uuidString, path: url.path, ocrText: "", createdAt: Date())
-        try? Database.shared.write { try record.insert($0) }
+        let record = Screenshot(id: UUID().uuidString, path: url.path, ocrText: "", createdAt: capturedAt)
+        var origin = ScreenshotContext(itemID: "shot-" + record.id, timezone: TimeZone.current.identifier, meetingID: capturedMeetingID)
+        try? Database.shared.write { db in
+            try record.insert(db)
+            try ScreenshotContext.saveOrigin(origin, in: db)
+        }
+        let windowTask = windowsTask, displayHeight = captureMainDisplayHeight
+        windowsTask = nil
+        Task {
+            if let snapshot = await windowTask?.value,
+               UserDefaults.standard.bool(forKey: "captureWindowMetadata"),
+               let window = snapshot.selected(in: rect, mainDisplayHeight: displayHeight) {
+                let excluded = (UserDefaults.standard.string(forKey: "captureMetadataExcludedApps") ?? "").lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                if !excluded.contains(window.app.lowercased()) && !excluded.contains(window.bundleID.lowercased()) {
+                    origin.app = window.app; origin.bundleID = window.bundleID
+                    origin.windowTitle = window.title; origin.url = window.url
+                    try? await Database.shared.write { [origin] in try ScreenshotContext.saveOrigin(origin, in: $0, metadataEnabled: UserDefaults.standard.bool(forKey: "captureWindowMetadata"), excludedApps: UserDefaults.standard.string(forKey: "captureMetadataExcludedApps") ?? "") }
+                }
+            }
+        }
 
         // OCR off the critical path; the index catches up seconds later.
         OCRStore.refresh(image: image, fileURL: url, id: record.id)
