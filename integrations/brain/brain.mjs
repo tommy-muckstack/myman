@@ -31,7 +31,7 @@ function metadata(text, relative, stat) {
   if (lines[0] === '---') {
     const end = lines.indexOf('---', 1);
     let inParticipants = false;
-    if (end > 0 && end < 100) for (const line of lines.slice(1, end)) {
+    if (end > 0) for (const line of lines.slice(1, end)) {
       if (/^participants:\s*$/.test(line)) { inParticipants = true; continue; }
       if (inParticipants && /^  - /.test(line)) { participants.push(line.slice(4).trim().slice(0, 300)); continue; }
       if (/^\S/.test(line)) inParticipants = false;
@@ -42,7 +42,7 @@ function metadata(text, relative, stat) {
   const candidate = fields.started || fields.created || fields.captured;
   const timestamp = instant(candidate);
   return {
-    path: relative,
+    path: relative, id: fields.id || null,
     kind: kindForPath(relative),
     title: (lines.find(line => line.startsWith('# '))?.slice(2) || path.basename(relative, '.md')).slice(0, 300),
     timestamp, exported_at: stat.mtime.toISOString(),
@@ -154,7 +154,12 @@ export class Brain {
       timestamp: instant(entry.timestamp) || doc.timestamp, pinned: entry.pinned === true,
       themes: Array.isArray(entry.themes) ? entry.themes.filter(t => typeof t.id === 'string' && typeof t.title === 'string') : [],
       ...(doc.kind === 'screenshots' && typeof entry.image_path === 'string' ? { image_path: entry.image_path } : {}),
-      ...(doc.kind === 'tasks' ? { done: entry.done === true } : {}) };
+      ...(doc.kind === 'tasks' ? { done: entry.done === true } : {}),
+      ...Object.fromEntries(['captured_local', 'timezone', 'timezone_source', 'app', 'bundle_id', 'window_title', 'url', 'summary', 'thumbnail_path', 'contains_pii', 'contains_confidential', 'similar_to', 'sequence_id'].filter(key => typeof entry[key] === 'string').map(key => [key, entry[key]])),
+      meetings: Array.isArray(entry.meetings) ? entry.meetings.filter(m => m && typeof m.id === 'string' && typeof m.path === 'string' && allowed(m.path)) : [],
+      screenshots: Array.isArray(entry.screenshots) ? entry.screenshots.filter(p => typeof p === 'string' && p.startsWith('screenshots/') && allowed(p)) : [],
+      tags: Array.isArray(entry.tags) ? entry.tags.filter(t => t && typeof t.name === 'string' && typeof t.confidence === 'number' && t.confidence >= 0 && t.confidence <= 1) : [],
+    };
   }
 
   async scan(selectedKinds = kinds, catalogFilter = () => true) {
@@ -214,7 +219,7 @@ export class Brain {
   async status() {
     const { documents, ...scan } = await this.scan();
     const counts = Object.fromEntries(kinds.map(kind => [kind, documents.filter(d => d.kind === kind).length]));
-    return { root: await this.root(), read_only: true, counts, ...scan, limits,
+    return { companion_version: '0.3.0', root: await this.root(), read_only: true, counts, ...scan, limits,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, current_time: new Date().toISOString() };
   }
 
@@ -249,7 +254,7 @@ export class Brain {
       next_offset: offset + limit < matches.length ? offset + limit : null, ...scan };
   }
 
-  async collect({ kinds: selectedKinds = kinds, query, match = 'all', after, before, during, date_field = 'captured', participants = [], theme, pinned_only = false, state = 'all', limit = 20, offset = 0 }) {
+  async collect({ kinds: selectedKinds = kinds, query, match = 'all', after, before, during, date_field = 'captured', participants = [], theme, pinned_only = false, state = 'all', app, tags = [], exclude_tags = [], unique = false, limit = 20, offset = 0 }) {
     if (date_field !== 'captured' && (selectedKinds.length !== 1 || selectedKinds[0] !== 'tasks' || during)) throw new BrainError('INVALID_ARGUMENTS', 'Task date fields require kinds=["tasks"] and explicit date bounds rather than during.');
     let anchor;
     if (during) {
@@ -270,9 +275,13 @@ export class Brain {
       return !time || ((!after || Date.parse(time) >= Date.parse(after)) && (!before || Date.parse(time) < Date.parse(before)));
     });
     if ((theme || pinned_only || state !== 'all') && !scan.catalog_available) throw new BrainError('CATALOG_REQUIRED', 'Open the updated MyMan app to export themes, pinning, and complete task metadata.');
-    let undated = 0;
+    let undated = 0, missingMetadata = 0;
     const results = [];
     for (const doc of documents) {
+      if (app && !doc.app && !doc.bundle_id) { missingMetadata++; continue; }
+      if (app && !hasName((doc.app || '') + ' ' + (doc.bundle_id || ''), app)) continue;
+      if (!tags.every(tag => doc.tags?.some(t => t.name === tag))) continue;
+      if (exclude_tags.some(tag => doc.tags?.some(t => t.name === tag))) continue;
       if (!participants.every(name => doc.participants?.some(label => hasName(label, name)))) continue;
       if (theme && !doc.themes?.some(t => t.id === theme || hasName(t.title, theme))) continue;
       if (pinned_only && !doc.pinned) continue;
@@ -293,10 +302,17 @@ export class Brain {
         source: this.source(doc, lineIndex + 1, lineIndex + excerpt.split('\n').length) });
     }
     results.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || '') || a.path.localeCompare(b.path));
+    if (unique) {
+      const seen = new Set();
+      for (let i = 0; i < results.length;) {
+        const key = results[i].sequence_id || results[i].path;
+        if (seen.has(key)) results.splice(i, 1); else { seen.add(key); i++; }
+      }
+    }
     if (anchor && (await this.load(during)).text !== anchor.text) throw new BrainError('EXPORT_CHANGED', 'Meeting changed during collection; retry.');
     return { results: results.slice(offset, offset + limit), total: results.length,
       next_offset: offset + limit < results.length ? offset + limit : null, ...scan,
-      partial: scan.partial || undated > 0, items_without_capture_time: undated,
+      partial: scan.partial || undated > 0 || missingMetadata > 0, items_without_capture_time: undated, items_without_app_metadata: missingMetadata,
       date_bounds: '[after, before)', date_field, ...(anchor ? { during: this.summary(anchor), relationship: 'captured_during_meeting' } : {}),
       coverage: scan.catalog_available ? 'Current app catalog; excluded captures omitted.' : 'Legacy exports only; dictations, saved Themes, and complete task history may be unavailable. Open the updated app to export them.' };
   }
@@ -328,6 +344,27 @@ export class Brain {
       (b.started_at || '').localeCompare(a.started_at || '') || a.path.localeCompare(b.path));
     return { results: matches.slice(offset, offset + limit), total: matches.length,
       next_offset: offset + limit < matches.length ? offset + limit : null, ...scan };
+  }
+
+  async screenshots({ meeting, after, before, app, tags = [], exclude_tags = [], unique = false, query, limit = 50, offset = 0 }) {
+    if (meeting && (after || before)) throw new BrainError('INVALID_ARGUMENTS', 'Use either meeting or an explicit after/before range.');
+    let anchor;
+    if (meeting) {
+      if (meeting.startsWith('meetings/')) anchor = this.summary(await this.load(meeting));
+      else {
+        const exact = await this.scan(['meetings']);
+        const byID = exact.documents.filter(doc => doc.id === meeting);
+        if (byID.length === 1 && !exact.partial) anchor = this.summary(byID[0]);
+        else {
+          const candidates = await this.meetings({ query: meeting, limit: 50 });
+          if (candidates.total !== 1 || candidates.partial) return { needs_disambiguation: true, meetings: candidates.results, matching_meetings: candidates.total, next_offset: candidates.next_offset, partial: candidates.partial, warnings: candidates.warnings, results: [], message: 'Choose a meeting ID or path from these candidates; no call was chosen automatically.' };
+          anchor = candidates.results[0];
+        }
+      }
+    }
+    const collection = await this.collect({ kinds: ['screenshots'], during: anchor?.path, after, before, app, tags, exclude_tags, unique, query, limit, offset });
+    return { ...collection, needs_disambiguation: false, ...(anchor ? { meeting: anchor } : {}),
+      note: 'Meeting links/time overlap do not establish subject matter. Tags and sensitivity hints are heuristic; not_detected does not mean safe to reuse.' };
   }
 
   async meeting_screenshots({ meeting_path, limit = 50, offset = 0 }) {
@@ -380,12 +417,13 @@ export class Brain {
       note: 'Export snapshot: app-to-Brain sync is one-way; completed task history may be capped by MyMan.' };
   }
 
-  async image({ path: relative }) {
+  async image({ path: relative, size = 'original' }) {
     const doc = await this.load(relative);
     if (doc.kind !== 'screenshots') throw new BrainError('INVALID_PATH', 'Choose a screenshot export returned by collect.');
     const catalog = await this.catalog();
     if (!catalog) throw new BrainError('CATALOG_REQUIRED', 'Open the updated app to export trusted screenshot references. Legacy markdown image paths are not opened.');
-    const file = catalog.exports.find(e => e.path === relative)?.image_path;
+    const file = catalog.exports.find(e => e.path === relative)?.[size === 'thumbnail' ? 'thumbnail_path' : 'image_path'];
+    if (size === 'thumbnail' && (typeof file !== 'string' || path.dirname(file) !== path.join(await this.root(), 'assets', 'capture-thumbnails'))) throw new BrainError('THUMBNAIL_UNAVAILABLE', 'No current app-generated thumbnail is available for this screenshot.');
     if (typeof file !== 'string' || !path.isAbsolute(file) || /[\x00-\x1f]/.test(file) || path.extname(file).toLowerCase() !== '.png') {
       throw new BrainError('IMAGE_UNAVAILABLE', 'This screenshot has no supported original PNG reference in the app catalog.');
     }
@@ -396,7 +434,7 @@ export class Brain {
       handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       const stat = await handle.stat();
       if (!stat.isFile() || stat.nlink !== 1) throw new BrainError('UNSAFE_PATH', 'Only regular, unlinked screenshot files are readable.');
-      if (stat.size > 8 * 1024 * 1024) throw new BrainError('IMAGE_TOO_LARGE', 'Original exceeds the 8 MiB image limit. Use the returned local image_path with a local image viewer.');
+      if (stat.size > (size === 'thumbnail' ? 1024 * 1024 : 8 * 1024 * 1024)) throw new BrainError('IMAGE_TOO_LARGE', 'Original exceeds the 8 MiB image limit. Use the returned local image_path with a local image viewer.');
       const data = Buffer.alloc(stat.size + 1);
       let length = 0;
       while (length < data.length) {
@@ -413,9 +451,9 @@ export class Brain {
         throw new BrainError('INVALID_IMAGE', 'The referenced file is not a PNG screenshot.');
       }
       const width = png.readUInt32BE(16), height = png.readUInt32BE(20);
-      if (!width || !height || width * height > 100_000_000) throw new BrainError('IMAGE_TOO_LARGE', 'Screenshot dimensions exceed the supported limit.');
+      if (!width || !height || width * height > 100_000_000 || (size === 'thumbnail' && Math.max(width, height) > 400)) throw new BrainError('IMAGE_TOO_LARGE', 'Screenshot dimensions exceed the supported limit.');
       if ((await this.catalog())?.revision !== catalog.revision) throw new BrainError('EXPORT_CHANGED', 'App catalog changed while reading the image; retry.');
-      return { ...this.summary(doc), width, height, image: { mimeType: 'image/png', data: png.toString('base64') } };
+      return { ...this.summary(doc), size, width, height, image: { mimeType: 'image/png', data: png.toString('base64') } };
     } catch (error) {
       if (error instanceof BrainError) throw error;
       throw new BrainError(error.code === 'ELOOP' ? 'UNSAFE_PATH' : 'IMAGE_UNAVAILABLE', 'The original screenshot is missing, linked, or inaccessible on this computer.');

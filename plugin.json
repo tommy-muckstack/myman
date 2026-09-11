@@ -1,11 +1,20 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "myman-brain",
-  "version": "0.2.0",
-  "description": "Search your local MyMan meeting memory, notes, tasks, and capture transcripts with source citations.",
-  "author": { "name": "MuckStack, LLC" },
+  "version": "0.3.0",
+  "description": "Collect local MyMan meetings, screenshots, notes, and tasks by time and context, with source citations and explicit image previews.",
+  "author": {
+    "name": "MuckStack, LLC"
+  },
   "homepage": "https://github.com/tommy-muckstack/myman#my-man-brain-plugin",
   "repository": "https://github.com/tommy-muckstack/myman",
   "license": "Apache-2.0",
-  "keywords": ["myman", "meetings", "notes", "macos", "local", "memory"]
+  "keywords": [
+    "myman",
+    "meetings",
+    "notes",
+    "macos",
+    "local",
+    "memory"
+  ]
 }

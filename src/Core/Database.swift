@@ -271,6 +271,17 @@ enum Database {
                 t.add(column: "conceptDigest", .text).notNull().defaults(to: "")
             }
         }
+        migrator.registerMigration("v17-capture-context") { db in
+            try db.create(table: "captureContext") { t in
+                t.primaryKey("itemID", .text).references("captureItem", onDelete: .cascade)
+                t.column("timezone", .text).notNull().defaults(to: "")
+                t.column("meetingID", .text).references("meeting", onDelete: .setNull)
+                for column in ["app", "bundleID", "windowTitle", "url", "imageVersion"] { t.column(column, .text).notNull().defaults(to: "") }
+                t.column("analysisJSON", .text).notNull().defaults(to: "{}")
+                t.column("thumbnail", .blob)
+            }
+            try db.execute(sql: "CREATE TRIGGER capture_context_exclude AFTER UPDATE OF excluded ON captureItem WHEN new.excluded=1 BEGIN DELETE FROM captureContext WHERE itemID=new.id; END")
+        }
         return migrator
     }
 }

@@ -1,14 +1,18 @@
 {
   "name": "myman-brain",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Read-only local MyMan Brain tools for agents",
   "license": "Apache-2.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "bundle": "node build-bundle.mjs",
+    "check-bundle": "node build-bundle.mjs --check"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
@@ -16,6 +20,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
-    "ajv": "^8.17.1"
+    "ajv": "^8.17.1",
+    "esbuild": "0.25.10"
   }
 }

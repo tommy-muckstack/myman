@@ -5,6 +5,7 @@ import GRDB
 /// this catalog contains retrieval metadata, never a second search index.
 enum BrainAgentExport {
     struct ThemeRef: Codable, Equatable { var id: String; var title: String }
+    struct MeetingRef: Codable { var id: String; var path: String; var association: String }
     struct Entry: Codable {
         var path: String
         var kind: String
@@ -14,6 +15,22 @@ enum BrainAgentExport {
         var pinned: Bool = false
         var done: Bool? = nil
         var image_path: String? = nil
+        var captured_local: String? = nil
+        var timezone: String? = nil
+        var timezone_source: String? = nil
+        var app: String? = nil
+        var bundle_id: String? = nil
+        var window_title: String? = nil
+        var url: String? = nil
+        var meetings: [MeetingRef]? = nil
+        var screenshots: [String]? = nil
+        var tags: [ScreenshotIntelligence.Tag]? = nil
+        var contains_pii: String? = nil
+        var contains_confidential: String? = nil
+        var summary: String? = nil
+        var thumbnail_path: String? = nil
+        var similar_to: String? = nil
+        var sequence_id: String? = nil
     }
     struct Catalog: Codable {
         var version = 1
@@ -23,6 +40,7 @@ enum BrainAgentExport {
     struct Snapshot {
         var catalog: Catalog
         var documents: [String: String]
+        var assets: [String: Data] = [:]
     }
     struct Source {
         var items: [CaptureItem]
@@ -31,6 +49,7 @@ enum BrainAgentExport {
         var memberships: [Row]
         var tasks: [Row]
         var themes: [Row]
+        var contexts: [String: ScreenshotContext] = [:]
     }
 
     static func source(in db: GRDB.Database) throws -> Source {
@@ -45,12 +64,13 @@ enum BrainAgentExport {
         let archived = try db.columns(in: "task").contains { $0.name == "archived" }
         let tasks = try Row.fetchAll(db, sql: "SELECT * FROM task\(archived ? " WHERE archived=0" : "") ORDER BY id")
         let themes = try Row.fetchAll(db, sql: "SELECT * FROM captureTheme WHERE dismissed=0 ORDER BY id")
-        return Source(items: items, meetings: meetings, recordings: recordings, memberships: memberships, tasks: tasks, themes: themes)
+        let contexts = Dictionary(uniqueKeysWithValues: try ScreenshotContext.fetchAll(db).map { ($0.itemID, $0) })
+        return Source(items: items, meetings: meetings, recordings: recordings, memberships: memberships, tasks: tasks, themes: themes, contexts: contexts)
     }
 
     static func snapshot(in db: GRDB.Database) throws -> Snapshot { snapshot(source: try source(in: db)) }
 
-    static func snapshot(source: Source) -> Snapshot {
+    static func snapshot(source: Source, root: URL = Brain.root) -> Snapshot {
         let items = source.items, meetings = source.meetings, recordings = source.recordings
         // Serialization and formatting run after releasing the database read.
         let isoFormatter = ISO8601DateFormatter()
@@ -64,9 +84,60 @@ enum BrainAgentExport {
         var itemPaths: [String: String] = [:]
         for item in items {
             let folder = item.kind == "dictation" ? "dictations" : item.kind + "s"
-            let path = "\(folder)/\(dayFormatter.string(from: item.capturedAt))-\(item.sourceID.prefix(8)).md"
-            itemPaths[item.id] = path
-            entries.append(Entry(path: path, kind: folder, title: item.title, timestamp: iso(item.capturedAt), themes: itemThemes[item.id] ?? [], pinned: item.pinned, image_path: item.kind == "screenshot" ? item.sourcePath : nil))
+            itemPaths[item.id] = "\(folder)/\(dayFormatter.string(from: item.capturedAt))-\(item.sourceID.prefix(8)).md"
+        }
+        var assets: [String: Data] = [:]
+        var screenshotMeetings: [String: [MeetingRef]] = [:]
+        var meetingScreenshots: [String: [String]] = [:]
+        let shots = items.filter { $0.kind == "screenshot" }.sorted { $0.capturedAt == $1.capturedAt ? $0.id < $1.id : $0.capturedAt < $1.capturedAt }
+        var similar: [String: String] = [:], sequences: [String: String] = [:]
+        var anchors: [CaptureItem] = []
+        for shot in shots {
+            let context = source.contexts[shot.id]
+            for (id, row) in meetings.sorted(by: { $0.key < $1.key }) {
+                guard let meetingPath = itemPaths["meeting-" + id] else { continue }
+                let start: Date = row["startedAt"], end: Date? = row["endedAt"]
+                let explicit = context?.meetingID == id
+                let overlaps = end.map { shot.capturedAt >= start && shot.capturedAt < $0 } ?? false
+                if explicit || overlaps {
+                    screenshotMeetings[shot.id, default: []].append(MeetingRef(id: id, path: meetingPath, association: explicit ? "recorded_during" : "time_overlap"))
+                    meetingScreenshots[id, default: []].append(itemPaths[shot.id]!)
+                }
+            }
+            screenshotMeetings[shot.id]?.sort { $0.association == $1.association ? $0.id < $1.id : $0.association == "recorded_during" }
+            anchors.removeAll { shot.capturedAt.timeIntervalSince($0.capturedAt) > 120 }
+            if let context, let anchor = anchors.first(where: { prior in
+                guard let previous = source.contexts[prior.id], context.app.isEmpty || previous.app.isEmpty || context.app == previous.app else { return false }
+                return ScreenshotIntelligence.similar(previous.analysis.perceptualHash, context.analysis.perceptualHash)
+            }) {
+                similar[shot.id] = itemPaths[anchor.id]
+                sequences[shot.id] = anchor.sourceID; sequences[anchor.id] = anchor.sourceID
+            } else { anchors.append(shot) }
+        }
+        for item in items {
+            let path = itemPaths[item.id]!, folder = item.kind == "dictation" ? "dictations" : item.kind + "s"
+            let context = source.contexts[item.id]
+            let timezone = context.flatMap { TimeZone(identifier: $0.timezone) } ?? TimeZone.current
+            let local = ISO8601DateFormatter(); local.timeZone = timezone; local.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            var entry = Entry(path: path, kind: folder, title: item.title, timestamp: iso(item.capturedAt), themes: itemThemes[item.id] ?? [], pinned: item.pinned, image_path: item.kind == "screenshot" ? item.sourcePath : nil)
+            entry.captured_local = local.string(from: item.capturedAt); entry.timezone = timezone.identifier
+            entry.timezone_source = context?.timezone.isEmpty == false ? "capture" : "export_mac"
+            if item.kind == "meeting" { entry.screenshots = meetingScreenshots[item.sourceID] ?? [] }
+            if item.kind == "screenshot" {
+                let analysis = context?.analysis ?? .init()
+                entry.app = context?.app.nilIfEmpty; entry.bundle_id = context?.bundleID.nilIfEmpty
+                entry.window_title = context?.windowTitle.nilIfEmpty; entry.url = context?.url.nilIfEmpty
+                entry.meetings = screenshotMeetings[item.id] ?? []; entry.tags = analysis.tags
+                entry.contains_pii = analysis.contains_pii; entry.contains_confidential = analysis.contains_confidential
+                entry.summary = analysis.summary.nilIfEmpty
+                entry.similar_to = similar[item.id]; entry.sequence_id = sequences[item.id]
+                if let thumbnail = context?.thumbnail, UUID(uuidString: item.sourceID) != nil {
+                    let asset = "assets/capture-thumbnails/\(item.sourceID).png"
+                    assets[asset] = thumbnail
+                    entry.thumbnail_path = root.appendingPathComponent(asset).path
+                }
+            }
+            entries.append(entry)
             var fields = ["id: \(item.sourceID)"]
             if item.kind == "meeting", let meeting = meetings[item.sourceID] {
                 let ended: Date? = meeting["endedAt"]
@@ -80,8 +151,19 @@ enum BrainAgentExport {
             }
             if !item.sourcePath.isEmpty { fields.append("file: \(scalar(item.sourcePath))") }
             if let duration = recordings[item.sourceID], item.kind == "recording" { fields.append("duration_seconds: \(duration)") }
+            fields += ["captured_local: \(entry.captured_local!)", "tz: \(quoted(timezone.identifier))", "timezone_source: \(entry.timezone_source!)"]
+            if let screenshots = entry.screenshots { fields.append("screenshots: " + json(screenshots)) }
+            if item.kind == "screenshot" {
+                if let first = entry.meetings?.first { fields += ["meeting: \(quoted(first.id))", "meeting_path: \(quoted(first.path))"] }
+                fields += ["meetings: " + json(entry.meetings ?? []), "tags: " + json(entry.tags ?? [])]
+                for (key, value) in [("app", entry.app), ("bundle_id", entry.bundle_id), ("window_title", entry.window_title), ("url", entry.url), ("summary", entry.summary), ("thumbnail", entry.thumbnail_path), ("similar_to", entry.similar_to), ("sequence_id", entry.sequence_id), ("contains_pii", entry.contains_pii), ("contains_confidential", entry.contains_confidential)] {
+                    if let value { fields.append("\(key): \(quoted(value))") }
+                }
+                fields.append("ocr_text: |-")
+                fields += item.body.components(separatedBy: .newlines).map { "  " + $0 }
+            }
             fields.append("updated: \(iso(item.modifiedAt))")
-            var body = item.body
+            var body = item.kind == "screenshot" ? (entry.summary ?? "Screenshot; text recognition may still be processing.") : item.body
             if item.kind == "meeting" { body = [item.summary, "## Transcript\n\n" + item.body].filter { !$0.isEmpty }.joined(separator: "\n\n") }
             if !item.metadata.isEmpty { body += "\n\n## Capture metadata\n\n" + item.metadata }
             documents[path] = markdown(fields: fields, title: item.title, body: body)
@@ -116,12 +198,14 @@ enum BrainAgentExport {
             }.joined(separator: "\n")
             documents[path] = markdown(fields: ["id: \(id)", "updated: \(iso(latest))"], title: title, body: body)
         }
-        return Snapshot(catalog: Catalog(generated_at: iso(Date()), exports: entries), documents: documents)
+        return Snapshot(catalog: Catalog(generated_at: iso(Date()), exports: entries), documents: documents, assets: assets)
     }
 
     private static func markdown(fields: [String], title: String, body: String) -> String {
         "---\n" + fields.joined(separator: "\n") + "\n---\n\n# \(scalar(title))\n\n\(body)\n"
     }
+    private static func json<T: Encodable>(_ value: T) -> String { (try? String(decoding: JSONEncoder().encode(value), as: UTF8.self)) ?? "null" }
+    private static func quoted(_ value: String) -> String { json(value) }
     private static func scalar(_ value: String) -> String { value.components(separatedBy: .newlines).joined(separator: " ") }
 
     private struct Participant: Decodable { var name: String; var email: String?; var isOwner: Bool }
@@ -147,9 +231,11 @@ final class BrainAgentExportObserver: TransactionObserver, @unchecked Sendable {
     private var changed = false // GRDB transaction queue only
     func start() { Database.shared.add(transactionObserver: self); Brain.scheduleAgentExport() }
     func observes(eventsOfKind kind: DatabaseEventKind) -> Bool {
-        ["captureItem", "meeting", "task", "captureTheme", "captureThemeMember"].contains(kind.tableName)
+        ["captureItem", "captureContext", "meeting", "task", "captureTheme", "captureThemeMember"].contains(kind.tableName)
     }
     func databaseDidChange(with event: DatabaseEvent) { changed = true }
     func databaseDidCommit(_ db: GRDB.Database) { if changed { changed = false; Brain.scheduleAgentExport() } }
     func databaseDidRollback(_ db: GRDB.Database) { changed = false }
 }
+
+private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }

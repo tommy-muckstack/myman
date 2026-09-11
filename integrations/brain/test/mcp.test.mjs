@@ -22,7 +22,7 @@ test('official MCP client initializes, discovers tools, reads fixtures, and rece
   t.after(() => client.close());
   await client.connect(transport);
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 9);
+  assert.equal(tools.length, 10);
   assert.ok(tools.every(tool => tool.annotations.readOnlyHint && !tool.annotations.destructiveHint));
   const search = await client.callTool({ name: 'myman_brain_search', arguments: { query: 'proposal' } });
   assert.ok(!search.isError, JSON.stringify(search));
@@ -38,6 +38,9 @@ test('official MCP client initializes, discovers tools, reads fixtures, and rece
   assert.equal(shots.structuredContent.total, 1);
   assert.equal(shots.structuredContent.results[0].seconds_into_meeting, 3540);
   assert.equal(shots.structuredContent.results[0].image_path, '/Users/example/Captures/design.png');
+  const direct = await client.callTool({ name: 'myman_brain_screenshots', arguments: { meeting: 'Weekly planning' } });
+  assert.equal(direct.structuredContent.total, 1);
+  assert.equal(direct.structuredContent.needs_disambiguation, false);
   const denied = await client.callTool({ name: 'myman_brain_read', arguments: { path: '../../secrets.env' } });
   assert.equal(denied.isError, true);
   assert.equal(JSON.parse(denied.content[0].text).error.code, 'INVALID_PATH');

@@ -25,6 +25,7 @@ let package = Package(
             path: "src",
             resources: [
                 .copy("Resources/Fonts"),
+                .copy("Resources/BrainCompanion"),
             ]
         ),
         .testTarget(

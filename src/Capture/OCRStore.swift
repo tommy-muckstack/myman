@@ -23,7 +23,8 @@ enum OCRStore {
             let records = try Screenshot.filter(Column("path") == path).fetchAll(db)
             try db.execute(sql: "UPDATE screenshot SET ocrText = '', embedding = NULL WHERE path = ?", arguments: [path])
             try db.execute(sql: "DELETE FROM captureOCR WHERE itemID IN (SELECT id FROM captureItem WHERE sourcePath = ?)", arguments: [path])
-            try db.execute(sql: "UPDATE captureItem SET metadata = '', generatedTitle = '', revision = revision + 1 WHERE sourcePath = ? AND metadata != ''", arguments: [path])
+            try db.execute(sql: "UPDATE captureContext SET analysisJSON='{}',thumbnail=NULL,imageVersion='' WHERE itemID IN (SELECT id FROM captureItem WHERE sourcePath=?)", arguments: [path])
+            try db.execute(sql: "UPDATE captureItem SET metadata = '', generatedTitle = '', revision = revision + 1 WHERE sourcePath = ?", arguments: [path])
             return records
         }
         for record in records { Brain.syncScreenshot(id: record.id, filePath: path, ocrText: "", createdAt: record.createdAt) }
@@ -61,6 +62,8 @@ enum OCRStore {
         let result = await ImageAnalysis.analyze(image)
         guard let data = try? JSONEncoder().encode(result.observations) else { return }
         let url = URL(fileURLWithPath: record.path)
+        let text = paragraphs(result.observations).map(\.text).joined(separator: "\n\n")
+        let prepared = try? ScreenshotContext.prepare(image: image, lines: result.observations, text: text)
         let saved = (try? await Database.shared.write { db -> Bool in
             guard version(url) == expected, try Screenshot.fetchOne(db, key: record.id) != nil else { return false }
             let text = paragraphs(result.observations).map(\.text).joined(separator: "\n\n")
@@ -68,6 +71,7 @@ enum OCRStore {
             let labels = result.labels.joined(separator: " ")
             try db.execute(sql: "UPDATE captureItem SET metadata = ?, revision = revision + 1 WHERE id = ? AND metadata != ?", arguments: [labels, "shot-" + record.id, labels])
             try db.execute(sql: "INSERT OR REPLACE INTO captureOCR(itemID,lines,imageVersion) VALUES (?,?,?)", arguments: ["shot-" + record.id, data, expected])
+            if let prepared { try ScreenshotContext.saveAnalysis(prepared, itemID: "shot-" + record.id, version: expected, in: db) }
             return true
         }) ?? false
         if saved {
@@ -88,7 +92,19 @@ enum OCRStore {
                 let url = URL(fileURLWithPath: record.path)
                 guard let expected = version(url) else { continue }
                 let stored = try? await Database.shared.read { try String.fetchOne($0, sql: "SELECT imageVersion FROM captureOCR WHERE itemID = ?", arguments: ["shot-" + record.id]) }
-                guard stored != expected, let image = NSImage(contentsOf: url) else { continue }
+                let contextVersion = try? await Database.shared.read { try ScreenshotContext.fetchOne($0, key: "shot-" + record.id)?.imageVersion }
+                if stored == expected, contextVersion == expected { continue }
+                guard let image = NSImage(contentsOf: url) else { continue }
+                if stored == expected {
+                    let observations = lines(itemID: "shot-" + record.id)
+                    if let prepared = try? ScreenshotContext.prepare(image: image, lines: observations, text: record.ocrText) {
+                        try? await Database.shared.write { db in
+                            guard version(url) == expected else { return }
+                            try ScreenshotContext.saveAnalysis(prepared, itemID: "shot-" + record.id, version: expected, in: db)
+                        }
+                    }
+                    continue
+                }
                 await analyze(image: image, record: record, expected: expected)
                 try? await Task.sleep(for: .milliseconds(100))
             }

@@ -27,6 +27,11 @@ enum Brain {
                 try? fm.createDirectory(at: root.appendingPathComponent(sub),
                                         withIntermediateDirectories: true)
             }
+            if let companion = Bundle.module.url(forResource: "BrainCompanion", withExtension: nil) {
+                for file in (try? fm.contentsOfDirectory(at: companion, includingPropertiesForKeys: nil)) ?? [] {
+                    if let data = try? Data(contentsOf: file) { try? writeAgentData(data, to: "tools/" + file.lastPathComponent) }
+                }
+            }
             // Docs regenerate every launch — the brain's map must never lag
             // behind what the app actually syncs.
             let readme = """
@@ -44,7 +49,17 @@ enum Brain {
             - `dictations/` — dictated text with capture times
             - `task-items/` — complete task details and dates, including completed tasks
             - `themes/` — saved MyMan Themes and their source items
-            - `catalog.json` — current searchable items, titles, dates, theme membership, and pinning; excluded items are omitted
+            - `catalog.json` — current allowlist, metadata, meeting links, tags, local times, and thumbnail references
+            - `tools/cli.mjs` — bundled, read-only query companion (Node.js 22+; no npm install needed)
+            - `tools/server.mjs` — the same tools over local stdio MCP
+
+            From this folder, run `node tools/cli.mjs --root "$PWD" screenshots --meeting "Jared demo"`.
+            Add `--exclude-tag slide-deck`, `--app Chrome`, `--tag web-app`, or `--unique` as needed.
+            For a time range, use `--after 2026-09-01T00:00:00-04:00 --before 2026-09-02T00:00:00-04:00`.
+            Run `node tools/cli.mjs --root "$PWD" status` or `--help` to discover other commands.
+            Ambiguous meeting descriptions return candidates instead of choosing a call silently.
+            Screenshots are primary evidence for visual/design reference; inspect thumbnails or originals.
+            Tags and sensitivity hints are heuristics, not evidence that reuse is authorized or safe.
             - `tasks.md` — your open and completed tasks
             - `people.md` — teammates learned from recorded meetings
             - `vocabulary.md` — proper nouns that tune dictation
@@ -55,6 +70,12 @@ enum Brain {
             # My Man Brain — agent instructions
 
             Canonical, auto-synced record of the user's My Man captures.
+            The companion ships here: `node tools/cli.mjs --root "$PWD" --help` (Node.js 22+).
+            Start with `screenshots --meeting "Jared demo" --exclude-tag slide-deck` for visual retrieval.
+            `--meeting` accepts a meeting ID, export path, or description; ambiguous matches return candidates.
+            Use `image '{"path":"screenshots/returned-file.md","size":"thumbnail"}'` for a compact visual preview.
+            Screenshots carry explicit meeting links, local timestamps, OCR, and best-effort tags/sensitivity hints.
+            App/window/URL fields are present only when captured with the user's optional metadata setting.
             Use the Brain companion's `collect` tool for time ranges, types,
             people, keywords/phrases, and saved Themes. Follow every pagination
             cursor and read full source documents for comprehensive summaries.
@@ -66,25 +87,32 @@ enum Brain {
             `notes/` (frontmatter + markdown), `meetings/` (summary + speaker
             transcript), `recordings/` (screen-recording transcripts;
             frontmatter `file:` is the video path), `screenshots/` (frontmatter
-            `file:` is the image path; body is OCR'd text), `tasks.md`
+            `file:` is the image path, `ocr_text:` contains full OCR, and the body is a short description), `tasks.md`
             (- [ ] checklist), `people.md` (who the user meets with, ranked),
             `vocabulary.md` (dictation proper nouns — adding terms improves
             speech-to-text).
 
-            Signal hierarchy — weigh sources accordingly when answering:
+            Choose sources according to the task. For factual summaries:
             1. `meetings/` — highest signal: deliberate, speaker-attributed
                conversations with summaries.
             2. `notes/` — deliberate writing, terse but intentional.
             3. `recordings/` — medium: narration/audio of what the user was
                demonstrating on screen.
-            4. `screenshots/` — lowest signal, ambient context: whatever
-               happened to be on screen. Use to corroborate, not to lead.
+            4. `screenshots/` — OCR can corroborate discussion, but does not establish what someone said.
+
+            For design references, UI comparisons, slides, or "what did it look like," screenshots are
+            the primary source. Use `screenshots`, meeting links, tags, and thumbnail/original image tools.
+            Near-duplicate sequences help triage; use all originals when small visual changes matter.
+            Sensitivity hints are best-effort. `not_detected` does not mean public or safe to reuse.
+            A meeting link establishes recording context/time overlap, not subject-matter relevance.
 
             Sync is one-way app → brain: read freely, write only when asked,
-            never delete. Timestamps ISO-8601 UTC.
+            never delete. UTC timestamps have local-time and timezone companions. For legacy captures,
+            timezone_source=export_mac identifies the exporting Mac's timezone, not a known historical location.
             """
             try? agents.write(to: root.appendingPathComponent("CLAUDE.md"),
                               atomically: true, encoding: .utf8)
+            try? agents.write(to: root.appendingPathComponent("AGENTS.md"), atomically: true, encoding: .utf8)
             if !existed {
                 git("init")
                 stageManagedFiles()
@@ -323,6 +351,17 @@ enum Brain {
                     // The catalog is written last. A failed export never claims
                     // newly generated evidence is available to an agent.
                     for (path, content) in snapshot.documents { try writeAgentFile(content, to: path) }
+                    for (path, data) in snapshot.assets { try writeAgentData(data, to: path) }
+                    let thumbnails = root.appendingPathComponent("assets/capture-thumbnails")
+                    let ownedDirectory = thumbnails.resolvingSymlinksInPath().path == thumbnails.standardizedFileURL.path
+                    for file in (ownedDirectory ? try? FileManager.default.contentsOfDirectory(at: thumbnails, includingPropertiesForKeys: nil) : nil) ?? [] {
+                        guard file.pathExtension == "png", UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil else { continue }
+                        let path = "assets/capture-thumbnails/" + file.lastPathComponent
+                        if snapshot.assets[path] == nil {
+                            try? FileManager.default.removeItem(at: file)
+                            writtenHashes.removeValue(forKey: path)
+                        }
+                    }
                     let current = Set(snapshot.documents.keys)
                     for entry in previous?.exports ?? [] where !current.contains(entry.path) {
                         let parts = entry.path.split(separator: "/", omittingEmptySubsequences: false)
@@ -343,8 +382,16 @@ enum Brain {
     }
 
     private static func writeAgentFile(_ content: String, to relativePath: String) throws {
-        let data = Data(content.utf8), hash = SHA256.hash(data: Data(content.utf8))
+        try writeAgentData(Data(content.utf8), to: relativePath)
+    }
+
+    private static func writeAgentData(_ data: Data, to relativePath: String) throws {
+        let hash = SHA256.hash(data: data)
         let url = root.appendingPathComponent(relativePath)
+        guard url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path + "/"),
+              url.resolvingSymlinksInPath().path == url.standardizedFileURL.path else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
         if writtenHashes[relativePath] == hash && FileManager.default.fileExists(atPath: url.path) { return }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if (try? Data(contentsOf: url)) != data { try data.write(to: url, options: .atomic) }
@@ -384,7 +431,7 @@ enum Brain {
     /// pathspec as an error, and not every optional Brain artifact exists on
     /// a user's first launch.
     private static func stageManagedFiles() {
-        let paths = ["README.md", "CLAUDE.md", "notes", "meetings", "screenshots", "recordings",
+        let paths = ["README.md", "CLAUDE.md", "AGENTS.md", "tools", "notes", "meetings", "screenshots", "recordings",
                      "tasks.md", "people.md", "vocabulary.md", "assets", "dictations", "task-items", "themes", "catalog.json"]
             .filter { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }
         guard !paths.isEmpty else { return }
