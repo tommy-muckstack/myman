@@ -134,6 +134,24 @@ final class RichNoteTextView: NSTextView {
         updateFormatBar()
     }
 
+    override func cursorUpdate(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if [formatBar as NSView?, slashMenu as NSView?].compactMap({ $0 }).contains(where: {
+            !$0.isHidden && $0.frame.contains(point)
+        }) {
+            NSCursor.pointingHand.set()
+        } else {
+            super.cursorUpdate(with: event)
+        }
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        for menu in [formatBar as NSView?, slashMenu as NSView?].compactMap({ $0 }) where !menu.isHidden {
+            addCursorRect(menu.frame.intersection(visibleRect), cursor: .pointingHand)
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         if string.isEmpty {
@@ -402,6 +420,7 @@ final class RichNoteTextView: NSTextView {
 
     func updateFormatBar() {
         guard let bar = formatBar else { return }
+        defer { window?.invalidateCursorRects(for: self) }
         let range = selectedRange()
         guard range.length > 0, window != nil, slashRange == nil else { bar.isHidden = true; return }
         let rect = localRect(for: range)
@@ -436,9 +455,10 @@ final class RichNoteTextView: NSTextView {
         let y = rect.maxY + size.height + 8 > visibleRect.maxY ? max(visibleRect.minY, rect.minY - size.height - 8) : rect.maxY + 8
         slashMenu?.frame = NSRect(x: min(rect.minX, max(0, bounds.width - size.width - 8)), y: y, width: size.width, height: size.height)
         formatBar?.isHidden = true
+        window?.invalidateCursorRects(for: self)
     }
 
-    private func dismissSlashMenu() { slashRange = nil; slashMenu?.removeFromSuperview(); slashMenu = nil; choiceIndex = 0 }
+    private func dismissSlashMenu() { slashRange = nil; slashMenu?.removeFromSuperview(); slashMenu = nil; choiceIndex = 0; window?.invalidateCursorRects(for: self) }
 }
 
 private struct FormatBar: View {
@@ -449,18 +469,18 @@ private struct FormatBar: View {
     var onLink: () -> Void
     var body: some View {
         HStack(spacing: 2) {
-            button("bold", "Bold (⌘B)", onBold)
-            button("italic", "Italic (⌘I)", onItalic)
-            button("underline", "Underline (⌘U)", onUnderline)
-            button("strikethrough", "Strikethrough", onStrike)
-            button("link", "Link (⌘K)", onLink)
+            button(.bold, "Bold (⌘B)", onBold)
+            button(.italic, "Italic (⌘I)", onItalic)
+            button(.underline, "Underline (⌘U)", onUnderline)
+            button(.strikethrough, "Strikethrough", onStrike)
+            button(.link, "Link (⌘K)", onLink)
         }
         .padding(4)
         .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
         .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall).strokeBorder(MM.Colors.border, lineWidth: 1))
     }
-    private func button(_ icon: String, _ label: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: icon).font(MM.Fonts.secondary).frame(width: 30, height: 28).clickable() }
+    private func button(_ icon: MMIcon, _ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { IconView(icon: icon, size: 20, color: MM.Colors.textPrimary).frame(width: 30, height: 28).clickable() }
             .buttonStyle(.plain).foregroundStyle(MM.Colors.textPrimary).help(label).accessibilityLabel(label)
     }
 }

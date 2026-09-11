@@ -62,12 +62,12 @@ struct NoteDocumentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: MM.Layout.spacing) {
-                Image(systemName: "doc.text").foregroundStyle(MM.Colors.textTertiary)
+                IconView(icon: .note, color: MM.Colors.textTertiary)
                 Text("Note").foregroundStyle(MM.Colors.textSecondary)
                 Text(note.createdAt.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(MM.Colors.textTertiary)
                 Spacer()
                 Button { showRelated.toggle() } label: {
-                    Image(systemName: "square.stack.3d.up").clickable(minSize: 28)
+                    IconView(icon: .related).clickable(minSize: 28)
                 }.buttonStyle(.plain).help("Related captures").accessibilityLabel("Related captures")
                 Menu {
                     Button("Copy text") {

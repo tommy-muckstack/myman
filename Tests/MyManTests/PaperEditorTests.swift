@@ -73,6 +73,36 @@ final class PaperEditorTests: XCTestCase {
         XCTAssertEqual(last.pointSize, MM.Document.bodySize)
     }
 
+    @MainActor func testSelectionToolbarCursorAndArtwork() async throws {
+        var markdown = "Title\nSelect these words to format them."
+        let window = try await host(RichMarkdownEditor(markdown: Binding(get: { markdown }, set: { markdown = $0 })))
+        defer { window.contentView = nil; window.close() }
+        let text = try XCTUnwrap(editor(in: XCTUnwrap(window.contentView)))
+        window.makeFirstResponder(text)
+        let range = (text.string as NSString).range(of: "these words")
+        text.setSelectedRange(range)
+        text.updateFormatBar()
+        let toolbar = try XCTUnwrap(text.subviews.first { !$0.isHidden && $0.frame.height == 36 })
+        func cursor(at point: NSPoint) throws {
+            let event = try XCTUnwrap(NSEvent.enterExitEvent(with: .cursorUpdate,
+                location: text.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+            text.cursorUpdate(with: event)
+        }
+        // NSTextView receives a cursor update AFTER the SwiftUI control's
+        // tracking area. It must not replace the hand with its I-beam.
+        NSCursor.iBeam.set()
+        try cursor(at: NSPoint(x: toolbar.frame.midX, y: toolbar.frame.midY))
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand)
+        try render(window, name: "selection-toolbar")
+        text.setSelectedRange(NSRange(location: range.location, length: 0))
+        text.updateFormatBar()
+        XCTAssertTrue(toolbar.isHidden)
+        try cursor(at: NSPoint(x: toolbar.frame.midX, y: toolbar.frame.midY))
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam)
+        XCTAssertEqual(markdown, "Title\nSelect these words to format them.")
+    }
+
     @MainActor func testListsContinueExitAndCheckboxesToggle() async throws {
         var markdown = "Title\n1. First"
         let window = try await host(RichMarkdownEditor(markdown: Binding(get: { markdown }, set: { markdown = $0 })))
@@ -199,6 +229,12 @@ final class PaperEditorTests: XCTestCase {
                 try render(window, name: "note-" + name)
                 let text = try XCTUnwrap(editor(in: XCTUnwrap(window.contentView)))
                 XCTAssertLessThanOrEqual(text.textContainer?.containerSize.width ?? 1000, MM.Document.columnWidth + 1)
+                if width == 1000 {
+                    window.makeFirstResponder(text)
+                    text.setSelectedRange((text.string as NSString).range(of: "clear emphasis"))
+                    text.updateFormatBar()
+                    try render(window, name: "note-selection-" + (dark ? "dark" : "light"))
+                }
                 window.contentView = nil; window.close()
             }
             let window = try await host(MeetingDocumentView(meeting: meeting, database: db, automaticallySummarize: false), size: NSSize(width: 820, height: 800))

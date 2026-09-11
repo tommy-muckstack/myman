@@ -47,7 +47,7 @@ struct CaptureResultRow: View {
     var body: some View {
         HStack(spacing: MM.Layout.spacing) {
             if match.item.kind == "screenshot" { CaptureThumbnail(path: match.item.sourcePath, revision: match.item.revision) }
-            else { Image(systemName: match.item.icon).foregroundStyle(MM.Colors.textSecondary).frame(width: 48) }
+            else { IconView(icon: match.item.icon).frame(width: 48) }
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     HighlightedCaptureText(text: match.item.title, terms: match.matchedTerms).font(MM.Fonts.body).lineLimit(1)
