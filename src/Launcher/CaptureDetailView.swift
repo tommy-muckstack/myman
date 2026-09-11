@@ -45,7 +45,7 @@ struct CaptureRelatedSection: View {
                 ForEach(related) { relation in
                     Button { CaptureActions.open(relation.item) } label: {
                         HStack {
-                            Image(systemName: relation.item.icon)
+                            IconView(icon: relation.item.icon)
                             Text(relation.item.title).lineLimit(1)
                             Spacer()
                             Text(relation.reason).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary).lineLimit(1)

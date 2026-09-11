@@ -24,13 +24,13 @@ struct CaptureItem: Identifiable, Codable, FetchableRecord, PersistableRecord, E
         if kind == "dictation", let line = body.split(separator: "\n").first { return String(line.prefix(80)) }
         return kind.capitalized + " · " + capturedAt.formatted(date: .abbreviated, time: .shortened)
     }
-    var icon: String {
+    var icon: MMIcon {
         switch kind {
-        case "screenshot": "photo"
-        case "meeting": "person.2"
-        case "dictation": "waveform"
-        case "recording": "video"
-        default: "note.text"
+        case "screenshot": .screenshot
+        case "meeting": .calendar
+        case "dictation": .voice
+        case "recording": .recordScreen
+        default: .note
         }
     }
     var text: String { [title, body, summary, metadata].filter { !$0.isEmpty }.joined(separator: "\n") }

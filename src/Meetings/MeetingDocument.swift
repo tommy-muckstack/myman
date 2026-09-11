@@ -457,7 +457,7 @@ struct MeetingDocumentView: View {
                     Button { showSlides.toggle() } label: { Label("\(slidePaths.count)", systemImage: "photo.on.rectangle").clickable(minSize: 28) }
                         .buttonStyle(.plain).help("Show captured slides")
                 }
-                Button { showRelated.toggle() } label: { Image(systemName: "square.stack.3d.up").clickable(minSize: 28) }
+                Button { showRelated.toggle() } label: { IconView(icon: .related).clickable(minSize: 28) }
                     .buttonStyle(.plain).help("Related captures").accessibilityLabel("Related captures")
                 Menu {
                     Button("Copy notes") {
