@@ -5,7 +5,12 @@ import GRDB
 final class NotesStore: ObservableObject {
     @Published private(set) var results: [Note] = []
 
-    private let db = Database.shared
+    private let db: DatabaseQueue
+    private let syncExports: Bool
+    init(database: DatabaseQueue? = nil) {
+        db = database ?? Database.shared
+        syncExports = database == nil
+    }
 
     func refresh(matching query: String = "") {
         let notes: [Note] = (try? db.read { db in
@@ -52,15 +57,25 @@ final class NotesStore: ObservableObject {
         return note
     }
 
-    func update(_ note: Note, body: String) {
-        var updated = note
-        updated.body = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.title = Note.deriveTitle(from: updated.body)
-        updated.updatedAt = Date()
-        try? db.write { try updated.update($0) }
-        Analytics.track("note_updated", ["chars": updated.body.count])
-        Brain.syncNote(id: updated.id, title: updated.title, body: updated.body,
-                       createdAt: updated.createdAt, updatedAt: updated.updatedAt)
+    @discardableResult
+    func update(_ note: Note, body: String) -> Bool {
+        do { try updateDocument(note, body: body); return true }
+        catch { return false }
+    }
+
+    func updateDocument(_ note: Note, body: String) throws {
+        let title = Note.deriveTitle(from: body)
+        let updatedAt = Date()
+        try db.write { db in
+            try db.execute(sql: "UPDATE note SET body = ?, title = ?, updatedAt = ? WHERE id = ?",
+                           arguments: [body, title, updatedAt, note.id])
+            guard db.changesCount > 0 else { throw CocoaError(.fileNoSuchFile) }
+        }
+        if syncExports {
+            Analytics.track("note_updated", ["chars": body.count])
+            Brain.syncNote(id: note.id, title: title, body: body,
+                           createdAt: note.createdAt, updatedAt: updatedAt)
+        }
     }
 
     func delete(_ note: Note) {

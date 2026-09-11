@@ -613,7 +613,7 @@ struct EditorView: View {
                 if let pending = pendingText {
                     TextField("", text: $textDraft)
                         .textFieldStyle(.plain)
-                        .font(MM.Fonts.outfit(model.annotationFontSize * scale, .semiBold))
+                        .font(MM.Fonts.gellix(model.annotationFontSize * scale, .semiBold))
                         .foregroundStyle(Color(nsColor: model.annotationColor))
                         .focused($textFocused)
                         .frame(width: 240)
@@ -728,7 +728,7 @@ struct EditorView: View {
             // Same image-space size the export uses, scaled for display.
             context.draw(
                 Text(string)
-                    .font(MM.Fonts.outfit(model.annotationFontSize * scale, .semiBold))
+                    .font(MM.Fonts.gellix(model.annotationFontSize * scale, .semiBold))
                     .foregroundColor(color),
                 at: CGPoint(x: origin.x * scale, y: origin.y * scale),
                 anchor: .topLeading

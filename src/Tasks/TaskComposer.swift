@@ -62,7 +62,7 @@ private struct TaskComposerView: View {
             TextField("", text: $title, prompt: Text("What needs doing?")
                 .foregroundStyle(MM.Colors.textTertiary))
                 .textFieldStyle(.plain)
-                .font(MM.Fonts.outfit(19, .medium))
+                .font(MM.Fonts.gellix(19, .medium))
                 .foregroundStyle(MM.Colors.textPrimary)
                 .focused($titleFocused)
                 .onSubmit(save)

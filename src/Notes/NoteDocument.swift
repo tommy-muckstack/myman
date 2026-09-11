@@ -9,7 +9,11 @@ import SwiftUI
 final class NoteDocumentController {
     static let shared = NoteDocumentController()
     private var windows: [String: NSWindow] = [:]
-    func close(id: String) { let window = windows.removeValue(forKey: id); window?.contentView = nil; window?.close() }
+    func close(id: String) {
+        let window = windows.removeValue(forKey: id)
+        (window as? DocumentWindow)?.autosave?.discardPendingChanges()
+        window?.contentView = nil; window?.close()
+    }
 
     func open(_ note: Note) {
         if let existing = windows[note.id] {
@@ -17,7 +21,7 @@ final class NoteDocumentController {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let window = NSWindow(
+        let window = DocumentWindow(
             contentRect: .zero,
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -26,9 +30,13 @@ final class NoteDocumentController {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 520, height: 480))
+        window.setContentSize(MM.Document.windowSize)
+        window.minSize = NSSize(width: 560, height: 420)
+        window.isMovableByWindowBackground = false
+        let autosave = DocumentAutosave()
+        window.autosave = autosave
         window.center()
-        window.contentView = NSHostingView(rootView: NoteDocumentView(note: note))
+        window.contentView = NSHostingView(rootView: NoteDocumentView(note: note, autosave: autosave))
         windows[note.id] = window
         Analytics.track("note_document_opened")
         NSApp.activate(ignoringOtherApps: true)
@@ -36,103 +44,64 @@ final class NoteDocumentController {
     }
 }
 
-/// Subtle autosave status: quiet "Saving…" while the debounce runs, a brief
-/// "Saved" confirmation, then silence.
-enum SaveState { case idle, pending, saved }
-
-struct SaveIndicator: View {
-    let state: SaveState
-
-    var body: some View {
-        Group {
-            switch state {
-            case .idle:
-                EmptyView()
-            case .pending:
-                Text("Saving…")
-            case .saved:
-                HStack(spacing: 3) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 8, weight: .semibold))
-                    Text("Saved")
-                }
-            }
-        }
-        .font(MM.Fonts.metadata)
-        .foregroundStyle(MM.Colors.textTertiary)
-        .transition(.opacity)
-        .animation(MM.Motion.gentle, value: state)
-    }
-}
-
 struct NoteDocumentView: View {
     let note: Note
     @State private var body_: String
-    @State private var saveTask: Task<Void, Never>?
-    @State private var saveState: SaveState = .idle
-    @State private var linkCopied = false
-    @State private var headerHovering = false
-    private let store = NotesStore()
+    @StateObject private var autosave: DocumentAutosave
+    @StateObject private var editor = RichEditorSession()
+    @State private var showRelated = false
+    private let store: NotesStore
 
-    init(note: Note) {
+    init(note: Note, autosave: DocumentAutosave? = nil, store: NotesStore? = nil) {
         self.note = note
+        self.store = store ?? NotesStore()
         _body_ = State(initialValue: note.body)
+        _autosave = StateObject(wrappedValue: autosave ?? DocumentAutosave())
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(MM.Fonts.metadata)
-                    .foregroundStyle(MM.Colors.textTertiary)
+            HStack(spacing: MM.Layout.spacing) {
+                Image(systemName: "doc.text").foregroundStyle(MM.Colors.textTertiary)
+                Text("Note").foregroundStyle(MM.Colors.textSecondary)
+                Text(note.createdAt.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(MM.Colors.textTertiary)
                 Spacer()
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(
-                        Brain.noteFilePath(id: note.id, createdAt: note.createdAt),
-                        forType: .string)
-                    linkCopied = true
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(2))
-                        linkCopied = false
+                Button { showRelated.toggle() } label: {
+                    Image(systemName: "square.stack.3d.up").clickable(minSize: 28)
+                }.buttonStyle(.plain).help("Related captures").accessibilityLabel("Related captures")
+                Menu {
+                    Button("Copy text") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(MarkdownRich.plainText(body_), forType: .string)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        IconView(icon: .copy, size: 12,
-                                 color: linkCopied ? .green : MM.Colors.textTertiary)
-                        Text(linkCopied ? "Copied" : "Copy link")
+                    Button("Copy Markdown") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(body_, forType: .string)
                     }
-                    .font(MM.Fonts.metadata)
-                    .foregroundStyle(linkCopied ? .green : MM.Colors.textTertiary)
-                    .clickable(minSize: 22)
-                }
-                .buttonStyle(.plain)
-                .opacity(headerHovering ? 1 : 0)
-                .animation(MM.Motion.gentle, value: headerHovering)
-                .help("Copy this note's file path — paste it to Claude or any agent")
-                SaveIndicator(state: saveState)
+                    Button("Copy file path") {
+                        autosave.flush()
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(Brain.noteFilePath(id: note.id, createdAt: note.createdAt), forType: .string)
+                    }
+                } label: { Image(systemName: "ellipsis").clickable(minSize: 28) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Note actions").accessibilityLabel("Note actions")
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 26)
-            .contentShape(Rectangle())
-            .onHover { headerHovering = $0 }
-            RichMarkdownEditor(markdown: $body_)
-                .onChange(of: body_) { _, newValue in
-                    saveTask?.cancel()
-                    saveState = .pending
-                    saveTask = Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(1))
-                        guard !Task.isCancelled else { return }
-                        store.update(note, body: newValue)
-                        saveState = .saved
-                        try? await Task.sleep(for: .seconds(2))
-                        guard !Task.isCancelled else { return }
-                        if saveState == .saved { saveState = .idle }
-                    }
-                }
+            .font(MM.Fonts.metadata)
+            .foregroundStyle(MM.Colors.textSecondary)
+            .padding(.horizontal, MM.Document.margin)
+            .padding(.top, MM.Layout.paddingLarge)
+            .padding(.bottom, MM.Layout.spacing)
+            RichMarkdownEditor(markdown: Binding(get: { body_ }, set: { text in
+                body_ = text
+                autosave.submit { try store.updateDocument(note, body: text) }
+            }), session: editor)
+            if showRelated {
+                CaptureRelatedSection(itemID: "note-" + note.id).padding(MM.Layout.padding)
+            }
+            DocumentFooter(session: editor, text: body_, autosave: autosave)
         }
-        .safeAreaInset(edge: .bottom) { CaptureRelatedSection(itemID: "note-" + note.id).padding(MM.Layout.padding).background(MM.Colors.background) }
         .background(MM.Colors.background)
-        .frame(minWidth: 380, minHeight: 300)
+        .frame(minWidth: 560, minHeight: 420)
+        .onDisappear { autosave.flush() }
     }
 }

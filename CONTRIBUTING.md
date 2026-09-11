@@ -20,7 +20,7 @@ swift build -c release --arch arm64 --arch x86_64
 
 ## House rules — please read before writing code
 
-- **Design tokens only.** Colors, fonts, radii, and spacing come from `src/Core/DesignSystem.swift` (`MM.*`). Never hardcode colors or use fonts other than Outfit.
+- **Design tokens only.** Colors, fonts, radii, and spacing come from `src/Core/DesignSystem.swift` (`MM.*`). Never hardcode colors or use fonts other than Gellix (except monospaced code and numeric counters).
 - **Everything clickable gets `.clickable()`** — the ≥24pt hit target + pointing-hand standard. Icon-only buttons without it are effectively unclickable (SVG strokes are the only hit area).
 - **Panel doctrine** (this prevented a whole crash class — see `FloatingPanel.swift`):
   - Panels with *static* content use the default `FloatingPanel` (autolayout hosting).

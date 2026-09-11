@@ -1,210 +1,54 @@
 import AppKit
 import SwiftUI
 
-// True WYSIWYG note editing, the Scrap/Dropbox-Paper way: the user sees and
-// edits RICH text (no visible asterisks); markdown is only the storage
-// format, converted on load and save. First line is the title — always
-// rendered big. Selecting text floats a small B/I/U bar above the selection.
-//
-// Formatting model: bold = Outfit-SemiBold, italic = obliqueness (Outfit has
-// no italic face — Scrap hit the same wall), underline = underline attribute.
+@MainActor final class RichEditorSession: ObservableObject {
+    weak var textView: RichNoteTextView?
+    func insert(_ block: DocumentBlock) { textView?.applyBlock(block) }
+}
 
-enum MarkdownRich {
-    static let bodySize: CGFloat = 15
-    static let titleSize: CGFloat = 24
-    static let headingSize: CGFloat = 19
-    static let bulletPrefix = "\u{2022}  " // "•  " — rendered, serialized back to "* "
-
-    static func bodyFont(bold: Bool) -> NSFont {
-        font(bold: bold, italic: false, title: false)
+enum DocumentBlock: String, CaseIterable, Identifiable {
+    case text, heading, subheading, bullet, numbered, checklist, quote
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .text: return "Text"
+        case .heading: return "Heading"
+        case .subheading: return "Subheading"
+        case .bullet: return "Bulleted list"
+        case .numbered: return "Numbered list"
+        case .checklist: return "Checklist"
+        case .quote: return "Quote"
+        }
     }
-
-    /// Single font factory. Italic is a matrix skew carrying the size —
-    /// Outfit ships no italic face, and TextKit 2 ignores `.obliqueness`
-    /// (kept only as a serialization marker).
-    static func font(bold: Bool, italic: Bool, title: Bool, heading: Bool = false) -> NSFont {
-        let size = title ? titleSize : (heading ? headingSize : bodySize)
-        let name: String
-        if title || heading {
-            name = bold && title ? "Outfit-Bold" : "Outfit-SemiBold"
-        } else {
-            name = bold ? "Outfit-SemiBold" : "Outfit-Regular"
+    var symbol: String {
+        switch self {
+        case .text: return "text.alignleft"
+        case .heading: return "textformat.size.larger"
+        case .subheading: return "textformat.size.smaller"
+        case .bullet: return "list.bullet"
+        case .numbered: return "list.number"
+        case .checklist: return "checklist"
+        case .quote: return "text.quote"
         }
-        var result = NSFont(name: name, size: size)
-            ?? NSFont.systemFont(ofSize: size, weight: bold || title || heading ? .semibold : .regular)
-        if italic {
-            let skew = AffineTransform(m11: size, m12: 0, m21: 0.21 * size, m22: size, tX: 0, tY: 0)
-            result = NSFont(descriptor: result.fontDescriptor.withMatrix(skew), size: 0) ?? result
-        }
-        return result
     }
-
-    static var titleFont: NSFont { font(bold: false, italic: false, title: true) }
-
-    /// Markdown stripped to plain display text — for list rows and search
-    /// results, which must never show raw markers.
-    static func plainText(_ markdown: String) -> String {
-        var text = markdown
-        for (pattern, template) in [
-            ("(?m)^#{1,3} ", ""),
-            ("(?m)^[-*] ", ""),
-            ("<u>(.*?)</u>", "$1"),
-            ("\\*\\*\\*(.*?)\\*\\*\\*", "$1"),
-            ("\\*\\*(.*?)\\*\\*", "$1"),
-            ("\\*([^*\\n]+?)\\*", "$1"),
-        ] {
-            if let regex = try? NSRegularExpression(pattern: pattern) {
-                let ns = text as NSString
-                text = regex.stringByReplacingMatches(
-                    in: text, range: NSRange(location: 0, length: ns.length), withTemplate: template)
-            }
+    var prefix: String {
+        switch self {
+        case .text: return ""
+        case .heading: return "## "
+        case .subheading: return "### "
+        case .bullet: return "- "
+        case .numbered: return "1. "
+        case .checklist: return "- [ ] "
+        case .quote: return "> "
         }
-        return text
-    }
-
-    // MARK: Markdown → attributed
-
-    static func attributed(from markdown: String, firstLineIsTitle: Bool = true) -> NSMutableAttributedString {
-        let result = NSMutableAttributedString()
-        let lines = markdown.components(separatedBy: "\n")
-        for (index, rawLine) in lines.enumerated() {
-            var line = String(rawLine)
-            if firstLineIsTitle && index == 0 {
-                result.append(parseInline(line, title: true))
-            } else if line.hasPrefix("## ") || line.hasPrefix("# ") || line.hasPrefix("### ") {
-                line = line.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
-                result.append(NSAttributedString(string: line, attributes: [
-                    .font: font(bold: false, italic: false, title: false, heading: true),
-                    .foregroundColor: NSColor.textColor,
-                ]))
-            } else if line.hasPrefix("* ") || line.hasPrefix("- ") {
-                result.append(NSAttributedString(string: bulletPrefix, attributes: [
-                    .font: bodyFont(bold: false),
-                    .foregroundColor: NSColor.secondaryLabelColor,
-                ]))
-                result.append(parseInline(String(line.dropFirst(2)), title: false))
-            } else {
-                result.append(parseInline(line, title: false))
-            }
-            if index < lines.count - 1 {
-                result.append(NSAttributedString(
-                    string: "\n",
-                    attributes: [.font: bodyFont(bold: false), .foregroundColor: NSColor.textColor]))
-            }
-        }
-        return result
-    }
-
-    private static func parseInline(_ line: String, title: Bool) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        // Longest markers first so ** isn't eaten by *.
-        let pattern = "(<u>.*?</u>|\\*\\*\\*.*?\\*\\*\\*|\\*\\*.*?\\*\\*|\\*[^*\\n]+?\\*)"
-        let regex = try? NSRegularExpression(pattern: pattern)
-        let ns = line as NSString
-        var cursor = 0
-
-        func append(_ text: String, bold: Bool = false, italic: Bool = false, underline: Bool = false) {
-            guard !text.isEmpty else { return }
-            var attributes: [NSAttributedString.Key: Any] = [
-                .font: font(bold: bold, italic: italic, title: title),
-                .foregroundColor: NSColor.textColor,
-            ]
-            if italic { attributes[.obliqueness] = 0.18 }
-            if underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-            result.append(NSAttributedString(string: text, attributes: attributes))
-        }
-
-        for match in regex?.matches(in: line, range: NSRange(location: 0, length: ns.length)) ?? [] {
-            append(ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor)))
-            var token = ns.substring(with: match.range)
-            if token.hasPrefix("<u>") {
-                token = String(token.dropFirst(3).dropLast(4))
-                let bold = token.hasPrefix("**")
-                if bold { token = String(token.dropFirst(2).dropLast(2)) }
-                append(token, bold: bold, underline: true)
-            } else if token.hasPrefix("***") {
-                append(String(token.dropFirst(3).dropLast(3)), bold: true, italic: true)
-            } else if token.hasPrefix("**") {
-                append(String(token.dropFirst(2).dropLast(2)), bold: true)
-            } else {
-                append(String(token.dropFirst(1).dropLast(1)), italic: true)
-            }
-            cursor = match.range.location + match.range.length
-        }
-        append(ns.substring(from: cursor))
-        return result
-    }
-
-    // MARK: Attributed → markdown (line-based: headings and bullets restore
-    // their markers; inline runs restore theirs)
-
-    static func markdown(from attributed: NSAttributedString, firstLineIsTitle: Bool = true) -> String {
-        let full = attributed.string as NSString
-        var lines: [String] = []
-        var location = 0
-        var lineIndex = 0
-        while location <= full.length {
-            let remainder = NSRange(location: location, length: full.length - location)
-            let newline = full.range(of: "\n", range: remainder)
-            let lineEnd = newline.location == NSNotFound ? full.length : newline.location
-            let lineRange = NSRange(location: location, length: lineEnd - location)
-            lines.append(serializeLine(
-                attributed.attributedSubstring(from: lineRange),
-                title: firstLineIsTitle && lineIndex == 0))
-            if newline.location == NSNotFound { break }
-            location = lineEnd + 1
-            lineIndex += 1
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private static func serializeLine(_ line: NSAttributedString, title: Bool) -> String {
-        guard line.length > 0 else { return "" }
-        let firstFont = line.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-        let size = firstFont?.pointSize ?? bodySize
-
-        var content = line
-        var prefix = ""
-        if !title, abs(size - headingSize) < 0.6 {
-            return "## " + line.string
-        }
-        if line.string.hasPrefix("\u{2022}") {
-            prefix = "* "
-            var start = 1
-            let chars = Array(line.string)
-            while start < chars.count, chars[start] == " " { start += 1 }
-            content = line.attributedSubstring(
-                from: NSRange(location: start, length: line.length - start))
-        }
-
-        var output = prefix
-        content.enumerateAttributes(in: NSRange(location: 0, length: content.length)) { attributes, range, _ in
-            let text = (content.string as NSString).substring(with: range)
-            guard !text.isEmpty else { return }
-            if title {
-                output += text
-                return
-            }
-            let font = attributes[.font] as? NSFont
-            let bold = font?.fontName.localizedCaseInsensitiveContains("SemiBold") ?? false
-            let italic = (attributes[.obliqueness] as? CGFloat ?? 0) > 0.01
-            let underline = (attributes[.underlineStyle] as? Int ?? 0) != 0
-            var wrapped = text
-            if bold && italic { wrapped = "***\(wrapped)***" }
-            else if bold { wrapped = "**\(wrapped)**" }
-            else if italic { wrapped = "*\(wrapped)*" }
-            if underline { wrapped = "<u>\(wrapped)</u>" }
-            output += wrapped
-        }
-        return output
     }
 }
 
-// MARK: - SwiftUI wrapper
-
 struct RichMarkdownEditor: NSViewRepresentable {
     @Binding var markdown: String
-    var firstLineIsTitle: Bool = true
+    var firstLineIsTitle = true
+    var session: RichEditorSession? = nil
+    var placeholder = "Start writing…"
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = RichNoteTextView()
@@ -212,238 +56,455 @@ struct RichMarkdownEditor: NSViewRepresentable {
         textView.isRichText = true
         textView.allowsUndo = true
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 24, height: 20)
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.textContainer?.widthTracksTextView = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = true
         textView.firstLineIsTitle = firstLineIsTitle
-        textView.textStorage?.setAttributedString(
-            MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle))
+        textView.placeholder = placeholder
+        textView.setAccessibilityLabel(firstLineIsTitle ? "Note document" : "Meeting notes")
+        textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle))
+        textView.typingAttributes = textView.baseAttributes(title: firstLineIsTitle && markdown.isEmpty)
         textView.installFormatBar()
-
+        session?.textView = textView
+        context.coordinator.lastMarkdown = markdown
         let scroll = NSScrollView()
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         textView.autoresizingMask = [.width]
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.parent = self
         guard let textView = scroll.documentView as? RichNoteTextView else { return }
-        // Only reload when the change came from outside the editor.
-        if !context.coordinator.editing,
-           MarkdownRich.markdown(from: textView.attributedString(),
-                                 firstLineIsTitle: firstLineIsTitle) != markdown {
-            textView.textStorage?.setAttributedString(
-                MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle))
+        session?.textView = textView
+        if context.coordinator.lastMarkdown != markdown {
+            let selection = textView.selectedRange()
+            textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle))
+            context.coordinator.lastMarkdown = markdown
+            textView.setSelectedRange(NSRange(location: min(selection.location, (textView.string as NSString).length), length: 0))
+            textView.needsDisplay = true
         }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
-
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: RichMarkdownEditor
-        var editing = false
+        var lastMarkdown = ""
         init(_ parent: RichMarkdownEditor) { self.parent = parent }
-
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? RichNoteTextView else { return }
-            textView.enforceTitleStyling()
-            editing = true
-            parent.markdown = MarkdownRich.markdown(
-                from: textView.attributedString(),
-                firstLineIsTitle: textView.firstLineIsTitle)
-            editing = false
+            guard let view = notification.object as? RichNoteTextView else { return }
+            view.enforceTitleStyling()
+            lastMarkdown = MarkdownRich.markdown(from: view.attributedString(), firstLineIsTitle: view.firstLineIsTitle)
+            parent.markdown = lastMarkdown
+            view.updateSlashMenu()
         }
-
         func textViewDidChangeSelection(_ notification: Notification) {
             (notification.object as? RichNoteTextView)?.updateFormatBar()
         }
     }
 }
 
-// MARK: - The text view
-
 final class RichNoteTextView: NSTextView {
     var firstLineIsTitle = true
+    var placeholder = "Start writing…"
     private var formatBar: NSHostingView<FormatBar>?
+    private var slashMenu: NSHostingView<BlockPicker>?
+    private var slashRange: NSRange?
+    private var choices: [DocumentBlock] = []
+    private var choiceIndex = 0
+    private var linkPopover: NSPopover?
+    private var adjustingColumn = false
+
+    override func setFrameSize(_ newSize: NSSize) {
+        guard !adjustingColumn else { super.setFrameSize(newSize); return }
+        adjustingColumn = true
+        defer { adjustingColumn = false }
+        super.setFrameSize(newSize)
+        let inset = max(MM.Document.margin, (newSize.width - MM.Document.columnWidth) / 2)
+        let desired = NSSize(width: inset, height: firstLineIsTitle ? 32 : 20)
+        if textContainerInset != desired { textContainerInset = desired }
+        // widthTracksTextView owns the container. Setting both sizes here
+        // makes TextKit feed container resizing back into this method.
+        updateFormatBar()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        if string.isEmpty {
+            let attrs: [NSAttributedString.Key: Any] = [.font: firstLineIsTitle ? MarkdownRich.titleFont : MarkdownRich.bodyFont(bold: false), .foregroundColor: NSColor.tertiaryLabelColor]
+            ((firstLineIsTitle ? "Untitled note" : placeholder) as NSString).draw(at: NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height), withAttributes: attrs)
+        }
+    }
+
+    func baseAttributes(title: Bool = false, prefix: String = "") -> [NSAttributedString.Key: Any] {
+        let sample = NSMutableAttributedString(string: " ", attributes: [.manBlock: prefix])
+        MarkdownRich.style(sample, title: title)
+        return sample.attributes(at: 0, effectiveRange: nil)
+    }
+
+    private func isTitle(_ range: NSRange) -> Bool {
+        firstLineIsTitle && range.location <= (string as NSString).range(of: "\n").location
+    }
+
+    /// Preserve structure and inline traits while applying the page typography.
+    func enforceTitleStyling() {
+        guard let storage = textStorage else { return }
+        let source = storage.string as NSString
+        var location = 0
+        storage.beginEditing()
+        while location < source.length {
+            let range = source.lineRange(for: NSRange(location: location, length: 0))
+            let line = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: range))
+            let prefix = line.attribute(.manBlock, at: 0, effectiveRange: nil) as? String ?? ""
+            line.addAttribute(.manBlock, value: prefix, range: NSRange(location: 0, length: line.length))
+            MarkdownRich.style(line, title: firstLineIsTitle && location == 0)
+            line.enumerateAttributes(in: NSRange(location: 0, length: line.length)) { attrs, run, _ in
+                storage.setAttributes(attrs, range: NSRange(location: location + run.location, length: run.length))
+            }
+            location = NSMaxRange(range)
+        }
+        storage.endEditing()
+        needsDisplay = true
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command), isEditable {
-            switch event.charactersIgnoringModifiers {
+            switch event.charactersIgnoringModifiers?.lowercased() {
             case "b": toggleBoldSelection(); return true
             case "i": toggleItalicSelection(); return true
             case "u": toggleUnderlineSelection(); return true
+            case "k": editLink(); return true
             default: break
             }
         }
         return super.performKeyEquivalent(with: event)
     }
 
-    /// First line is the title: always big, never markered.
-    func enforceTitleStyling() {
-        guard firstLineIsTitle else { return }
-        guard let storage = textStorage else { return }
-        let text = storage.string as NSString
-        let firstLineEnd = text.range(of: "\n").location
-        let titleLength = firstLineEnd == NSNotFound ? text.length : firstLineEnd
-        if titleLength > 0 {
-            let titleRange = NSRange(location: 0, length: titleLength)
-            storage.enumerateAttributes(in: titleRange) { attributes, range, _ in
-                let name = (attributes[.font] as? NSFont)?.fontName ?? ""
-                let bold = name.localizedCaseInsensitiveContains("Outfit-Bold")
-                let italic = (attributes[.obliqueness] as? CGFloat ?? 0) > 0.01
-                storage.addAttribute(.font,
-                    value: MarkdownRich.font(bold: bold, italic: italic, title: true), range: range)
+    override func keyDown(with event: NSEvent) {
+        if slashRange != nil, !choices.isEmpty {
+            switch event.keyCode {
+            case 125: choiceIndex = (choiceIndex + 1) % choices.count; refreshSlashPicker(); return
+            case 126: choiceIndex = (choiceIndex + choices.count - 1) % choices.count; refreshSlashPicker(); return
+            case 36: applyBlock(choices[choiceIndex]); return
+            case 53: dismissSlashMenu(); return
+            default: break
             }
         }
-        // Body runs that lost their font (typed at a boundary) get the base.
-        if titleLength < text.length {
-            let bodyRange = NSRange(location: titleLength, length: text.length - titleLength)
-            storage.enumerateAttributes(in: bodyRange) { attributes, range, _ in
-                let font = attributes[.font] as? NSFont
-                if font == nil || font!.pointSize >= MarkdownRich.titleSize - 1 {
-                    let bold = font?.fontName.localizedCaseInsensitiveContains("SemiBold") ?? false
-                    let italic = (attributes[.obliqueness] as? CGFloat ?? 0) > 0.01
-                    storage.addAttribute(.font,
-                        value: MarkdownRich.font(bold: bold, italic: italic, title: false), range: range)
-                }
-            }
+        super.keyDown(with: event)
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        if let _ = slashRange, !choices.isEmpty { applyBlock(choices[choiceIndex]); return }
+        let selection = selectedRange()
+        let ns = string as NSString
+        let range = ns.lineRange(for: selection)
+        let prefix = range.location < ns.length ? textStorage?.attribute(.manBlock, at: range.location, effectiveRange: nil) as? String ?? "" : ""
+        let parts = MarkdownRich.block(prefix + "content")
+        let current = ns.substring(with: range).trimmingCharacters(in: .newlines)
+        if !parts.display.isEmpty, current.trimmingCharacters(in: .whitespaces) == parts.display.trimmingCharacters(in: .whitespaces) {
+            applyBlock(.text)
+            return
         }
-        needsDisplay = true
-    }
-
-    // MARK: Formatting actions (selection only)
-
-    private func inTitle(_ range: NSRange) -> Bool {
-        guard firstLineIsTitle else { return false }
-        let firstLineEnd = (string as NSString).range(of: "\n").location
-        return firstLineEnd == NSNotFound || range.location < firstLineEnd
-    }
-
-    private func currentTraits(_ storage: NSTextStorage, _ range: NSRange) -> (bold: Bool, italic: Bool) {
-        let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont
-        let name = font?.fontName ?? ""
-        let bold = name.localizedCaseInsensitiveContains("SemiBold")
-            || name.localizedCaseInsensitiveContains("Bold")
-        let italic = (storage.attribute(.obliqueness, at: range.location,
-                                        effectiveRange: nil) as? CGFloat ?? 0) > 0.01
-        return (bold, italic)
-    }
-
-    func toggleBoldSelection() {
-        applyToSelection { storage, range in
-            let title = inTitle(range)
-            let traits = currentTraits(storage, range)
-            storage.addAttribute(.font,
-                value: MarkdownRich.font(bold: !traits.bold, italic: traits.italic, title: title),
-                range: range)
+        var next = prefix
+        if prefix.trimmingCharacters(in: .whitespaces).hasPrefix("#") || isTitle(selection) { next = "" }
+        if next.lowercased().contains("[x]") { next = next.replacingOccurrences(of: "[x]", with: "[ ]", options: .caseInsensitive) }
+        if let match = try? NSRegularExpression(pattern: #"\d+"#).firstMatch(in: next, range: NSRange(next.startIndex..., in: next)),
+           let number = Int((next as NSString).substring(with: match.range)) {
+            next = (next as NSString).replacingCharacters(in: match.range, with: String(number + 1))
         }
+        let attrs = baseAttributes(prefix: next)
+        let insertion = NSAttributedString(string: "\n" + MarkdownRich.block(next + "content").display, attributes: attrs)
+        insertText(insertion, replacementRange: selection)
+        typingAttributes = attrs
     }
 
-    func toggleItalicSelection() {
-        applyToSelection { storage, range in
-            let title = inTitle(range)
-            let traits = currentTraits(storage, range)
-            if traits.italic {
-                storage.removeAttribute(.obliqueness, range: range)
-            } else {
-                storage.addAttribute(.obliqueness, value: 0.18, range: range)
-            }
-            storage.addAttribute(.font,
-                value: MarkdownRich.font(bold: title ? traits.bold : traits.bold,
-                                         italic: !traits.italic, title: title),
-                range: range)
-        }
+    override func paste(_ sender: Any?) {
+        paste(from: .general)
     }
 
-    func toggleUnderlineSelection() {
-        applyToSelection { storage, range in
-            let current = storage.attribute(.underlineStyle, at: range.location, effectiveRange: nil) as? Int ?? 0
-            if current != 0 {
-                storage.removeAttribute(.underlineStyle, range: range)
-            } else {
-                storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
-            }
-        }
+    override func copy(_ sender: Any?) {
+        super.copy(sender)
+        copyMarkdown(to: .general)
     }
 
-    private func applyToSelection(_ mutate: (NSTextStorage, NSRange) -> Void) {
+    override func cut(_ sender: Any?) {
+        guard isEditable, selectedRange().length > 0 else { return }
+        copy(sender)
+        insertText("", replacementRange: selectedRange())
+    }
+
+    func copyMarkdown(to pasteboard: NSPasteboard) {
         let range = selectedRange()
-        guard range.length > 0, let storage = textStorage,
-              shouldChangeText(in: range, replacementString: nil) else { return }
-        mutate(storage, range)
+        guard range.length > 0 else { return }
+        let copy = NSMutableAttributedString(attributedString: attributedString().attributedSubstring(from: range))
+        let paragraph = (string as NSString).lineRange(for: range)
+        if range.location != paragraph.location || NSMaxRange(range) < NSMaxRange(paragraph) - 1 {
+            copy.removeAttribute(.manBlock, range: NSRange(location: 0, length: copy.length))
+        }
+        let type = NSPasteboard.PasteboardType("com.muckstack.myman.markdown")
+        pasteboard.addTypes([type], owner: nil)
+        pasteboard.setString(MarkdownRich.markdown(from: copy, firstLineIsTitle: false), forType: type)
+    }
+
+    func paste(from pasteboard: NSPasteboard) {
+        if let markdown = pasteboard.string(forType: NSPasteboard.PasteboardType("com.muckstack.myman.markdown")) {
+            insertText(MarkdownRich.attributed(from: markdown, firstLineIsTitle: false), replacementRange: selectedRange())
+            return
+        }
+        // Foreign RTF attributes aren't our Markdown model. Import plain text
+        // intentionally, preserving the current block and inline formatting.
+        guard let text = pasteboard.string(forType: .string) else { return }
+        insertText(text, replacementRange: selectedRange())
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let index = characterIndexForInsertion(at: point)
+        let ns = string as NSString
+        if index < ns.length {
+            let line = ns.lineRange(for: NSRange(location: index, length: 0))
+            let prefix = textStorage?.attribute(.manBlock, at: line.location, effectiveRange: nil) as? String ?? ""
+            let marker = MarkdownRich.block(prefix + "content").display
+            if prefix.contains("["), index < line.location + (marker as NSString).length {
+                toggleChecklist(at: line)
+                return
+            }
+        }
+        super.mouseDown(with: event)
+    }
+
+    func toggleChecklist(at line: NSRange) {
+        guard let storage = textStorage else { return }
+        let content = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: line))
+        let prefix = content.attribute(.manBlock, at: 0, effectiveRange: nil) as? String ?? ""
+        guard prefix.contains("[") else { return }
+        let checked = prefix.contains("[ ]")
+        let next = checked ? prefix.replacingOccurrences(of: "[ ]", with: "[x]") : prefix.replacingOccurrences(of: "[x]", with: "[ ]", options: .caseInsensitive)
+        let marker = (content.string as NSString).range(of: checked ? "☐" : "☑")
+        if marker.location != NSNotFound { content.replaceCharacters(in: marker, with: checked ? "☑" : "☐") }
+        content.addAttribute(.manBlock, value: next, range: NSRange(location: 0, length: content.length))
+        replace(line, with: content)
+    }
+
+    func toggleBoldSelection() { toggle(.manBold) }
+    func toggleItalicSelection() { toggle(.manItalic) }
+    func toggleUnderlineSelection() { toggle(.underlineStyle) }
+    func toggleStrikeSelection() { toggle(.strikethroughStyle) }
+
+    private func toggle(_ key: NSAttributedString.Key) {
+        let range = selectedRange()
+        if range.length == 0 {
+            var attrs = typingAttributes
+            if attrs[key] != nil { attrs.removeValue(forKey: key) } else { attrs[key] = key == .manBold || key == .manItalic ? true : 1 }
+            let sample = NSMutableAttributedString(string: " ", attributes: attrs)
+            MarkdownRich.style(sample, title: isTitle(range))
+            typingAttributes = sample.attributes(at: 0, effectiveRange: nil)
+            return
+        }
+        let content = NSMutableAttributedString(attributedString: attributedString().attributedSubstring(from: range))
+        var allOn = true
+        content.enumerateAttribute(key, in: NSRange(location: 0, length: content.length)) { value, _, _ in if value == nil { allOn = false } }
+        if allOn { content.removeAttribute(key, range: NSRange(location: 0, length: content.length)) }
+        else { content.addAttribute(key, value: key == .manBold || key == .manItalic ? true : 1, range: NSRange(location: 0, length: content.length)) }
+        replace(range, with: content)
+    }
+
+    private func replace(_ range: NSRange, with content: NSAttributedString) {
+        guard let storage = textStorage, shouldChangeText(in: range, replacementString: nil) else { return }
+        window?.makeFirstResponder(self)
+        let previous = storage.attributedSubstring(from: range)
+        let replacementRange = NSRange(location: range.location, length: content.length)
+        breakUndoCoalescing()
+        undoManager?.registerUndo(withTarget: self) { view in view.replace(replacementRange, with: previous) }
+        // Direct attributed replacement is deliberate: insertText can retain
+        // the old link when the characters themselves have not changed.
+        typingAttributes = baseAttributes(title: isTitle(range))
+        storage.replaceCharacters(in: range, with: content)
         didChangeText()
+        setSelectedRange(replacementRange)
         updateFormatBar()
     }
 
-    // MARK: Floating format bar
+    func applyBlock(_ block: DocumentBlock) {
+        let selection = selectedRange()
+        let ns = string as NSString
+        let range = ns.lineRange(for: selection)
+        let existing = attributedString().attributedSubstring(from: range)
+        let raw = MarkdownRich.markdown(from: existing, firstLineIsTitle: false)
+        let lines = raw.components(separatedBy: "\n")
+        let rewritten = lines.enumerated().map { index, line -> String in
+            if index == lines.count - 1, line.isEmpty, raw.hasSuffix("\n") { return "" }
+            let body = slashRange != nil ? "" : MarkdownRich.block(line).body
+            let prefix = block == .numbered ? "\(index + 1). " : block.prefix
+            return prefix + body
+        }.joined(separator: "\n")
+        let content = MarkdownRich.attributed(from: rewritten, firstLineIsTitle: firstLineIsTitle && range.location == 0)
+        // Empty blocks still need a visible marker/caret with block attributes.
+        dismissSlashMenu()
+        replace(range, with: content)
+        let caret = range.location + content.length - (content.string.hasSuffix("\n") ? 1 : 0)
+        setSelectedRange(NSRange(location: caret, length: 0))
+        typingAttributes = baseAttributes(title: firstLineIsTitle && range.location == 0, prefix: block.prefix)
+    }
+
+    func editLink() {
+        let range = selectedRange()
+        guard range.length > 0 else { return }
+        let current = textStorage?.attribute(.link, at: range.location, effectiveRange: nil) as? URL
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: LinkEditor(initial: current?.absoluteString ?? "") { [weak self, weak popover] target in
+            self?.setLink(target, range: range)
+            popover?.close()
+        })
+        linkPopover = popover
+        let rect = localRect(for: range)
+        popover.show(relativeTo: rect, of: self, preferredEdge: .maxY)
+    }
+
+    func setLink(_ target: String, range: NSRange) {
+        guard NSMaxRange(range) <= (string as NSString).length else { return }
+        let content = NSMutableAttributedString(attributedString: attributedString().attributedSubstring(from: range))
+        let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { content.removeAttribute(.link, range: NSRange(location: 0, length: content.length)) }
+        else {
+            guard let url = URL(string: trimmed), ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") else { return }
+            content.addAttribute(.link, value: url, range: NSRange(location: 0, length: content.length))
+        }
+        replace(range, with: content)
+    }
+
+    private func localRect(for range: NSRange) -> NSRect {
+        guard let window else { return .zero }
+        return convert(window.convertFromScreen(firstRect(forCharacterRange: range, actualRange: nil)), from: nil)
+    }
 
     func installFormatBar() {
-        let bar = NSHostingView(rootView: FormatBar(
-            onBold: { [weak self] in self?.toggleBoldSelection() },
-            onItalic: { [weak self] in self?.toggleItalicSelection() },
-            onUnderline: { [weak self] in self?.toggleUnderlineSelection() }
-        ))
+        let bar = NSHostingView(rootView: makeFormatBar())
         bar.isHidden = true
         addSubview(bar)
         formatBar = bar
     }
 
+    private func makeFormatBar() -> FormatBar {
+        FormatBar(onBold: { [weak self] in self?.toggleBoldSelection() },
+                  onItalic: { [weak self] in self?.toggleItalicSelection() },
+                  onUnderline: { [weak self] in self?.toggleUnderlineSelection() },
+                  onStrike: { [weak self] in self?.toggleStrikeSelection() },
+                  onLink: { [weak self] in self?.editLink() })
+    }
+
     func updateFormatBar() {
         guard let bar = formatBar else { return }
         let range = selectedRange()
-        guard range.length > 0 else {
-            bar.isHidden = true
-            return
-        }
-        let screenRect = firstRect(forCharacterRange: range, actualRange: nil)
-        guard let window, screenRect.width >= 0 else {
-            bar.isHidden = true
-            return
-        }
-        let windowRect = window.convertFromScreen(screenRect)
-        let local = convert(windowRect, from: nil)
-        let size = bar.fittingSize
-        var origin = NSPoint(
-            x: max(4, local.midX - size.width / 2),
-            y: local.minY - size.height - 6 // flipped view: minY is the top
-        )
-        if origin.y < 0 { origin.y = local.maxY + 6 }
-        bar.frame = NSRect(origin: origin, size: size)
+        guard range.length > 0, window != nil, slashRange == nil else { bar.isHidden = true; return }
+        let rect = localRect(for: range)
+        let size = NSSize(width: 180, height: 36)
+        let visible = visibleRect
+        let above = rect.minY - size.height - 8
+        bar.frame = NSRect(x: min(max(visible.minX + 8, rect.midX - size.width / 2), max(8, visible.maxX - size.width - 8)), y: above < visible.minY ? rect.maxY + 8 : above, width: size.width, height: size.height)
         bar.isHidden = false
     }
+
+    func updateSlashMenu() {
+        let selection = selectedRange()
+        guard selection.length == 0, !isTitle(selection) else { dismissSlashMenu(); return }
+        let ns = string as NSString
+        let line = ns.lineRange(for: selection)
+        let before = ns.substring(with: NSRange(location: line.location, length: selection.location - line.location))
+        guard before.hasPrefix("/"), before.count < 24, !before.contains(" "), ns.substring(with: line).trimmingCharacters(in: .newlines) == before else { dismissSlashMenu(); return }
+        let query = before.dropFirst().lowercased()
+        choices = DocumentBlock.allCases.filter { query.isEmpty || $0.label.lowercased().contains(query) || $0.rawValue.contains(query) || ($0 == .checklist && query == "todo") }
+        guard !choices.isEmpty else { dismissSlashMenu(); return }
+        slashRange = NSRange(location: line.location, length: selection.location - line.location)
+        choiceIndex = min(choiceIndex, choices.count - 1)
+        refreshSlashPicker()
+    }
+
+    private func refreshSlashPicker() {
+        let view = BlockPicker(choices: choices, selected: choiceIndex) { [weak self] block in self?.applyBlock(block) }
+        if slashMenu == nil { let menu = NSHostingView(rootView: view); addSubview(menu); slashMenu = menu }
+        slashMenu?.rootView = view
+        let size = NSSize(width: 240, height: CGFloat(choices.count * 34 + 16))
+        let rect = localRect(for: selectedRange())
+        let y = rect.maxY + size.height + 8 > visibleRect.maxY ? max(visibleRect.minY, rect.minY - size.height - 8) : rect.maxY + 8
+        slashMenu?.frame = NSRect(x: min(rect.minX, max(0, bounds.width - size.width - 8)), y: y, width: size.width, height: size.height)
+        formatBar?.isHidden = true
+    }
+
+    private func dismissSlashMenu() { slashRange = nil; slashMenu?.removeFromSuperview(); slashMenu = nil; choiceIndex = 0 }
 }
 
 private struct FormatBar: View {
     var onBold: () -> Void
     var onItalic: () -> Void
     var onUnderline: () -> Void
-
+    var onStrike: () -> Void
+    var onLink: () -> Void
     var body: some View {
         HStack(spacing: 2) {
-            barButton(.bold, action: onBold, help: "Bold (⌘B)")
-            barButton(.italic, action: onItalic, help: "Italic (⌘I)")
-            barButton(.underline, action: onUnderline, help: "Underline (⌘U)")
+            button("bold", "Bold (⌘B)", onBold)
+            button("italic", "Italic (⌘I)", onItalic)
+            button("underline", "Underline (⌘U)", onUnderline)
+            button("strikethrough", "Strikethrough", onStrike)
+            button("link", "Link (⌘K)", onLink)
         }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(MM.Colors.background)
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(MM.Colors.border, lineWidth: 1))
-                .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
-        )
+        .padding(4)
+        .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
+        .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall).strokeBorder(MM.Colors.border, lineWidth: 1))
     }
+    private func button(_ icon: String, _ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: icon).font(MM.Fonts.secondary).frame(width: 30, height: 28).clickable() }
+            .buttonStyle(.plain).foregroundStyle(MM.Colors.textPrimary).help(label).accessibilityLabel(label)
+    }
+}
 
-    private func barButton(_ icon: MMIcon, action: @escaping () -> Void, help: String) -> some View {
-        Button(action: action) {
-            IconView(icon: icon, size: 14, color: MM.Colors.textPrimary)
-                .frame(width: 26, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { $0 ? NSCursor.pointingHand.set() : NSCursor.iBeam.set() }
-        .help(help)
+private struct BlockPicker: View {
+    let choices: [DocumentBlock]
+    let selected: Int
+    var choose: (DocumentBlock) -> Void
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(choices.enumerated()), id: \.element.id) { index, block in
+                Button { choose(block) } label: {
+                    HStack(spacing: MM.Layout.spacing) {
+                        Image(systemName: block.symbol).frame(width: 22)
+                        Text(block.label)
+                        Spacer()
+                        if index == selected { Text("↵").foregroundStyle(MM.Colors.textTertiary) }
+                    }
+                    .font(MM.Fonts.secondary).padding(.horizontal, MM.Layout.spacing).frame(height: 34)
+                    .background(index == selected ? MM.Colors.border : .clear).clickable()
+                }.buttonStyle(.plain)
+            }
+        }.padding(8).foregroundStyle(MM.Colors.textPrimary)
+            .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
+            .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall).strokeBorder(MM.Colors.border, lineWidth: 1))
+    }
+}
+
+private struct LinkEditor: View {
+    let initial: String
+    var save: (String) -> Void
+    @State private var url = ""
+    @FocusState private var focused: Bool
+    private var valid: Bool { url.isEmpty || ["https", "http", "mailto"].contains(URL(string: url)?.scheme?.lowercased() ?? "") }
+    var body: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing) {
+            Text("Link").font(MM.Fonts.secondary)
+            TextField("https://example.com", text: $url).textFieldStyle(.roundedBorder).focused($focused).onSubmit { if valid { save(url) } }
+            HStack {
+                Button("Remove link") { save("") }.buttonStyle(.plain).clickable()
+                Spacer()
+                Button("Apply") { save(url) }.disabled(!valid).clickable()
+            }.font(MM.Fonts.secondary)
+        }.padding(MM.Layout.padding).frame(width: 300)
+            .onAppear { url = initial; focused = true }
     }
 }
