@@ -68,6 +68,11 @@ struct EditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            HStack {
+                Spacer()
+                Button("Screenshot text & related captures") { CaptureDetailController.openPath(model.fileURL.path) }
+                    .buttonStyle(.plain).font(MM.Fonts.secondary).clickable()
+            }.padding(.horizontal, MM.Layout.paddingLarge)
             canvas
                 .padding(MM.Layout.paddingLarge)
         }

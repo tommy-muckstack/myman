@@ -57,8 +57,11 @@ enum SearchService {
     // MARK: Embeddings (NLEmbedding — free, local, good-enough)
 
     private static let embedder = NLEmbedding.sentenceEmbedding(for: .english)
+    private static let embeddingLock = NSLock()
 
     static func embedding(for text: String) -> Data? {
+        embeddingLock.lock()
+        defer { embeddingLock.unlock() }
         let trimmed = String(text.prefix(1000))
         guard !trimmed.isEmpty,
               let vector = embedder?.vector(for: trimmed.lowercased()) else { return nil }
@@ -68,10 +71,16 @@ enum SearchService {
 
     /// Decoded-vector cache: blobs decode once, not on every keystroke.
     private static let cacheLock = NSLock()
-    private static var vectorCache: [String: [Float]] = [:]
+    private struct VectorKey: Hashable { let id: String; let blob: Data }
+    private static var vectorCache: [VectorKey: [Float]] = [:]
+
+    static func clearVectorCache() {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        vectorCache.removeAll()
+    }
 
     static func decodedVector(id: String, blob: Data) -> [Float] {
-        let key = "\(id)-\(blob.count)-\(blob.prefix(8).hashValue)"
+        let key = VectorKey(id: id, blob: blob)
         cacheLock.lock()
         defer { cacheLock.unlock() }
         if let cached = vectorCache[key] { return cached }
@@ -103,33 +112,10 @@ enum SearchService {
 
     /// Most recent items of one kind, newest first.
     static func recent(kind: String, limit: Int = 5) -> [SearchHit] {
-        (try? Database.shared.read { db -> [SearchHit] in
-            switch kind {
-            case "screenshot":
-                return try Screenshot.order(Column("createdAt").desc)
-                    .limit(limit).fetchAll(db).map(SearchHit.screenshot)
-            case "note":
-                return try Note.order(Column("updatedAt").desc)
-                    .limit(limit).fetchAll(db).map(SearchHit.note)
-            case "meeting":
-                return try Meeting.filter(Column("transcript") != "")
-                    .order(Column("startedAt").desc)
-                    .limit(limit).fetchAll(db).map(SearchHit.meeting)
-            case "voice":
-                return try Row.fetchAll(db, sql:
-                    "SELECT id, text, createdAt FROM dictation ORDER BY createdAt DESC LIMIT ?",
-                    arguments: [limit]).map { row in
-                        .dictation(DictationRecord(
-                            id: row["id"], text: row["text"], createdAt: row["createdAt"]))
-                    }
-            case "record":
-                return try ScreenRecording.order(Column("createdAt").desc)
-                    .limit(limit).fetchAll(db)
-                    .filter { FileManager.default.fileExists(atPath: $0.path) }
-                    .map(SearchHit.recording)
-            default:
-                return []
-            }
+        let type = ["voice": "dictation", "record": "recording"][kind] ?? kind
+        guard CaptureSchema.sources.contains(where: { $0.table == type }) else { return [] }
+        return (try? Database.shared.read { db in
+            try CaptureItem.fetchAll(db, sql: "SELECT * FROM captureItem WHERE kind = ? AND excluded = 0 ORDER BY capturedAt DESC LIMIT ?", arguments: [type, limit]).compactMap { try $0.hit(in: db) }
         }) ?? []
     }
 
@@ -156,177 +142,17 @@ enum SearchService {
         }
     }
 
-    private struct ClickStats {
-        /// hitID → [(query, age in days)]
-        var perHit: [String: [(query: String, ageDays: Double)]] = [:]
-        /// kind → share of all clicks (0...1)
-        var kindShare: [String: Double] = [:]
-    }
-
-    private static func loadClickStats() -> ClickStats {
-        var stats = ClickStats()
-        guard let rows = try? Database.shared.read({ db in
-            try Row.fetchAll(db, sql: "SELECT query, hitID, kind, clickedAt FROM searchClick")
-        }) else { return stats }
-        var kindCounts: [String: Double] = [:]
-        for row in rows {
-            let hitID: String = row["hitID"]
-            let clickedAt: Date = row["clickedAt"]
-            let age = max(0, -clickedAt.timeIntervalSinceNow / 86_400)
-            stats.perHit[hitID, default: []].append((row["query"], age))
-            kindCounts[row["kind"], default: 0] += 1
-        }
-        let total = kindCounts.values.reduce(0, +)
-        if total > 0 {
-            stats.kindShare = kindCounts.mapValues { $0 / total }
-        }
-        return stats
-    }
-
-    /// Learned boost: each past click decays with a ~14-day half-life; clicks
-    /// whose query resembles the current one count ~4× more. Type prior adds
-    /// a small nudge toward the kinds this user actually opens.
-    private static func clickBoost(hitID: String, kind: String,
-                                   query: String, stats: ClickStats) -> Float {
-        var boost = 0.0
-        for click in stats.perHit[hitID] ?? [] {
-            let decay = pow(0.5, click.ageDays / 14)
-            let related = !click.query.isEmpty
-                && (query.hasPrefix(click.query) || click.query.hasPrefix(query))
-            boost += decay * (related ? 0.20 : 0.05)
-        }
-        boost = min(boost, 0.5)
-        boost += 0.05 * (stats.kindShare[kind] ?? 0)
-        return Float(boost)
-    }
-
     // MARK: Query
 
     /// Ranked results: keyword matches score highest (title beats body,
     /// recency breaks ties), semantic hits fill in beneath by cosine
     /// similarity. Everything local, degrades silently.
     static func search(_ query: String, limit: Int = 8) -> [SearchHit] {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return [] }
-
-        struct Ranked { let hit: SearchHit; let score: Float }
-        var ranked: [Ranked] = []
-        var seen = Set<String>()
-
-        func add(_ hit: SearchHit, _ score: Float) {
-            if seen.insert(hit.id).inserted {
-                ranked.append(Ranked(hit: hit, score: score))
-            }
-        }
-
-        // Recency nudge: up to +0.05 for today, fading over 30 days.
-        func recencyBoost(_ date: Date) -> Float {
-            let days = max(0, -date.timeIntervalSinceNow / 86_400)
-            return Float(max(0, 0.05 * (1 - days / 30)))
-        }
-
-        let db = Database.shared
-        let lowered = q.lowercased()
-        let clicks = loadClickStats()
-
-        // 1. Keyword layer — FTS5 indexes, never LIKE table scans. Scores
-        // 2.0 down to 1.7 so it always outranks the semantic layer.
-        // Kind order within the tier: notes ≥ meetings > screenshots > dictations.
-        let pattern = FTS5Pattern(matchingAllPrefixesIn: q)
-        if let keyword = try? db.read({ db -> [(SearchHit, Float)] in
-            var found: [(SearchHit, Float)] = []
-            if let pattern {
-                for note in try Note.fetchAll(db, sql: """
-                    SELECT note.* FROM note
-                    JOIN note_fts ON note_fts.rowid = note.rowid
-                    WHERE note_fts MATCH ? ORDER BY rank LIMIT ?
-                    """, arguments: [pattern, limit]) {
-                    let titleMatch = note.title.lowercased().contains(lowered)
-                    found.append((.note(note), titleMatch ? 2.0 : 1.9))
-                }
-                for meeting in try Meeting.fetchAll(db, sql: """
-                    SELECT meeting.* FROM meeting
-                    JOIN meeting_fts ON meeting_fts.rowid = meeting.rowid
-                    WHERE meeting_fts MATCH ? ORDER BY rank LIMIT ?
-                    """, arguments: [pattern, limit]) {
-                    let titleMatch = meeting.title.lowercased().contains(lowered)
-                    found.append((.meeting(meeting), titleMatch ? 2.0 : 1.88))
-                }
-                for shot in try Screenshot.fetchAll(db, sql: """
-                    SELECT screenshot.* FROM screenshot
-                    JOIN screenshot_fts ON screenshot_fts.rowid = screenshot.rowid
-                    WHERE screenshot_fts MATCH ? ORDER BY rank LIMIT ?
-                    """, arguments: [pattern, limit]) {
-                    found.append((.screenshot(shot), 1.8))
-                }
-                for recording in try ScreenRecording
-                    .filter(Column("transcript").like("%\(q)%") || Column("path").like("%\(q)%"))
-                    .order(Column("createdAt").desc).limit(limit).fetchAll(db) {
-                    found.append((.recording(recording), 1.75))
-                }
-                for row in try Row.fetchAll(db, sql: """
-                    SELECT dictation.* FROM dictation
-                    JOIN dictation_fts ON dictation_fts.rowid = dictation.rowid
-                    WHERE dictation_fts MATCH ? ORDER BY rank LIMIT ?
-                    """, arguments: [pattern, limit]) {
-                    found.append((.dictation(DictationRecord(
-                        id: row["id"], text: row["text"], createdAt: row["createdAt"])), 1.7))
-                }
-            } else {
-                // Punctuation-only queries FTS can't tokenize: substring on
-                // the small tables only (notes), never the transcript pile.
-                for note in try Note
-                    .filter(Column("body").like("%\(q)%") || Column("title").like("%\(q)%"))
-                    .order(Column("updatedAt").desc).limit(limit).fetchAll(db) {
-                    found.append((.note(note), 1.9))
-                }
-            }
-            return found
-        }) {
-            for (hit, score) in keyword {
-                add(hit, score + recencyBoost(hit.date)
-                    + clickBoost(hitID: hit.id, kind: hit.kindLabel, query: lowered, stats: clicks))
-            }
-        }
-
-        // 2. Semantic layer beneath — only if we can embed the query.
-        if ranked.count < limit, let queryVector = embedding(for: q) {
-            struct Scored { let hit: SearchHit; let score: Float }
-            var scored: [Scored] = []
-
-            if let rows = try? db.read({ db -> [(SearchHit, Data)] in
-                var pairs: [(SearchHit, Data)] = []
-                for note in try Note.fetchAll(db, sql: "SELECT * FROM note WHERE embedding IS NOT NULL ORDER BY updatedAt DESC LIMIT 400") {
-                    if let blob = try Data.fetchOne(db, sql: "SELECT embedding FROM note WHERE id = ?", arguments: [note.id]) {
-                        pairs.append((.note(note), blob))
-                    }
-                }
-                for shot in try Screenshot.fetchAll(db, sql: "SELECT * FROM screenshot WHERE embedding IS NOT NULL ORDER BY createdAt DESC LIMIT 400") {
-                    if let blob = try Data.fetchOne(db, sql: "SELECT embedding FROM screenshot WHERE id = ?", arguments: [shot.id]) {
-                        pairs.append((.screenshot(shot), blob))
-                    }
-                }
-                return pairs
-            }) {
-                let queryFloats: [Float] = queryVector.withUnsafeBytes {
-                    Array($0.bindMemory(to: Float.self))
-                }
-                for (hit, blob) in rows {
-                    let score = cosine(queryFloats, decodedVector(id: hit.id, blob: blob))
-                    if score > 0.55 {
-                        scored.append(Scored(hit: hit, score: score))
-                    }
-                }
-            }
-            for item in scored {
-                add(item.hit, item.score + recencyBoost(item.hit.date)
-                    + clickBoost(hitID: item.hit.id, kind: item.hit.kindLabel, query: lowered, stats: clicks))
-            }
-        }
-
-        return ranked
-            .sorted { $0.score > $1.score }
-            .prefix(limit)
-            .map(\.hit)
+        do {
+            let first = try CaptureIndex.lexical(query, limit: limit)
+            let enabled = UserDefaults.standard.object(forKey: "captureSemanticSearch") as? Bool ?? true
+            let matches = try CaptureIndex.expanded(query, lexical: first, limit: limit, semantic: enabled)
+            return try Database.shared.read { db in try matches.compactMap { try $0.item.hit(in: db) } }
+        } catch { return [] }
     }
 }

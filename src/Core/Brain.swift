@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GRDB
 
 // The user's brain: a plain folder of markdown files mirroring everything
 // My Man captures — notes, meeting summaries + transcripts, tasks. It's a
@@ -94,6 +95,7 @@ enum Brain {
     static func syncNote(id: String, title: String, body: String,
                          createdAt: Date, updatedAt: Date) {
         queue.async {
+            guard let current = try? Database.shared.read({ try Note.fetchOne($0, key: id) }), current.body == body, current.title == title else { return }
             let content = """
             ---
             id: \(id)
@@ -120,6 +122,7 @@ enum Brain {
     static func syncMeeting(id: String, title: String, startedAt: Date,
                             endedAt: Date?, summary: String, transcript: String) {
         queue.async {
+            guard let current = try? Database.shared.read({ try Meeting.fetchOne($0, key: id) }), current.transcript == transcript, current.summary == summary, current.title == title else { return }
             // A meeting-length recording with almost no words means the ASR
             // mostly failed. The file stays (deleting a real meeting is
             // worse), but a machine-visible flag tells downstream readers not
@@ -195,6 +198,7 @@ enum Brain {
     static func syncScreenshot(id: String, filePath: String, ocrText: String,
                                createdAt: Date) {
         queue.async {
+            guard let current = try? Database.shared.read({ try Screenshot.fetchOne($0, key: id) }), current.ocrText == ocrText else { return }
             let content = """
             ---
             id: \(id)
@@ -227,36 +231,16 @@ enum Brain {
     }
 
     /// Catch-up at launch: any screenshot missing its brain file gets one,
-    /// and any whose OCR never finished (app quit mid-analysis) gets
-    /// re-OCR'd first — the guarantee is EVERY screenshot, with its text.
+    /// while OCRStore separately resumes incomplete image analysis.
     static func backfillScreenshots() {
         Task.detached(priority: .background) {
             let shots: [Screenshot] = (try? await Database.shared.read { db in
                 try Screenshot.fetchAll(db)
             }) ?? []
             for shot in shots {
-                var ocrText = shot.ocrText
-                if ocrText.isEmpty, FileManager.default.fileExists(atPath: shot.path),
-                   let image = NSImage(contentsOfFile: shot.path) {
-                    let analysis = await ImageAnalysis.analyze(image)
-                    ocrText = analysis.searchableText
-                    if !ocrText.isEmpty {
-                        let completedOCR = ocrText
-                        try? await Database.shared.write { db in
-                            try db.execute(sql: "UPDATE screenshot SET ocrText = ? WHERE id = ?",
-                                           arguments: [completedOCR, shot.id])
-                        }
-                        if let blob = SearchService.embedding(for: completedOCR) {
-                            try? await Database.shared.write { db in
-                                try db.execute(sql: "UPDATE screenshot SET embedding = ? WHERE id = ?",
-                                               arguments: [blob, shot.id])
-                            }
-                        }
-                        syncScreenshot(id: shot.id, filePath: shot.path,
-                                       ocrText: completedOCR, createdAt: shot.createdAt)
-                        continue
-                    }
-                }
+                // OCRStore owns recognition, version checks and geometry.
+                // Export existing text here; refreshed OCR schedules its own export.
+                let ocrText = shot.ocrText
                 let file = root.appendingPathComponent(
                     "screenshots/\(day(shot.createdAt))-\(shot.id.prefix(8)).md")
                 guard !FileManager.default.fileExists(atPath: file.path) else { continue }
@@ -269,6 +253,7 @@ enum Brain {
     static func syncRecording(id: String, filePath: String, duration: Int,
                               transcript: String, createdAt: Date) {
         queue.async {
+            guard let current = try? Database.shared.read({ try ScreenRecording.fetchOne($0, key: id) }), current.transcript == transcript else { return }
             let content = """
             ---
             id: \(id)

@@ -40,7 +40,6 @@ final class NotesStore: ObservableObject {
         guard !trimmed.isEmpty else { return nil }
         let note = Note(body: trimmed)
         try? db.write { try note.insert($0) }
-        Self.reindexEmbedding(noteID: note.id, text: "\(note.title)\n\(note.body)")
         Analytics.track("note_created", ["source": source, "chars": trimmed.count])
         Brain.syncNote(id: note.id, title: note.title, body: note.body,
                        createdAt: note.createdAt, updatedAt: note.updatedAt)
@@ -59,26 +58,12 @@ final class NotesStore: ObservableObject {
         updated.title = Note.deriveTitle(from: updated.body)
         updated.updatedAt = Date()
         try? db.write { try updated.update($0) }
-        Self.reindexEmbedding(noteID: updated.id, text: "\(updated.title)\n\(updated.body)")
         Analytics.track("note_updated", ["chars": updated.body.count])
         Brain.syncNote(id: updated.id, title: updated.title, body: updated.body,
                        createdAt: updated.createdAt, updatedAt: updated.updatedAt)
     }
 
-    /// Semantic-search vector, computed off the save path.
-    private static func reindexEmbedding(noteID: String, text: String) {
-        Task.detached(priority: .utility) {
-            guard let blob = SearchService.embedding(for: text) else { return }
-            try? await Database.shared.write { db in
-                try db.execute(sql: "UPDATE note SET embedding = ? WHERE id = ?",
-                               arguments: [blob, noteID])
-            }
-        }
-    }
-
     func delete(_ note: Note) {
-        _ = try? db.write { try Note.deleteOne($0, key: note.id) }
-        Analytics.track("note_deleted")
-        Brain.deleteNote(id: note.id, createdAt: note.createdAt)
+        if let item = CaptureIndex.item("note-" + note.id) { CaptureActions.perform { try CaptureLifecycle.delete(item) } }
     }
 }

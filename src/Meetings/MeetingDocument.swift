@@ -13,6 +13,7 @@ import FoundationModels
 final class MeetingDocumentController {
     static let shared = MeetingDocumentController()
     private var windows: [String: NSWindow] = [:]
+    func close(id: String) { let window = windows.removeValue(forKey: id); window?.contentView = nil; window?.close() }
 
     func open(meetingID: String) {
         if let existing = windows[meetingID] {
@@ -50,6 +51,7 @@ final class MeetingDocumentController {
 /// the thumbnail is all content.
 enum SlideThumbnailer {
     private static let cache = NSCache<NSString, NSImage>()
+    static func clear() { cache.removeAllObjects() }
 
     static func thumbnail(atPath path: String) -> NSImage? {
         if let cached = cache.object(forKey: path as NSString) { return cached }
@@ -181,6 +183,7 @@ struct MeetingDocumentView: View {
         }
         .background(MM.Colors.background)
         .frame(minWidth: 560, minHeight: 420)
+        .safeAreaInset(edge: .bottom) { CaptureRelatedSection(itemID: "meeting-" + meeting.id).padding(MM.Layout.padding).background(MM.Colors.background) }
         .onAppear(perform: generateSummaryIfMissing)
     }
 

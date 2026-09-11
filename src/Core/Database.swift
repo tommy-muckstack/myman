@@ -22,6 +22,12 @@ enum Database {
         do {
             return try openDatabase()
         } catch {
+            // A migration/permission/disk error is not database corruption.
+            // Never replace an intact library because a new migration failed.
+            guard let databaseError = error as? DatabaseError,
+                  databaseError.resultCode == .SQLITE_CORRUPT || databaseError.resultCode == .SQLITE_NOTADB else {
+                fatalError("My Man could not open its database; the original library was left untouched: \(error.localizedDescription)")
+            }
             // Preserve the failed store and its SQLite sidecars before making
             // a fresh one. A corrupt database must not turn into an app crash
             // or silently erase the only recoverable copy of a user's data.
@@ -61,7 +67,7 @@ enum Database {
         return backup
     }
 
-    private static var migrator: DatabaseMigrator {
+    static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1-notes") { db in
@@ -205,6 +211,9 @@ enum Database {
             }
         }
 
+        migrator.registerMigration("v14-unified-retrieval") { db in
+            try CaptureSchema.create(in: db)
+        }
         return migrator
     }
 }

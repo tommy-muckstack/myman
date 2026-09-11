@@ -4,6 +4,17 @@ on:
   push:
     branches: [main]
 jobs:
+  brain-plugin:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: integrations/brain/package-lock.json
+      - run: npm ci --ignore-scripts --prefix integrations/brain
+      - run: npm test --prefix integrations/brain
   build:
     runs-on: macos-latest
     steps:

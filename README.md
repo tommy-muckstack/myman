@@ -20,12 +20,43 @@ Everything you capture lands in **`~/MyManBrain`** as plain markdown in a git re
 
 ## Features
 
-- **⌥Space launcher** — command palette + universal search across notes, transcripts, screenshot text, and dictation history (keyword + semantic, ranked by relevance and your click history), flanked by tasks and calendar panels
+- **⌥Space launcher** — keyboard-first Search, History and Themes across screenshots/OCR, meeting transcripts and editable notes, dictation, notes, and recording transcripts/filenames. Exact matches appear first; typo and on-device semantic matches follow.
+- **Themes & related captures** — conservative automatic groups from repeated titles, terminology and domains, with timelines, pinning, rename/merge and membership corrections. A small Related section connects existing documents.
 - **Dictation** — hold Left ⌘, speak, release; text types into any app. On-device speech models, whisper-friendly, AI cleanup, a vocabulary that learns your proper nouns
 - **Meetings** — detects Zoom / Meet / Teams / Webex / Slack huddles / Discord / FaceTime; starts listening 45s before calendar meetings but saves nothing without your explicit click; auto-stops on hang-up; named speakers, timestamps, slide snapshots, on-device summaries
 - **Screenshots** — region capture, annotation editor (arrows, boxes, highlight, text, pixelate, crop, background removal), Photos-grade text selection, in-place translation
 - **Screen recording** — drag any region (persistent frame outline), optional webcam bubble, mic + system audio, local `.mov` files; narration transcribed into the brain
 - **Notes** — WYSIWYG markdown, instant capture
+
+## Finding and remembering
+
+Press **⌥Space** and type what you remember. Results show the matching passage
+and its source; use **↑/↓**, **Return**, **⌘Y** to preview, or **⇧⌘C** to copy.
+Quoted phrases stay exact. Type, date and Theme filters narrow the results.
+Conversational queries such as “Find the screenshot where the number was $49”
+also recognize simple content/date constraints.
+
+**History** browses saved captures chronologically. Right-click to pin, rename,
+assign/remove a Theme, hide from search, or delete. **Themes** appear after at
+least three captures share useful terminology or a domain. They are collections
+of captured material; correcting one does not create tasks or initiate work.
+
+Screenshot search opens a text preview with highlighted OCR locations. Copy
+all text, individual lines or nearby paragraphs; recognized links, email
+addresses, phone numbers and dates have contextual actions. The editor’s
+**Screenshot text & related captures** button opens the same surface, alongside
+its existing Live Text selection tool. Edited screenshots clear their old text
+and are recognized again in the background.
+
+**Settings → Library** controls automatic Themes and local semantic search.
+Existing captures are indexed incrementally after the database migration.
+No app/window tracking or cloud inference is added. Deleting removes the
+capture’s local index, vectors, OCR geometry and relationships plus its current
+Brain export; Trash, earlier Git revisions and external backups can retain copies.
+
+Architecture, migration decisions and verification are documented in the
+[product audit](docs/product-architecture-audit.md) and
+[implementation notes](docs/retrieval-implementation.md).
 
 ## Requirements
 
@@ -69,6 +100,23 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
 Then call `myman screenshot`, `myman note`, `myman dictation`, `myman meeting`, `myman cancel-meeting`, `myman record`, `myman settings`, or `myman open`. The app must have the normal Screen Recording, Microphone, and Accessibility permissions; this makes capture flows testable while retaining the same on-screen confirmation a person receives.
+
+## My Man Brain plugin
+
+The optional [Brain plugin](integrations/brain/README.md) lets agents search
+meeting transcripts, notes, tasks, and capture text with source citations.
+It includes a local MCP server, a JSON CLI for Grok Bot's local execution, and
+a packaged skill. Requires Node.js 22+ on the Mac; no app rebuild is needed.
+
+```bash
+npm ci --ignore-scripts --prefix integrations/brain
+node integrations/brain/cli.mjs status
+```
+
+The plugin is read-only and makes no network calls itself. A hosted agent such
+as Grok receives the excerpts you ask it to retrieve; this optional integration
+is separate from MyMan's on-device AI. Grok Bot marketplace availability has
+not yet been verified. See the setup guide for the local-command route.
 
 ### Optional private voice replies (Chatterbox beta)
 
