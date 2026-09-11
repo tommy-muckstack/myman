@@ -67,7 +67,7 @@ struct DocumentFooter: View {
                 Label("Insert", systemImage: "plus").font(MM.Fonts.secondary).clickable(minSize: 28)
             }
             .menuStyle(.borderlessButton).fixedSize()
-            .help("Insert a heading, list, checklist or quote. You can also type / on a new line.")
+            .help("Insert an image, table, heading, list, checklist or quote. You can also type / on a new line.")
             Text("/ to insert · select to format").font(MM.Fonts.hint).foregroundStyle(MM.Colors.textTertiary)
                 .lineLimit(1)
             Spacer(minLength: 8)

@@ -7,7 +7,7 @@ import SwiftUI
 }
 
 enum DocumentBlock: String, CaseIterable, Identifiable {
-    case text, heading, subheading, bullet, numbered, checklist, quote
+    case text, heading, subheading, bullet, numbered, checklist, quote, image, table
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -18,6 +18,8 @@ enum DocumentBlock: String, CaseIterable, Identifiable {
         case .numbered: return "Numbered list"
         case .checklist: return "Checklist"
         case .quote: return "Quote"
+        case .image: return "Image"
+        case .table: return "Table"
         }
     }
     var symbol: String {
@@ -29,11 +31,13 @@ enum DocumentBlock: String, CaseIterable, Identifiable {
         case .numbered: return "list.number"
         case .checklist: return "checklist"
         case .quote: return "text.quote"
+        case .image: return "photo"
+        case .table: return "tablecells"
         }
     }
     var prefix: String {
         switch self {
-        case .text: return ""
+        case .text, .image, .table: return ""
         case .heading: return "## "
         case .subheading: return "### "
         case .bullet: return "- "
@@ -49,6 +53,8 @@ struct RichMarkdownEditor: NSViewRepresentable {
     var firstLineIsTitle = true
     var session: RichEditorSession? = nil
     var placeholder = "Start writing…"
+    var documentID = ""
+    var assets = DocumentAssets.shared
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = RichNoteTextView()
@@ -63,9 +69,12 @@ struct RichMarkdownEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isContinuousSpellCheckingEnabled = true
         textView.firstLineIsTitle = firstLineIsTitle
+        textView.assets = assets
+        if !documentID.isEmpty { textView.documentID = documentID }
+        textView.registerForDraggedTypes([.string, .rtf, .rtfd, .fileURL, .png, .tiff])
         textView.placeholder = placeholder
         textView.setAccessibilityLabel(firstLineIsTitle ? "Note document" : "Meeting notes")
-        textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle))
+        textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle, assets: assets))
         textView.typingAttributes = textView.baseAttributes(title: firstLineIsTitle && markdown.isEmpty)
         textView.installFormatBar()
         session?.textView = textView
@@ -85,7 +94,7 @@ struct RichMarkdownEditor: NSViewRepresentable {
         session?.textView = textView
         if context.coordinator.lastMarkdown != markdown {
             let selection = textView.selectedRange()
-            textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle))
+            textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle, assets: assets))
             context.coordinator.lastMarkdown = markdown
             textView.setSelectedRange(NSRange(location: min(selection.location, (textView.string as NSString).length), length: 0))
             textView.needsDisplay = true
@@ -112,6 +121,9 @@ struct RichMarkdownEditor: NSViewRepresentable {
 
 final class RichNoteTextView: NSTextView {
     var firstLineIsTitle = true
+    var documentID = "draft-" + UUID().uuidString
+    var assets = DocumentAssets.shared
+    var imageDropLocation: Int?
     var placeholder = "Start writing…"
     private var formatBar: NSHostingView<FormatBar>?
     private var slashMenu: NSHostingView<BlockPicker>?
@@ -136,7 +148,7 @@ final class RichNoteTextView: NSTextView {
 
     override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if [formatBar as NSView?, slashMenu as NSView?].compactMap({ $0 }).contains(where: {
+        if image(at: point) != nil || [formatBar as NSView?, slashMenu as NSView?].compactMap({ $0 }).contains(where: {
             !$0.isHidden && $0.frame.contains(point)
         }) {
             NSCursor.pointingHand.set()
@@ -147,6 +159,14 @@ final class RichNoteTextView: NSTextView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
+        if let manager = layoutManager, let container = textContainer {
+            attributedString().enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributedString().length)) { value, range, _ in
+                guard value is DocumentImageAttachment else { return }
+                let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                let rect = manager.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+                addCursorRect(rect.intersection(visibleRect), cursor: .pointingHand)
+            }
+        }
         for menu in [formatBar as NSView?, slashMenu as NSView?].compactMap({ $0 }) where !menu.isHidden {
             addCursorRect(menu.frame.intersection(visibleRect), cursor: .pointingHand)
         }
@@ -154,6 +174,11 @@ final class RichNoteTextView: NSTextView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        if let index = imageDropLocation {
+            let rect = localRect(for: NSRange(location: index, length: 0))
+            NSColor(MM.Colors.accent).setFill()
+            NSRect(x: textContainerInset.width, y: rect.minY, width: max(0, bounds.width - 2 * textContainerInset.width), height: 2).fill()
+        }
         if string.isEmpty {
             let attrs: [NSAttributedString.Key: Any] = [.font: firstLineIsTitle ? MarkdownRich.titleFont : MarkdownRich.bodyFont(bold: false), .foregroundColor: NSColor.tertiaryLabelColor]
             ((firstLineIsTitle ? "Untitled note" : placeholder) as NSString).draw(at: NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height), withAttributes: attrs)
@@ -177,7 +202,7 @@ final class RichNoteTextView: NSTextView {
         var location = 0
         storage.beginEditing()
         while location < source.length {
-            let range = source.lineRange(for: NSRange(location: location, length: 0))
+            let range = source.paragraphRange(for: NSRange(location: location, length: 0))
             let line = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: range))
             let prefix = line.attribute(.manBlock, at: 0, effectiveRange: nil) as? String ?? ""
             line.addAttribute(.manBlock, value: prefix, range: NSRange(location: 0, length: line.length))
@@ -191,8 +216,128 @@ final class RichNoteTextView: NSTextView {
         needsDisplay = true
     }
 
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        let caret = selectedRange()
+        let effectiveRange = replacementRange.location == NSNotFound ? caret : replacementRange
+        if replaceAcrossTableCells(insertString, range: effectiveRange) { return }
+        var convertBlock = false
+        if let text = insertString as? String, text == " ", caret.length == 0, !hasMarkedText(), !isTitle(caret), currentTable == nil,
+           typingAttributes[.manCode] == nil {
+            let ns = string as NSString
+            let line = ns.lineRange(for: caret)
+            let before = ns.substring(with: NSRange(location: line.location, length: caret.location - line.location))
+            convertBlock = before.range(of: #"^(?:[-*]|\d+\.|#{1,3}|>)$"#, options: .regularExpression) != nil
+        }
+        if convertBlock { undoManager?.beginUndoGrouping() }
+        super.insertText(insertString, replacementRange: replacementRange)
+        if convertBlock {
+            let ns = string as NSString
+            let range = ns.lineRange(for: selectedRange())
+            let raw = ns.substring(with: range)
+            let content = MarkdownRich.attributed(from: raw, firstLineIsTitle: false, assets: assets)
+            replace(range, with: content)
+            let end = range.location + content.length - (raw.hasSuffix("\n") ? 1 : 0)
+            setSelectedRange(NSRange(location: end, length: 0))
+            typingAttributes = baseAttributes(prefix: MarkdownRich.block(raw).prefix)
+            undoManager?.endUndoGrouping()
+        }
+    }
+
+    override func insertTab(_ sender: Any?) {
+        if !moveTableCell(backward: false) { super.insertTab(sender) }
+    }
+    override func insertBacktab(_ sender: Any?) {
+        if !moveTableCell(backward: true) { super.insertBacktab(sender) }
+    }
+    override func deleteBackward(_ sender: Any?) {
+        let selection = selectedRange()
+        if selection.length > 0, replaceAcrossTableCells("", range: selection) { return }
+        if selection.length == 0, currentTable == nil, selection.location > 0,
+           let previous = DocumentTable.selection(in: attributedString(), at: selection.location - 1) {
+            setSelectedRange(NSRange(location: NSMaxRange(previous.current.range) - 1, length: 0)); return
+        }
+        if selection.length == 0, let table = currentTable, selection.location == table.current.range.location {
+            _ = moveTableCell(backward: true); return
+        }
+        if selection.length == 0 {
+            let ns = string as NSString
+            let line = ns.lineRange(for: selection)
+            let prefix = line.location < ns.length ? textStorage?.attribute(.manBlock, at: line.location, effectiveRange: nil) as? String ?? "" : ""
+            let marker = MarkdownRich.block(prefix + "content").display
+            if !marker.isEmpty, selection.location == line.location + (marker as NSString).length { applyBlock(.text); return }
+        }
+        super.deleteBackward(sender)
+    }
+
+    override func deleteForward(_ sender: Any?) {
+        let selection = selectedRange()
+        if selection.length > 0, replaceAcrossTableCells("", range: selection) { return }
+        if selection.length == 0, let table = currentTable, selection.location == NSMaxRange(table.current.range) - 1 {
+            if table.current.range == table.cells.last?.range { exitTable() }
+            else { _ = moveTableCell(backward: false) }
+            return
+        }
+        super.deleteForward(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        !imageFiles(from: sender.draggingPasteboard).isEmpty || sender.draggingPasteboard.data(forType: .png) != nil || super.prepareForDragOperation(sender)
+    }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        imageFiles(from: sender.draggingPasteboard).isEmpty && sender.draggingPasteboard.data(forType: .png) == nil ? super.draggingEntered(sender) : .copy
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard !imageFiles(from: sender.draggingPasteboard).isEmpty || sender.draggingPasteboard.data(forType: .png) != nil else { return super.draggingUpdated(sender) }
+        let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+        imageDropLocation = (string as NSString).lineRange(for: NSRange(location: index, length: 0)).location
+        needsDisplay = true
+        return .copy
+    }
+    override func draggingExited(_ sender: NSDraggingInfo?) { imageDropLocation = nil; needsDisplay = true; super.draggingExited(sender) }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let files = imageFiles(from: sender.draggingPasteboard)
+        let png = sender.draggingPasteboard.data(forType: .png)
+        guard !files.isEmpty || png != nil else { return super.performDragOperation(sender) }
+        let index = imageDropLocation ?? characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+        imageDropLocation = nil; needsDisplay = true
+        setSelectedRange(NSRange(location: index, length: 0))
+        if !files.isEmpty { insertImages(files) } else if let png { insertImageData(png) }; return true
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        if let image = image(at: point) {
+            let menu = NSMenu()
+            let item = NSMenuItem(title: "View image", action: #selector(imageMenuAction(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = image.sourceURL; menu.addItem(item)
+            var imageRange: NSRange?
+            attributedString().enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributedString().length)) { value, range, stop in
+                if let candidate = value as? DocumentImageAttachment, candidate === image { imageRange = range; stop.pointee = true }
+            }
+            if let imageRange {
+                for (title, action) in [("Copy image", #selector(copyImageAction(_:))), ("Remove image", #selector(removeImageAction(_:)))] {
+                    let control = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                    control.target = self; control.representedObject = NSValue(range: imageRange); menu.addItem(control)
+                }
+            }
+            return menu
+        }
+        let index = characterIndexForInsertion(at: point)
+        if DocumentTable.selection(in: attributedString(), at: index) != nil {
+            setSelectedRange(NSRange(location: index, length: 0))
+            let menu = NSMenu()
+            for (title, action) in [("Add row below", "row"), ("Add column to the right", "column"), ("Delete row", "deleteRow"), ("Delete column", "deleteColumn"), ("Write below table", "leave"), ("Remove table", "remove")] {
+                let item = NSMenuItem(title: title, action: #selector(tableMenuAction(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = action; menu.addItem(item)
+            }
+            return menu
+        }
+        return super.menu(for: event)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command), isEditable {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == .command, isEditable, window?.firstResponder === self {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "b": toggleBoldSelection(); return true
             case "i": toggleItalicSelection(); return true
@@ -205,6 +350,11 @@ final class RichNoteTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53, currentTable != nil { exitTable(); return }
+        if event.keyCode == 49, selectedRange().length == 1,
+           let image = attributedString().attribute(.attachment, at: selectedRange().location, effectiveRange: nil) as? DocumentImageAttachment {
+            DocumentImagePreview.shared.open(image.sourceURL); return
+        }
         if slashRange != nil, !choices.isEmpty {
             switch event.keyCode {
             case 125: choiceIndex = (choiceIndex + 1) % choices.count; refreshSlashPicker(); return
@@ -220,6 +370,10 @@ final class RichNoteTextView: NSTextView {
     override func insertNewline(_ sender: Any?) {
         if let _ = slashRange, !choices.isEmpty { applyBlock(choices[choiceIndex]); return }
         let selection = selectedRange()
+        if currentTable != nil {
+            insertText(NSAttributedString(string: "\u{2028}", attributes: typingAttributes), replacementRange: selection)
+            return
+        }
         let ns = string as NSString
         let range = ns.lineRange(for: selection)
         let prefix = range.location < ns.length ? textStorage?.attribute(.manBlock, at: range.location, effectiveRange: nil) as? String ?? "" : ""
@@ -236,7 +390,12 @@ final class RichNoteTextView: NSTextView {
            let number = Int((next as NSString).substring(with: match.range)) {
             next = (next as NSString).replacingCharacters(in: match.range, with: String(number + 1))
         }
-        let attrs = baseAttributes(prefix: next)
+        var attrs = baseAttributes(prefix: next)
+        if !isTitle(selection), !prefix.trimmingCharacters(in: .whitespaces).hasPrefix("#") {
+            for key in [NSAttributedString.Key.manBold, .manItalic, .underlineStyle, .strikethroughStyle] {
+                attrs[key] = typingAttributes[key]
+            }
+        }
         let insertion = NSAttributedString(string: "\n" + MarkdownRich.block(next + "content").display, attributes: attrs)
         insertText(insertion, replacementRange: selection)
         typingAttributes = attrs
@@ -261,28 +420,62 @@ final class RichNoteTextView: NSTextView {
         let range = selectedRange()
         guard range.length > 0 else { return }
         let copy = NSMutableAttributedString(attributedString: attributedString().attributedSubstring(from: range))
-        let paragraph = (string as NSString).lineRange(for: range)
+        pasteboard.addTypes([.string], owner: nil)
+        pasteboard.setString(copy.string, forType: .string)
+        let paragraph = (string as NSString).paragraphRange(for: range)
+        if let table = currentTable, !NSEqualRanges(NSIntersectionRange(range, table.range), table.range) {
+            copy.removeAttribute(.manTable, range: NSRange(location: 0, length: copy.length))
+        }
         if range.location != paragraph.location || NSMaxRange(range) < NSMaxRange(paragraph) - 1 {
             copy.removeAttribute(.manBlock, range: NSRange(location: 0, length: copy.length))
         }
         let type = NSPasteboard.PasteboardType("com.muckstack.myman.markdown")
         pasteboard.addTypes([type], owner: nil)
         pasteboard.setString(MarkdownRich.markdown(from: copy, firstLineIsTitle: false), forType: type)
+        if copy.length == 1, let image = copy.attribute(.attachment, at: 0, effectiveRange: nil) as? DocumentImageAttachment,
+           let data = try? Data(contentsOf: image.sourceURL), let bitmap = NSBitmapImageRep(data: data),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            pasteboard.addTypes([.png], owner: nil); pasteboard.setData(png, forType: .png)
+        }
     }
 
     func paste(from pasteboard: NSPasteboard) {
         if let markdown = pasteboard.string(forType: NSPasteboard.PasteboardType("com.muckstack.myman.markdown")) {
-            insertText(MarkdownRich.attributed(from: markdown, firstLineIsTitle: false), replacementRange: selectedRange())
+            do {
+                let adopted = try assets.adoptingImages(in: markdown, documentID: documentID)
+                if let table = currentTable {
+                    let rich = MarkdownRich.parseInline(adopted.replacingOccurrences(of: "\n", with: "\u{2028}"), assets: assets)
+                    let structure = attributedString().attributes(at: table.current.range.location, effectiveRange: nil)
+                    for key in [NSAttributedString.Key.manTable, .manBlock, .paragraphStyle] {
+                        if let value = structure[key] { rich.addAttribute(key, value: value, range: NSRange(location: 0, length: rich.length)) }
+                    }
+                    insertText(rich, replacementRange: selectedRange())
+                } else {
+                    insertText(MarkdownRich.attributed(from: adopted, firstLineIsTitle: false, assets: assets), replacementRange: selectedRange())
+                }
+            } catch { Toast.show("Couldn’t paste this image. Its original file may be unavailable.", systemImage: "exclamationmark.circle") }
             return
         }
+        let files = imageFiles(from: pasteboard)
+        if !files.isEmpty { insertImages(files); return }
+        if let image = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) { insertImageData(image); return }
         // Foreign RTF attributes aren't our Markdown model. Import plain text
         // intentionally, preserving the current block and inline formatting.
         guard let text = pasteboard.string(forType: .string) else { return }
+        if currentTable != nil {
+            if pasteTableCells(text) { return }
+            insertText(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\u{2028}"), replacementRange: selectedRange())
+            return
+        }
+        if let table = DocumentTable.fromTSV(text), typingAttributes[.manCode] == nil {
+            insertTable(table); return
+        }
         insertText(text, replacementRange: selectedRange())
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if let image = image(at: point) { DocumentImagePreview.shared.open(image.sourceURL); return }
         let index = characterIndexForInsertion(at: point)
         let ns = string as NSString
         if index < ns.length {
@@ -333,7 +526,7 @@ final class RichNoteTextView: NSTextView {
         replace(range, with: content)
     }
 
-    private func replace(_ range: NSRange, with content: NSAttributedString) {
+    func replace(_ range: NSRange, with content: NSAttributedString) {
         guard let storage = textStorage, shouldChangeText(in: range, replacementString: nil) else { return }
         window?.makeFirstResponder(self)
         let previous = storage.attributedSubstring(from: range)
@@ -350,6 +543,21 @@ final class RichNoteTextView: NSTextView {
     }
 
     func applyBlock(_ block: DocumentBlock) {
+        if block == .image || block == .table {
+            var rows = 3, columns = 2
+            if let slashRange {
+                let command = (string as NSString).substring(with: slashRange)
+                if let size = command.split(separator: " ").last, size.contains("x") {
+                    let parts = size.split(separator: "x").compactMap { Int($0) }
+                    if parts.count == 2 { rows = parts[0]; columns = parts[1] }
+                }
+                setSelectedRange(slashRange)
+            }
+            dismissSlashMenu()
+            if block == .image { insertImageFromPanel() } else { insertTable(rows: rows, columns: columns) }
+            return
+        }
+        guard currentTable == nil else { return }
         let selection = selectedRange()
         let ns = string as NSString
         let range = ns.lineRange(for: selection)
@@ -433,12 +641,12 @@ final class RichNoteTextView: NSTextView {
 
     func updateSlashMenu() {
         let selection = selectedRange()
-        guard selection.length == 0, !isTitle(selection) else { dismissSlashMenu(); return }
+        guard selection.length == 0, !isTitle(selection), currentTable == nil, typingAttributes[.manCode] == nil else { dismissSlashMenu(); return }
         let ns = string as NSString
         let line = ns.lineRange(for: selection)
         let before = ns.substring(with: NSRange(location: line.location, length: selection.location - line.location))
-        guard before.hasPrefix("/"), before.count < 24, !before.contains(" "), ns.substring(with: line).trimmingCharacters(in: .newlines) == before else { dismissSlashMenu(); return }
-        let query = before.dropFirst().lowercased()
+        guard before.hasPrefix("/"), before.count < 24, (!before.contains(" ") || before.hasPrefix("/table ")), ns.substring(with: line).trimmingCharacters(in: .newlines) == before else { dismissSlashMenu(); return }
+        let query = before.hasPrefix("/table ") ? "table" : before.dropFirst().lowercased()
         choices = DocumentBlock.allCases.filter { query.isEmpty || $0.label.lowercased().contains(query) || $0.rawValue.contains(query) || ($0 == .checklist && query == "todo") }
         guard !choices.isEmpty else { dismissSlashMenu(); return }
         slashRange = NSRange(location: line.location, length: selection.location - line.location)

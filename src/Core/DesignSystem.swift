@@ -74,6 +74,7 @@ enum MM {
             case semiBold = "SemiBold", bold = "Bold"
         }
 
+        static let tableSize: CGFloat = 15
         static let title = gellix(20, .medium)
         static let body = gellix(15)
         static let bodyInput = gellix(16)

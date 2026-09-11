@@ -94,7 +94,7 @@ struct NoteDocumentView: View {
             RichMarkdownEditor(markdown: Binding(get: { body_ }, set: { text in
                 body_ = text
                 autosave.submit { try store.updateDocument(note, body: text) }
-            }), session: editor)
+            }), session: editor, documentID: "note-" + note.id)
             if showRelated {
                 CaptureRelatedSection(itemID: "note-" + note.id).padding(MM.Layout.padding)
             }

@@ -32,6 +32,9 @@ enum CaptureLifecycle {
         case .meeting(let m): files = [m.micAudioPath, m.systemAudioPath].compactMap { $0 } + m.slidePaths
         default: break
         }
+        if item.kind == "note" || item.kind == "meeting" {
+            files += DocumentAssets.shared.ownedFiles(documentID: item.kind + "-" + item.sourceID).map(\.path)
+        }
         // If trashing fails, keep the row so users can retry rather than lose
         // the only reference to a surviving sensitive file.
         for file in files where FileManager.default.fileExists(atPath: file) {

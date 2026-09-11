@@ -199,7 +199,7 @@ struct MeetingDocumentView: View {
                     notesService.cancel(meetingID: meeting.id)
                     summary = text; hasEditedNotes = true; debouncedSave(text)
                 }), firstLineIsTitle: false, session: editor,
-                                   placeholder: "Write your notes…")
+                                   placeholder: "Write your notes…", documentID: "meeting-" + meeting.id)
                 DocumentFooter(session: editor, text: summary, autosave: autosave)
             }
             if showRelated { CaptureRelatedSection(itemID: "meeting-" + meeting.id).padding(MM.Layout.padding) }
