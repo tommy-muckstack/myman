@@ -6,19 +6,25 @@ import Foundation
 // max time-overlap. Mic track is always "You"; the far side becomes
 // "Speaker 2/3/…" in first-appearance order — or stays the single remote
 // label when only one voice was there. Models download once in the
-// background; until they're ready, transcripts keep that single label.
+// background; transcription joins warmup before assigning speaker labels.
 
 actor Diarization {
     static let shared = Diarization()
 
     private var manager: DiarizerManager?
-    private var warming = false
+    private var warmup: Task<Void, Never>?
 
     /// Kick off the one-time model download + init. Safe to call repeatedly.
     func warm() async {
-        guard manager == nil, !warming else { return }
-        warming = true
-        defer { warming = false }
+        guard manager == nil else { return }
+        if let warmup { await warmup.value; return }
+        let task = Task { await loadModels() }
+        warmup = task
+        await task.value
+        warmup = nil
+    }
+
+    private func loadModels() async {
         do {
             let models = try await DiarizerModels.downloadIfNeeded()
             let m = DiarizerManager()
@@ -29,7 +35,7 @@ actor Diarization {
         }
     }
 
-    /// Speaker segments for a 16k mono WAV. Empty when models aren't ready
+    /// Speaker segments for a 16k mono WAV. Empty when models cannot load
     /// or diarization fails — callers keep their single remote label.
     func speakerSegments(forWavAtPath path: String) async -> [(speaker: String, start: Double, end: Double)] {
         if manager == nil { await warm() }

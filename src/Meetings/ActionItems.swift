@@ -18,12 +18,18 @@ import FoundationModels
 enum ActionItemExtractor {
     /// Markdown bullets, one per real commitment. Empty when nobody committed
     /// to anything — which is the common case for a status call.
-    static func extract(from transcript: String, meetingDate: Date) async -> String {
+    static func extract(from transcript: String, meetingDate: Date,
+                        progress: MeetingNotesService.Progress = { _ in }) async -> String {
+        let timer = MeetingProcessingTimer()
+        defer { timer.finish("commitment_checks") }
         #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else { return "" }
         guard case .available = SystemLanguageModel.default.availability else { return "" }
         var items: [Commitment] = []
-        for window in windows(of: transcript, size: 7000) {
+        let all = windows(of: transcript, size: 7000)
+        for (index, window) in all.enumerated() {
+            guard !Task.isCancelled else { return "" }
+            await progress("Checking commitments · \(index + 1) of \(all.count)…")
             let session = LanguageModelSession(instructions: instructions)
             guard let response = try? await session.respond(
                 to: window, generating: CommitmentList.self) else { continue }

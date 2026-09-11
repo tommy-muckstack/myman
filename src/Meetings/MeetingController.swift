@@ -690,8 +690,10 @@ final class MeetingController: ObservableObject {
         Analytics.track("meeting_transcription_queued",
                         ["queue_depth": transcribingTitles.count])
         let previous = transcriptionChain
+        let queueTimer = MeetingProcessingTimer()
         transcriptionChain = Task { @MainActor in
             await previous?.value
+            queueTimer.finish("transcription_queue")
             await self.runTranscription(job)
             if let index = self.transcribingTitles.firstIndex(of: job.record.title) {
                 self.transcribingTitles.remove(at: index)
@@ -708,13 +710,16 @@ final class MeetingController: ObservableObject {
 
     private func runTranscription(_ job: TranscriptionJob) async {
         var record = job.record
-        // Meetings favor Qwen3 (~4x fewer word errors): transcription runs in
-        // the background, so its slower decode costs nothing the user waits
-        // on. load() falls back to Parakeet on its own when Qwen3 can't load
+        let totalTimer = MeetingProcessingTimer()
+        defer { totalTimer.finish("transcription_total") }
+        // Keep the accuracy engine; reduce scheduling delays around it.
+        // load() falls back to Parakeet on its own when Qwen3 can't load
         // (download failure, macOS < 15).
+        let modelTimer = MeetingProcessingTimer()
         if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .qwen3 {
             await TranscriptionService.shared.load(kind: .qwen3)
         }
+        modelTimer.finish("speech_model_ready")
         record.transcript = await Self.buildTranscript(
             micPath: job.micPath, systemPath: job.systemPath,
             candidates: job.candidates)
@@ -732,13 +737,27 @@ final class MeetingController: ObservableObject {
             }
             await Self.deleteArtifacts(of: record)
         } else {
-            try? await Database.shared.write { [record] in try record.update($0) }
+            guard let saved = try? await Database.shared.write({ [record] in
+                try Self.saveTranscription(record, in: $0)
+            }) else { return }
+            record = saved
             People.noteAttendees(job.attendees)
             Brain.syncMeeting(id: record.id, title: record.title,
                               startedAt: record.startedAt, endedAt: record.endedAt,
                               summary: record.summary, transcript: record.transcript)
+            MeetingNotesService.shared.prepare(meetingID: record.id)
         }
         notifyDone(record)
+    }
+
+    /// The user may already be editing notes while audio is processing.
+    /// Update only the unfinished transcript and retain the latest document.
+    nonisolated static func saveTranscription(_ record: Meeting, in db: GRDB.Database) throws -> Meeting? {
+        try db.execute(sql: """
+            UPDATE meeting SET transcript = ?, endedAt = COALESCE(endedAt, ?)
+            WHERE id = ? AND transcript = ''
+            """, arguments: [record.transcript, record.endedAt, record.id])
+        return try Meeting.fetchOne(db, key: record.id)
     }
 
     /// An aborted or duplicate take, not a meeting: under a minute AND under
@@ -958,6 +977,8 @@ final class MeetingController: ObservableObject {
     /// of the user's turns while the remote track came through fine.
     private static func turnsWithFallback(atPath path: String, speaker: String)
         async -> [MeetingTurn] {
+        let timer = MeetingProcessingTimer()
+        defer { timer.finish(speaker == Self.ownerLabel ? "mic_transcription" : "remote_transcription") }
         let turns = await transcribeTurns(atPath: path, speaker: speaker)
         let duration = wavDuration(atPath: path)
         let covered = turns.reduce(0.0) { $0 + Double($1.text.count) }
@@ -1108,7 +1129,13 @@ final class MeetingController: ObservableObject {
     /// Falls back to the old two-block format when turn detection finds
     /// nothing but whole-file transcription would (very quiet audio).
     static func buildTranscript(micPath: String?, systemPath: String?,
-                                candidates: SpeakerCandidates = .none) async -> String {
+                                candidates: SpeakerCandidates = .none,
+                                overlapDiarization: Bool = true) async -> String {
+        // The diarizer owns separate models/state. Start it while the ASR
+        // processes the tracks, then join before assigning any speaker labels.
+        // ASR slices themselves remain serial on the shared speech engine.
+        let knownRemote = candidates.fromAttendees && candidates.names.count == 1
+        async let diarized = diarizeRemote(path: systemPath, skip: knownRemote || !overlapDiarization)
         var turns: [MeetingTurn] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
             turns += await turnsWithFallback(atPath: micPath, speaker: Self.ownerLabel)
@@ -1127,8 +1154,9 @@ final class MeetingController: ObservableObject {
                     MeetingTurn(start: $0.start, end: $0.end, speaker: only, text: $0.text)
                 }
             } else {
-                let diarized = await Diarization.shared.speakerSegments(forWavAtPath: systemPath)
-                sysTurns = label(turns: sysTurns, with: collapsePhantomSpeakers(in: diarized))
+                let segments = overlapDiarization ? await diarized
+                    : await diarizeRemote(path: systemPath, skip: false)
+                sysTurns = label(turns: sysTurns, with: collapsePhantomSpeakers(in: segments))
             }
             turns += sysTurns
         }
@@ -1160,6 +1188,14 @@ final class MeetingController: ObservableObject {
             }
         }
         return sections.joined(separator: "\n\n")
+    }
+
+    nonisolated private static func diarizeRemote(path: String?, skip: Bool)
+        async -> [(speaker: String, start: Double, end: Double)] {
+        guard !skip, let path, FileManager.default.fileExists(atPath: path) else { return [] }
+        let timer = MeetingProcessingTimer()
+        defer { timer.finish("speaker_identification") }
+        return await Diarization.shared.speakerSegments(forWavAtPath: path)
     }
 
     /// The same deterministic dictionary dictation already trusts —
@@ -1387,10 +1423,14 @@ final class MeetingController: ObservableObject {
                 if orphan.transcript.isEmpty || Self.isNoiseFragment(orphan) {
                     await Self.deleteArtifacts(of: orphan)
                 } else {
-                    try? await Database.shared.write { [orphan] in try orphan.update($0) }
+                    guard let saved = try? await Database.shared.write({ [orphan] in
+                        try Self.saveTranscription(orphan, in: $0)
+                    }) else { continue }
+                    orphan = saved
                     Brain.syncMeeting(id: orphan.id, title: orphan.title,
                                       startedAt: orphan.startedAt, endedAt: orphan.endedAt,
                                       summary: orphan.summary, transcript: orphan.transcript)
+                    MeetingNotesService.shared.prepare(meetingID: orphan.id)
                     Analytics.track("meeting_transcription_recovered")
                     let meetingID = orphan.id
                     Toast.show("Recovered meeting: \(orphan.title)",

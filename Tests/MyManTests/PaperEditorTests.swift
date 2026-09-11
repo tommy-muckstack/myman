@@ -167,6 +167,25 @@ final class PaperEditorTests: XCTestCase {
         XCTAssertEqual(try db.read { try Note.fetchCount($0) }, 0)
     }
 
+    @MainActor func testOpenMeetingReceivesPreparedNotesAndPreservesTyping() async throws {
+        let db = try DatabaseQueue(); try Database.migrator.migrate(db)
+        let meeting = Meeting(id: "processing-editor", title: "A meeting", startedAt: Date(), transcript: "")
+        try await db.write { try meeting.insert($0) }
+        let window = try await host(MeetingDocumentView(meeting: meeting, database: db, automaticallySummarize: false))
+        defer { window.contentView = nil; window.close() }
+        let text = try XCTUnwrap(editor(in: XCTUnwrap(window.contentView)))
+        XCTAssertTrue(text.string.isEmpty)
+        try await db.write { try $0.execute(sql: "UPDATE meeting SET transcript = 'Finished transcript', summary = 'Prepared notes' WHERE id = ?", arguments: [meeting.id]) }
+        for _ in 0..<40 where text.string.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(text.string, "Prepared notes")
+        window.makeFirstResponder(text)
+        text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
+        text.insertText(" with my additions", replacementRange: text.selectedRange())
+        try await db.write { try $0.execute(sql: "UPDATE meeting SET summary = 'Late generated replacement' WHERE id = ?", arguments: [meeting.id]) }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(text.string, "Prepared notes with my additions")
+    }
+
     @MainActor func testRenderNotesAndMeetingsInBothAppearances() async throws {
         let db = try DatabaseQueue(); try Database.migrator.migrate(db)
         let note = Note(body: sample)
