@@ -4,6 +4,10 @@ Plugin: **myman-brain** · Candidate: **0.4.1** · Author: **MuckStack, LLC** ·
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
+My Man logo for publisher/listing fields: https://raw.githubusercontent.com/tommy-muckstack/myman/main/assets/icon-256.png (use this icon, not the GitHub organization avatar).
+
+On each plugin update, follow the [Cursor marketplace release policy](cursor-marketplace-release.md). App releases and marketplace updates are separate.
+
 Package directory: repository root. The nested `integrations/grok-bot` skill-only package is a separate integration, not the root Cursor listing.
 
 ## Short description
@@ -39,6 +43,8 @@ Keywords: myman, meetings, notes, macos, local, memory, transcripts, screenshots
 
 ## Submission status
 
-On September 12, 2026 the [publish form](https://cursor.com/marketplace/publish) displayed **Sign in to apply** in the available browser session. No submission was sent and no listing or approval is claimed. After signing in, submit the repository URL above using this copy; record the resulting submission confirmation separately.
+**September 12, 2026 — initial publisher application submitted; awaiting review.** Tommy reports confirmation for MuckStack, LLC (`muckstack`) and this repository via the [publish form](https://cursor.com/marketplace/publish). This supersedes the earlier agent session's login blocker. No listing, approval or live Hugo/GrokBot activation is claimed.
+
+The first application used the GitHub organization avatar. Tommy chose to wait for review; use the My Man logo above in the next authorized update. A newly prepared candidate is not automatically submitted or accepted. While this application is pending, surface an update email to `marketplace-publishing@cursor.com` with `@muckstack`, the repository and candidate version rather than filing a duplicate application. No update email or second form submission is sent by this policy change.
 
 See [smoke results and remaining client checks](grok-bot-marketplace.md#verification-matrix).

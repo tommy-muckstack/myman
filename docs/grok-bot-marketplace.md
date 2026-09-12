@@ -1,6 +1,8 @@
 # Cursor Marketplace and GrokBot preparation
 
-Status (September 12, 2026): root Cursor candidate **0.4.1** is prepared and local retrieval is verified; **not submitted, listed, or verified inside Hugo/GrokBot**. The publish form requires sign-in in the available browser session. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
+Status (September 12, 2026): root Cursor candidate **0.4.1** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or Hugo/GrokBot activation is claimed. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
+
+For each agent-package update, follow the [Cursor marketplace release policy](cursor-marketplace-release.md). Shipping MyMan does not update the marketplace package. Use the [My Man logo](https://raw.githubusercontent.com/tommy-muckstack/myman/main/assets/icon-256.png) in publisher/listing fields and check [submission status](marketplace-submission.md#submission-status) before preparing an update notification.
 
 ## Two packages, distinct execution locations
 
@@ -64,7 +66,7 @@ Executed September 12, 2026 on the development Mac. Only counts and validation o
 | Cursor Customize discovery / skill invocation | **Not verified**: link creation is not client activation. Cursor 3.4.20 is present; no authenticated IDE agent invocation was performed. Reload Cursor and run the reviewer prompt in the listing |
 | Hugo local Shell status / recent with Mac machineId | **Not run**: no Hugo execution tool is available in this session; requires Hugo selecting the registered Mac |
 | Actual Grok local-execution refusal / Mac offline | **Not run in Grok**: documented stop/report instructions and missing-root tests are not a live host-policy test |
-| Submission | **Blocked on login**: actual browser visit to Cursor publish form shows “Sign in to apply”; nothing submitted |
+| Submission | **Awaiting review**: Tommy reports initial publisher application confirmation on September 12, 2026; this supersedes the earlier agent browser login blocker. Prepared package updates still require a separate notify/submit step |
 | GrokBot listing / cloud-to-Mac stdio bridge | Not verified / not claimed; use Mac-local CLI execution |
 
 To repeat local source checks (after the development npm install):
