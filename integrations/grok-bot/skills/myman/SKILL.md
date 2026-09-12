@@ -1,6 +1,6 @@
 ---
 name: myman
-description: Find MyMan meeting notes, screenshots, tasks and themes, or capture and annotate screenshots and operate MyMan on the user's Mac through local-computer execution. Also use for contributions to the open-source MyMan repository.
+description: Find MyMan meeting notes, screenshots, tasks and themes, or capture and annotate screenshots and operate MyMan on the user's Mac through local-computer execution. Also use for contributions to the open-source MyMan repository. Also use to match screenshot lettering, generate and preview font files, attach images to notes, and recover agent job results.
 ---
 
 # MyMan on the user's Mac
@@ -13,9 +13,21 @@ If you find a bug or missing capability, you can propose an improvement. When co
 
 MyMan is a Mac app. GrokBot's default cloud computer is not the user's Mac and does not contain their Brain. Use the registered Mac's local-computer Shell/Read execution for every MyMan command or file. Select that Mac's machineId when the host exposes machine targeting; never substitute the cloud box. Do not change local-execution or MyMan consent settings on the user's behalf. If the Mac is offline or local execution is denied, report that specific blocker and retain the requested task.
 
+## Complete workflows (MyMan 1.1.62+)
+
+For font files, illustrated notes, vague retrieval or interrupted jobs, read [the workflow recipes](references/agent-workflows.md). `actions` now queries the running app. Check `live` and `verified_available`; offline bundled schemas are documentation, not proof the installed app supports a command. Grants in the catalog are separate from advertised capability. `invoke` checks live support before starting work.
+
+Use `library search --query TEXT` for the same local fuzzy/semantic search as the UI. Results provide excerpts, match reasons and applied filters. Follow `next_offset`; `partial` means the bounded result set is not exhaustive. Bare `search` and Brain MCP remain keyword retrieval from exports; `library search --offline` selects that behavior explicitly.
+
+For screenshot typography: `font match` returns closest bundled styles, not a verified original font identity. `font create` makes an `.otf`; `font preview` renders the actual file and reports captured/inferred/missing characters. Inspect the specimen and disclose approximations before returning `attachment.path` through your host.
+
+For illustrated notes, use `note attach --id NOTE-ID --source-id SHOT-ID` (or an explicit local `--path`). It copies the image into note-owned assets and appends its Markdown. Keep returned revisions for later edits; do not manually copy files into Brain assets.
+
+Save the `job_id`/request ID and recording session ID. `jobs` lists bounded receipts; `job UUID` recovers a result after restart. Completed recordings also support `record result --session-id ID`. Receipts last up to seven days (256 jobs / 32 sessions), with large inline results omitted. `interrupted` means inspect saved artifacts, not replay automatically; successful start is not proof a session finalized. Temporary previews expire and can be regenerated. Deletion/exclusion clears retained content results.
+
 ## Markup and video workflows (MyMan 1.1.61+)
 
-Check the live `actions` catalog before using new commands; older installed apps need an update. For text-based markup, call `capture targets --id ID --query TEXT`. Use a returned `target_region` in an annotation or `target_text` when it is unambiguous. These are OCR line boxes, not arbitrary UI selectors. `AMBIGUOUS_TARGET` returns candidates without saving; select a region explicitly. `annotate --preview` renders a temporary PNG for visual review; repeat the operations without preview to save. Circles (`op: circle`) and numbered labels (`op: callout`) accept these targets or pixel rectangles. Preview files expire after an hour or source deletion/exclusion.
+Check the running app’s `actions` catalog before using new commands; older installed apps need an update. For text-based markup, call `capture targets --id ID --query TEXT`. Use a returned `target_region` in an annotation or `target_text` when it is unambiguous. These are OCR line boxes, not arbitrary UI selectors. `AMBIGUOUS_TARGET` returns candidates without saving; select a region explicitly. `annotate --preview` renders a temporary PNG for visual review; repeat the operations without preview to save. Circles (`op: circle`) and numbered labels (`op: callout`) accept these targets or pixel rectangles. Preview files expire after an hour or source deletion/exclusion.
 
 For a requested demo, discover the window, then `record start --window-id ID --max-duration 30 --mic off --system-audio off --json`. Choose audio deliberately. Window capture cannot include the webcam bubble. Keep the returned session ID for pause/resume/stop. The app-owned duration limit keeps working if the agent disconnects; the default is 300 seconds, including pauses. `record result --session-id ID` polls for `finalized` and the actual file. Do not attach a file while its state is recording/finalizing or blindly start a replacement take after a timeout.
 

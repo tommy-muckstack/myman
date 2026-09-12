@@ -1,6 +1,6 @@
 # MyMan CLI for agents
 
-MyMan 1.1.61 adds OCR-targeted markup, rendered previews, and video workflows to the resource/action interface introduced in 1.1.60. These additions require the updated app; check the live action catalog before using them. `myman actions` is the complete machine-readable catalog: names, argument schemas, effects, and required permission groups. `myman actions screenshot.edit` describes one operation. Every catalog action remains available as `myman invoke action.name '{"arguments":"here"}'`.
+MyMan 1.1.62 adds live capability discovery, native fuzzy/semantic search, note image attachments, structured font matching/specimens, and restart recovery. It extends 1.1.61's markup/video tools. `myman actions` queries the running app and returns its version, schemas and grants; when unavailable it explicitly labels bundled fallback schemas `live: false`. Use `actions --offline` for documentation only. `invoke` checks live support before executing. See [complete workflow recipes](agent-workflows.md).
 
 ## Installation and discovery
 
@@ -153,7 +153,7 @@ Window capture uses a ScreenCaptureKit window filter. It cannot be combined with
 
 Agent recordings default to a **300-second wall-clock limit**, including pauses; `--max-duration` accepts 1–3600 seconds. MyMan owns the timer, so the limit remains active if the agent disconnects. Normal human recordings retain their existing behavior. The stream acknowledges recording output before start succeeds; stop waits for output finalization, narration merge and library insertion. Timing can exceed the requested limit slightly due to capture/encoding shutdown latency.
 
-Named status/result returns `recording`, `pausing`, `paused`, `starting`, `finalizing`, `finalized`, `cancelled`, or `failed`. Pause/resume keeps one session ID and joins completed segments without paused time. `record result` is a poll, not a blocking wait; poll until `finalized` before attaching the file. Up to 32 terminal results are retained in memory for this app launch. Restarting the app or deleting/hiding content expires those results; retrieve an existing saved item from the library instead of starting a new take. A failed finalization includes `recovery_paths` when partial media survives, and is never labeled finalized.
+Named status/result returns `recording`, `pausing`, `paused`, `starting`, `finalizing`, `finalized`, `cancelled`, or `failed`. Pause/resume keeps one session ID and joins completed segments without paused time. `record result` is a poll, not a blocking wait; poll until `finalized` before attaching the file. Up to 32 session receipts persist for seven days across restarts. A session interrupted by restart is labeled `interrupted`, not finalized. Deleting/hiding content clears retained session results; inspect saved library items instead of starting a replacement take. A failed finalization includes `recovery_paths` when partial media survives, and is never labeled finalized.
 
 Frames accepts up to 12 timestamps in seconds, strictly before the file's end, or `--count` for evenly spaced samples. It returns each requested/actual timestamp and PNG metadata, plus a labeled contact sheet. Width defaults to 400 pixels (160–1280); frame aspect ratio is preserved. Inspect these images using the agent host's image viewer.
 
@@ -185,20 +185,23 @@ myman task list --state open --json
 myman task add --title "Review design" --notes "Compare variants" --json
 myman task complete --id TASK-ID --json
 myman task reopen --id TASK-ID --json
+myman font match --id shot-ID --json
 myman font create --id shot-ID --name "Captured lettering" --json
+myman font preview --id note-FONT-ID --text "Hello 0123" --json
 myman font file --id note-FONT-ID --json
+myman note attach --id note-ID --source-id shot-ID --alt "Design example" --json
 myman settings get --json
 myman settings set --key automatic_themes --value false --json
 ```
 
 Append is atomic and preserves a custom title; `--expected-updated-at` optionally rejects intervening changes. Replacement requires the timestamp from `library read`. Rich content is Markdown. Every mutation goes through app models and normal export/deletion lifecycle; never edit exported Markdown as a way to mutate the app. Font creation is the existing screenshot font workbench; missing glyphs may be inferred, not recovered exactly.
 
-Library search/recent and theme/task lists use the read-only export snapshot, with the existing keyword/phrase matching and citation/pagination contract. They do not claim parity with native semantic ranking. `collect` retains all existing time/participant/theme/descriptor filters. `myman actions` lists the remaining first-class native actions.
+Library search uses the native index and the UI’s exact/fuzzy/semantic ranking, with excerpts, match reasons and filters. Use `--lexical-only` for the first pass, or `--offline` for explicit export-keyword fallback. Library recent and theme/task lists continue using the read-only export snapshot and citation/pagination contract. `collect` retains all existing time/participant/theme/descriptor filters. `myman actions` lists the remaining first-class native actions.
 
 ## Results, jobs, and errors
 
-With `--json`, stdout contains one JSON object, including errors. Logs belong on stderr. New resource/action results flatten `job.result` and include `job_id`/`launch_id`. Low-level `invoke` and `job` preserve the original job envelope for compatibility. Read tools preserve their citation/pagination envelope. `--no-wait` returns a pending job; `--wait-timeout SECONDS` bounds waiting (default 300, max 600). Timeout does not cancel work. Poll `myman job UUID` after timeout/disconnect; never blindly repeat a mutation. `--request-id UUID` is an idempotency key within one app launch, not across app restarts.
+With `--json`, stdout contains one JSON object, including errors. Logs belong on stderr. New resource/action results flatten `job.result` and include `job_id`/`launch_id`. Low-level `invoke` and `job` preserve the original job envelope for compatibility. Read tools preserve their citation/pagination envelope. `--no-wait` returns a pending job; `--wait-timeout SECONDS` bounds waiting (default 300, max 600). Timeout does not cancel work. Poll `myman job UUID` after timeout/disconnect; never blindly repeat a mutation. `--request-id UUID` deduplicates across restarts while its receipt is retained. `jobs` lists recent receipts; an interrupted receipt must not be replayed automatically. Completed start receipts do not prove a recording finalized; use its session result.
 
 Exit codes: 0 success or intentionally pending; 2 OS permission missing; 3 cancelled; 4 agent access disabled; 5 invalid arguments/confirmation/conflicting revision or session; 6 operation/setup failure; 7 timeout. Error example: `{"ok":false,"error":{"code":"AGENT_DISABLED","message":"Enable capture access in My Man Settings → Agents for this action."}}`.
 
-The local socket is owned by the login, directory mode 0700, socket mode 0600, peer-UID checked. Payloads, concurrent jobs, retained results, and socket read times are bounded. Results expire after restart/eviction; deletion invalidates cached content. `MYMAN_AGENT_SOCKET` supports an explicitly chosen owned socket for isolated developer verification, never remote TCP. Tests use a debug-only fixture app and a separate socket.
+The local socket is owned by the login, directory mode 0700, socket mode 0600, peer-UID checked. Payloads, concurrent jobs, retained results, and socket read times are bounded. Receipts live outside Brain in owner-only Application Support for up to seven days, capped at 256 terminal jobs and 32 recording sessions. Inline results above 64 KiB are omitted with artifact references where available. Interrupted jobs are marked on restart, temporary previews expire, and deletion/exclusion redacts retained content. Disk-write failures are reported; no action begins if its start receipt cannot be saved. `MYMAN_AGENT_SOCKET` supports an explicitly chosen owned socket for isolated developer verification, never remote TCP. Tests use a debug-only fixture app and a separate socket.

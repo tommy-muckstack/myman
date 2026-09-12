@@ -57,6 +57,7 @@ enum SearchService {
     // MARK: Embeddings (NLEmbedding — free, local, good-enough)
 
     private static let embedder = NLEmbedding.sentenceEmbedding(for: .english)
+    static var semanticAvailable: Bool { embedder != nil }
     private static let embeddingLock = NSLock()
 
     static func embedding(for text: String) -> Data? {

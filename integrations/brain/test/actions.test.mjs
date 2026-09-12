@@ -5,7 +5,7 @@ import { mkdtemp, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { catalog, describe, invoke, request } from '../actions.mjs';
+import { catalog, describe, discover, invoke, request } from '../actions.mjs';
 
 test('discovery is offline and all actions have strict schemas and effect annotations', () => {
   assert.ok(catalog.actions.length >= 35);
@@ -18,6 +18,7 @@ test('discovery is offline and all actions have strict schemas and effect annota
 test('invoke submits a mutation once and polls the same job, preserving errors', async () => {
   const id = randomUUID(), calls = [];
   const reply = await invoke('screenshot.capture', {}, { id, transport: async message => {
+    if(message.method==='actions')return {ok:true,result:catalog};
     calls.push(message);
     return { ok: true, launch_id: 'launch', job: { id, state: calls.length === 1 ? 'running' : 'failed', error: { code: 'PERMISSION_REQUIRED' } } };
   } });
@@ -29,6 +30,7 @@ test('invoke submits a mutation once and polls the same job, preserving errors',
 test('app restart and disconnect never replay a mutation', async () => {
   const calls = [];
   await assert.rejects(invoke('recording.start', {}, { transport: async message => {
+    if(message.method==='actions')return {ok:true,result:catalog};
     calls.push(message.method);
     return { ok: true, launch_id: calls.length === 1 ? 'first' : 'second', job: { state: 'running' } };
   } }), { code: 'APP_RESTARTED' });
@@ -57,4 +59,27 @@ test('real Unix transport handles split replies and rejects unsafe socket permis
   assert.equal(response.result.value, 42);
   await chmod(socketPath, 0o666);
   await assert.rejects(request({ method: 'actions' }, { socketPath }), { code: 'INVALID_SOCKET' });
+});
+
+
+test('live discovery overrides bundled schemas and clearly labels offline fallback', async () => {
+  const live={...catalog,app_version:'1.1.62',actions:catalog.actions.filter(a=>a.name!=='font.match')};
+  const transport=async()=>({ok:true,result:live});
+  const found=await discover(undefined,{transport});assert.equal(found.live,true);assert.equal(found.app_version,'1.1.62');
+  await assert.rejects(discover('font.match',{transport}),{code:'UNSUPPORTED_ACTION'});
+  const fallback=await discover(undefined,{transport:async()=>{throw Object.assign(new Error('closed'),{code:'APP_NOT_RUNNING'});}});
+  assert.equal(fallback.source,'bundled_cli');assert.equal(fallback.verified_available,false);
+  await assert.rejects(discover(undefined,{transport:async()=>{throw Object.assign(new Error('bad socket'),{code:'INVALID_SOCKET'});}}),{code:'INVALID_SOCKET'});
+  assert.equal((await discover('font.create',{offline:true})).live,false);
+});
+test('unsupported live action cannot reach mutation transport',async()=>{
+  const calls=[];await assert.rejects(invoke('font.match',{id:'shot-a'},{transport:async m=>{calls.push(m.method);return {ok:true,result:{actions:[]}};}}),{code:'UNSUPPORTED_ACTION'});
+  assert.deepEqual(calls,['actions']);
+});
+test('persisted terminal job can be recovered after a launch change without replay',async()=>{
+  const calls=[];const result=await invoke('note.create',{body:'fixture'},{transport:async m=>{
+    calls.push(m.method);if(m.method==='actions')return {ok:true,result:catalog};
+    if(m.method==='invoke')return {ok:true,launch_id:'one',job:{state:'running'}};
+    return {ok:true,launch_id:'two',recovered:true,job:{state:'succeeded',result:{id:'note-saved'}}};
+  }});assert.equal(result.job.result.id,'note-saved');assert.deepEqual(calls,['actions','invoke','job']);
 });

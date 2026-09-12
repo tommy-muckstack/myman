@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": "0.6.0",
   "actions": [
     {
       "name": "app.status",
@@ -1226,7 +1226,7 @@
     },
     {
       "name": "font.file",
-      "description": "Get the validated managed OpenType font path for a saved font note.",
+      "description": "Get a saved font\u2019s validated OpenType file with attachment metadata, specimen preview, coverage and provenance. Does not install it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1770,6 +1770,179 @@
       "permissions": [
         "recording"
       ]
+    },
+    {
+      "name": "capture.search",
+      "description": "Search the same local index as the UI: exact, lexical, typo-tolerant and optional semantic matches. Exact results remain above semantic results. Excluded items are omitted. Returns excerpts, reasons, applied filters and bounded pagination.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "all",
+              "screenshots",
+              "meetings",
+              "dictations",
+              "recordings",
+              "notes",
+              "screenshot",
+              "meeting",
+              "dictation",
+              "recording",
+              "note"
+            ]
+          },
+          "after": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "before": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "theme": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "pinned_only": {
+            "type": "boolean"
+          },
+          "lexical_only": {
+            "type": "boolean"
+          },
+          "semantic": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 900
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "note.attach",
+      "description": "Copy an image into a note\u2019s owned assets and append its Markdown image. Supply source_id (screenshot) or an absolute local path. Source deletion does not break the note. Optional revision guard; returns the note revision and image attachment.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "alt": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "expected_updated_at": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "font.match",
+      "description": "Compare screenshot lettering with the bundled font styles. Returns ranked candidates and evidence; scores are distances, not probabilities, and do not identify the original font conclusively. Opens the local workbench; saves no font note.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "markup"
+      ]
+    },
+    {
+      "name": "font.preview",
+      "description": "Render a specimen from a saved font\u2019s actual OpenType bytes. Returns coverage, provenance, approximate-character warnings and a temporary preview. Does not install the font.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
     }
   ]
 }
