@@ -16,6 +16,8 @@ npm test --prefix integrations/brain
 npm run check-bundle --prefix integrations/brain
 ```
 
+Plugin/marketplace updates must follow [the Cursor marketplace release policy](docs/cursor-marketplace-release.md): prepare a versioned candidate for agent-surface changes and give Tommy the submit/notify step. A Mac app release does not update the marketplace listing.
+
 ## Getting started
 
 ```bash

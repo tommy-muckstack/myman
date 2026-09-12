@@ -124,6 +124,8 @@ and [paste-ready listing copy](docs/marketplace-submission.md). Cursor/Hugo
 client activation and marketplace acceptance are separate from local CLI/MCP
 verification. Grok Bot must execute on the Mac containing the Brain.
 
+On plugin updates, follow the [Cursor marketplace release policy](docs/cursor-marketplace-release.md); shipping the Mac app does not update the marketplace listing.
+
 ### Optional private voice replies (Chatterbox beta)
 
 Open the launcher, use the search field, then choose **Chat β**. Text chat is
