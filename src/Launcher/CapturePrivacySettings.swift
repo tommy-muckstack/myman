@@ -7,12 +7,8 @@ struct CapturePrivacySettings: View {
     @AppStorage("captureSemanticSearch") private var semanticSearch = true
     @AppStorage("captureWindowMetadata") private var windowMetadata = false
     @AppStorage("captureMetadataExcludedApps") private var excludedApps = ""
-    @AppStorage("agentActionsEnabled") private var agentActions = true
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Toggle("Allow local agents to use My Man tools", isOn: $agentActions).clickable()
-            Text("Agents running under your Mac login can explicitly capture, edit, read, copy and delete through the local CLI or MCP tools. macOS permissions still apply. Turn this off to disable app actions; exported Brain files remain readable.")
-                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             Toggle("Automatically group related captures into Themes", isOn: $automaticThemes)
                 .onChange(of: automaticThemes) { _, _ in CaptureEnrichment.shared.schedule() }
             Toggle("Find similar meanings with on-device search", isOn: $semanticSearch)

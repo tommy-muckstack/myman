@@ -4,7 +4,9 @@
     "myman-brain": {
       "type": "stdio",
       "command": "node",
-      "args": ["${PLUGIN_ROOT}/integrations/brain/server.mjs"],
+      "args": [
+        "${PLUGIN_ROOT}/src/Resources/BrainCompanion/server.mjs"
+      ],
       "cwd": "${PLUGIN_ROOT}"
     }
   }

@@ -1,12 +1,12 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "myman-brain",
+  "name": "myman",
   "version": "0.4.0",
-  "description": "Read-only local MyMan retrieval with citations, plus a skill for consent-gated app operation through the Mac CLI.",
+  "description": "Find MyMan meeting notes and screenshots, capture and annotate images, and operate MyMan through approved execution on your Mac. Requires the MyMan app and Node.js 22+ locally.",
   "author": {
     "name": "MuckStack, LLC"
   },
-  "homepage": "https://github.com/tommy-muckstack/myman#my-man-brain-plugin",
+  "homepage": "https://github.com/tommy-muckstack/myman/blob/main/docs/grok-bot-marketplace.md",
   "repository": "https://github.com/tommy-muckstack/myman",
   "license": "Apache-2.0",
   "keywords": [

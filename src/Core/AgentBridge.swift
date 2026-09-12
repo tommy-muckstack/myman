@@ -12,7 +12,7 @@ struct AgentError: Error, LocalizedError {
 /// Same-login local IPC. One bounded JSON request per connection; no TCP port,
 /// shell execution, or file paths supplied by captured document content.
 final class AgentBridge: @unchecked Sendable {
-    static var directory: URL { URL(fileURLWithPath: "/tmp/myman-\(getuid())", isDirectory: true) }
+    static var directory: URL { VerificationPaths.root?.appendingPathComponent("IPC", isDirectory: true) ?? URL(fileURLWithPath: "/tmp/myman-\(getuid())", isDirectory: true) }
     static var path: String { directory.appendingPathComponent("control.sock").path }
     private var listener: Int32 = -1
     private var source: DispatchSourceRead?
@@ -33,6 +33,7 @@ final class AgentBridge: @unchecked Sendable {
         guard fd >= 0 else { throw AgentError("IPC_UNAVAILABLE", "Cannot create local socket.") }
         var address = sockaddr_un(); address.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(Self.path.utf8CString)
+        guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { Darwin.close(fd); throw AgentError("IPC_UNAVAILABLE", "Command socket path is too long.") }
         withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes.map { UInt8(bitPattern: $0) }) }
         address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
         // Never replace a socket belonging to another running copy of My Man.

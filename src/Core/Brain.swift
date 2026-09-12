@@ -59,7 +59,7 @@ enum Brain {
             For a time range, use `--after 2026-09-01T00:00:00-04:00 --before 2026-09-02T00:00:00-04:00`.
             Run `node tools/cli.mjs --root "$PWD" status` or `--help` to discover other commands.
             Use `node tools/cli.mjs actions` for all app actions and JSON schemas, then
-            `node tools/cli.mjs invoke screenshot.capture` (updated app must be running).
+            `node tools/cli.mjs screenshot --mode agent --display main --json` (updated app must be running; enable capture in Settings → Agents).
             Actions cover captures, markup, clipboard, recordings, meetings, dictation,
             notes, tasks and Themes. Invoke only what the human requested. Poll job IDs
             after a timeout; never blindly repeat a mutation. The MCP companion exposes
@@ -78,7 +78,7 @@ enum Brain {
 
             Canonical, auto-synced record of the user's My Man captures.
             The companion ships here: `node tools/cli.mjs --root "$PWD" --help` (Node.js 22+).
-            Discover explicit app actions with `node tools/cli.mjs actions`. Use `invoke` to capture, edit, record or manage content only when requested. Poll job IDs after timeouts instead of repeating mutations. The updated app must be running.
+            Discover explicit app actions with `node tools/cli.mjs actions`. Use `invoke` to capture, edit, record or manage content only when requested. Poll job IDs after timeouts instead of repeating mutations. The updated app must be running. Settings → Agents grants start off; the CLI cannot enable them. Delete requires confirm=true. Brain MCP is read-only; app actions use the CLI.
             Start with `screenshots --meeting "Jared demo" --exclude-tag slide-deck` for visual retrieval.
             `--meeting` accepts a meeting ID, export path, or description; ambiguous matches return candidates.
             Use `image '{"path":"screenshots/returned-file.md","size":"thumbnail"}'` for a compact visual preview.
@@ -130,6 +130,10 @@ enum Brain {
     }
 
     // MARK: Links (for pointing LLMs/agents at a capture)
+
+    nonisolated static func screenshotFilePath(id: String, createdAt: Date) -> String {
+        "screenshots/\(day(createdAt))-\(id.prefix(8)).md"
+    }
 
     nonisolated static func meetingFilePath(id: String, startedAt: Date) -> String {
         root.appendingPathComponent("meetings/\(day(startedAt))-\(id.prefix(8)).md").path

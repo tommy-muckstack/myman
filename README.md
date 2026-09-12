@@ -79,28 +79,25 @@ Official releases are signed, notarized, and distributed only by the maintainer 
 
 ## CLI and agent automation
 
-My Man exposes its ordinary user actions through a local URL command surface. This is deliberately UI-equivalent: it still shows selection/permission UI and cannot silently capture anything.
+Agents can use MyMan's tools through a local CLI, with structured results and
+separate capture, markup, recording and library permissions in **Settings → Agents**.
+These grants start off. macOS permissions still apply. The ordinary bare commands
+and `myman://` URLs retain their existing interactive behavior.
 
-After installing My Man, agents and shell scripts can use:
-
-```bash
-open 'myman://screenshot'     # opens the normal region picker
-open 'myman://note'
-open 'myman://dictation'      # same toggle as the dictation tile
-open 'myman://meeting'
-open 'myman://cancel-meeting'
-open 'myman://record'
+```sh
+"/Applications/My Man.app/Contents/Resources/myman" doctor --json
+myman screenshot --mode agent --display main --region 0,0,1200,800 --json
+myman annotate --id shot-ID --ops-file ops.json --clipboard --json
+myman meeting start --title "Design review" --json
+myman meeting stop --session-id RETURNED-ID --json
+myman note create --title "Follow-ups" --body-file body.md --json
+myman actions  # Complete schemas and required permissions, including fonts/tasks/themes
 ```
 
-For a shorter command, an operator can install the bundled helper once:
-
-```bash
-mkdir -p ~/.local/bin
-ln -sf /Applications/My\ Man.app/Contents/Resources/myman ~/.local/bin/myman
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-```
-
-Then call `myman screenshot`, `myman note`, `myman dictation`, `myman meeting`, `myman cancel-meeting`, `myman record`, `myman settings`, or `myman open`. The app must have the normal Screen Recording, Microphone, and Accessibility permissions; this makes capture flows testable while retaining the same on-screen confirmation a person receives.
+Requires Node.js 22+ on the Mac. The installed helper contains everything else;
+no source checkout or npm installation is needed. See [setup, commands and
+JSON contract](docs/agent-cli.md), [capability matrix](docs/agent-cli-parity.md),
+and [GrokBot marketplace preparation](docs/grok-bot-marketplace.md).
 
 ## My Man Brain plugin
 

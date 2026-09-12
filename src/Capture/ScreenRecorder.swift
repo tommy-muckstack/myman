@@ -41,6 +41,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private(set) var agentSessionID: String?
     private(set) var lastSavedRecord: ScreenRecording?
     private var agentHideCamera = false
+    private var agentSystemAudio: Bool?
+    private var agentWantsCamera = false
     private var agentPreviousMicrophone: Bool?
     private var pill: FloatingPanel?
     private var streamConfiguration: SCStreamConfiguration?
@@ -182,15 +184,19 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     @available(macOS 15.0, *)
-    func startForAgent(region: CGRect, microphone: Bool) async throws {
+    func startForAgent(region: CGRect, microphone: Bool, systemAudio: Bool = true, webcam: Bool = false) async throws {
         guard !isBusy else { throw AgentError("BUSY", "A screen recording is already active or starting.") }
         isBusy = true
         guard await CaptureEngine.shared.authorizeInteractively() else { isBusy = false; throw AgentError("PERMISSION_REQUIRED", "Grant Screen Recording access.") }
         if microphone {
             guard await authorizeMicrophoneIfNeeded() else { isBusy = false; throw AgentError("PERMISSION_REQUIRED", "Grant Microphone access.") }
         }
+        if webcam, AVCaptureDevice.authorizationStatus(for: .video) != .authorized {
+            guard await AVCaptureDevice.requestAccess(for: .video) else { isBusy = false; throw AgentError("PERMISSION_REQUIRED", "Grant Camera access for the webcam bubble.") }
+        }
+        agentSystemAudio = systemAudio; agentWantsCamera = webcam
         agentPreviousMicrophone = microphoneEnabled
-        microphoneEnabled = microphone; agentHideCamera = true
+        microphoneEnabled = microphone; agentHideCamera = !webcam
         start(regionAppKit: region)
     }
 
@@ -231,7 +237,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 config.captureResolution = .best
                 config.queueDepth = 8
                 config.showsCursor = true
-                config.capturesAudio = true
+                config.capturesAudio = agentSystemAudio ?? true
                 // The mic is deliberately NOT SCK's job: captureMicrophone
                 // echo-cancels the mic against system audio, leaving
                 // narration watery and quiet on every device we tried.
@@ -250,7 +256,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 let formatter = DateFormatter()
                 formatter.dateFormat = "yyyy-MM-dd HH.mm.ss" // fixed: locale slashes break paths
                 let url = SettingsStore.shared.screenshotFolderURL
-                    .appendingPathComponent("Recording \(formatter.string(from: Date())).mov")
+                    .appendingPathComponent("Recording \(formatter.string(from: Date()))-\(UUID().uuidString.prefix(8)).mov")
                 try? FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
 
@@ -301,7 +307,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // The bubble comes on with the recording (prompting for
                 // camera the first time); the pill toggle remembers your
                 // last choice for next time.
-                if !agentHideCamera, UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true,
+                if !agentHideCamera, agentWantsCamera || (UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true),
                    AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
                     WebcamBubble.shared.turnOn()
                 }
@@ -309,7 +315,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 NSLog("My Man [Record] start failed: \(error)")
                 await AudioCapture.shared.setSuppressVoiceProcessing(false)
                 self.isBusy = false
-                self.agentHideCamera = false
+                self.agentHideCamera = false; self.agentSystemAudio = nil; self.agentWantsCamera = false
                 if let previous = self.agentPreviousMicrophone { self.microphoneEnabled = previous; self.agentPreviousMicrophone = nil }
                 self.borderPanel?.orderOut(nil)
                 self.borderPanel = nil
@@ -323,7 +329,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         guard isRecording else { return }
         isRecording = false
         let url = outputURL
-        agentSessionID = nil; agentHideCamera = false
+        agentSessionID = nil; agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false
         if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
         let duration = startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
         startedAt = nil
@@ -374,6 +380,25 @@ final class ScreenRecorder: NSObject, ObservableObject {
                            NSPasteboard.general.writeObjects([item])
                        })
         }
+    }
+
+    /// Discard without re-entering the picker or publishing a library item.
+    func cancelForAgent() async throws {
+        guard isRecording else { throw AgentError("SESSION_MISMATCH", "No active screen recording.") }
+        isRecording = false
+        do { try await stream?.stopCapture() }
+        catch { isRecording = true; throw AgentError("CAPTURE_FAILED", "Could not stop the recording. Its session remains active; retry stop or cancel.") }
+        let discardedURL = outputURL
+        agentSessionID = nil; agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false
+        if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
+        dismissPill(); borderPanel?.orderOut(nil); borderPanel = nil
+        CursorEffects.shared.hide(); WebcamBubble.shared.turnOff(); WebcamBubble.shared.resetPosition()
+        WebcamBubble.shared.preferredRegion = nil
+        narration.stopDiscarding(); micLevelTimer?.invalidate(); micLevelTimer = nil; microphoneLevel = 0
+        stream = nil; streamConfiguration = nil; recordingOutput = nil; outputURL = nil; activeRegion = nil; startedAt = nil
+        await AudioCapture.shared.setSuppressVoiceProcessing(false)
+        defer { isBusy = false }
+        if let discardedURL { try FileManager.default.removeItem(at: discardedURL) }
     }
 
     /// Throw away the current movie and return to selection. Unlike Stop this

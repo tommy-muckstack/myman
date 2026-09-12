@@ -7,22 +7,28 @@ import { execute, tools } from './tools.mjs';
 import { randomUUID } from 'node:crypto';
 const root = process.argv[2]; assert.ok(root?.startsWith('/private/tmp/man-verification-'));
 const fixture = JSON.parse(await readFile(root+'/ready.json')); assert.equal(fixture.root,root);
+assert.equal(fixture.socket,root+'/IPC/control.sock');
+process.env.MYMAN_AGENT_SOCKET=fixture.socket;
 const covered = new Set(), report=[];
 async function run(action,args={},expected) {
   process.stderr.write(`Testing ${action}\n`);
-  const result = await invoke(action,args);
+  let result;
+  try { result = await invoke(action,args); }
+  catch(error) { if(!expected)throw error;result={job:{state:'failed',error:{code:error.code}}}; }
   if(expected) assert.equal(result.job.error?.code,expected,JSON.stringify(result));
   else assert.equal(result.job.state,'succeeded',JSON.stringify(result));
   covered.add(action); report.push({action,state:result.job.state,error:result.job.error});
   await writeFile(root+'/all-actions-progress.json',JSON.stringify(report,null,2));
   return result.job.result;
 }
-const status = await run('app.status'); assert.equal(status.version,'1.1.59-preview');
+const status = await run('app.status'); assert.equal(status.version,'1.1.60-preview');
+await run('app.doctor');
 await run('screens.list'); await run('app.open',{surface:'search'});
 const settings = await run('settings.read');
 await run('settings.update',{automatic_themes:false});
 await run('settings.update',{automatic_themes:settings.automatic_themes});
 const note = await run('note.create',{body:'# Agent test note\nCapture workflow verification.'});
+await run('note.append',{id:note.id,body:'Appended fixture.'});
 const original = await run('item.read',{id:note.id});
 await run('note.update',{id:note.id,body:'# Agent test note\nUpdated fixture.',expected_updated_at:original.updated_at});
 await run('note.update',{id:note.id,body:'Conflict',expected_updated_at:original.updated_at},'EDIT_CONFLICT');
@@ -50,8 +56,10 @@ await run('item.related',{id:shot.id});
 await run('theme.assign',{id:fixture.theme_a,item_id:shot.id,remove:true});
 await run('theme.dismiss',{id:fixture.theme_a});
 const task = await run('task.create',{title:'Verify CLI fixture',notes:'Temporary task',due:'2026-09-12T12:00:00-04:00'});
-await run('task.update',{id:task.id,title:'Verified CLI',done:true,clear_due:true}); await run('task.delete',{id:task.id});
+await run('task.update',{id:task.id,title:'Verified CLI',done:true,clear_due:true}); await run('task.delete',{id:task.id,confirm:true});
 await run('meeting.notes',{id:fixture.meeting_id});
+const config=await run('meeting.config.read');
+await run('meeting.config.update',{auto_record_meetings:config.auto_record_meetings});
 const meeting = await run('meeting.start',{title:'Agent recording fixture'});
 await run('meeting.rename',{session_id:meeting.session_id,title:'Renamed agent fixture'});
 await new Promise(r=>setTimeout(r,1100));
@@ -63,12 +71,20 @@ const stop = await invoke('dictation.stop',{session_id:voice.session_id});
 assert.ok(stop.job.state==='succeeded'||stop.job.error?.code==='TRANSCRIPTION_FAILED',JSON.stringify(stop)); covered.add('dictation.stop'); report.push({action:'dictation.stop',state:stop.job.state,error:stop.job.error});
 const cancelled = await run('dictation.start'); await run('dictation.cancel',{session_id:cancelled.session_id});
 if(status.permissions.screen_recording) {
+  const windows=await run('windows.list');
+  const ownWindow=windows.find(w=>w.title==='My Man · isolated verification');
+  assert.ok(ownWindow);
+  await run('screenshot.capture',{window_id:ownWindow.id});
+  await run('screenshot.capture_markup',{region:fixture.region,annotations:[{type:'box',rect:[20,20,100,100],color:'#FF0000'}]});
   await run('screenshot.capture',{region:fixture.region});
   const recording=await run('recording.start',{region:fixture.region,microphone:false});
   await run('recording.microphone',{session_id:recording.session_id,enabled:false});
   await new Promise(r=>setTimeout(r,1800));
   const movie=await run('recording.stop',{session_id:recording.session_id}); assert.ok((await stat(movie.path)).size>1000);
   await run('clipboard.write',{id:movie.id});
+  const cancel=await run('recording.start',{region:fixture.region,microphone:false,system_audio:false});
+  await new Promise(r=>setTimeout(r,1100));
+  await run('recording.cancel',{session_id:cancel.session_id});
 }
 const font=await run('font.create',{id:shot.id,name:'Agent complete font'});
 assert.equal((await readFile(font.path)).subarray(0,4).toString(),'OTTO');
@@ -85,7 +101,7 @@ queryArgs.read.path=queryArgs.image.path;
 const queried=[];
 for(const name of Object.keys(tools)) { await execute(brain,name,queryArgs[name]); queried.push(name); }
 const cached = await invoke('item.read',{id:note.id});
-await run('item.delete',{id:note.id});
+await run('item.delete',{id:note.id,confirm:true});
 await assert.rejects(request({method:'job',id:cached.job.id}),{code:'JOB_NOT_FOUND'});
 await run('history.clear',{confirm:false},'CONFIRMATION_REQUIRED');
 await run('history.clear',{confirm:true});

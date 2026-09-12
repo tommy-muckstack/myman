@@ -59,19 +59,27 @@ final class CaptureController: SelectionOverlayDelegate {
 
     /// Explicit agent capture uses the same save/OCR/context pipeline as the overlay.
     func captureForAgent(region: CGRect, clipboard: Bool) async throws -> [String: Any] {
+        let date = Date(), meetingID = meetingIDProvider()
+        let (image, scale) = try await imageForAgent(region: region)
+        var result = try saveAgentImage(image, capturedAt: date, meetingID: meetingID, clipboard: clipboard)
+        result["scale"] = scale
+        await saveAgentContext(id: result["id"] as! String, region: region, meetingID: meetingID)
+        return result
+    }
+    func imageForAgent(region: CGRect) async throws -> (NSImage, Double) {
         guard overlay?.isShowing != true else { throw AgentError("BUSY", "Finish the current screenshot selection first.") }
         guard await CaptureEngine.shared.authorizeInteractively() else { throw AgentError("PERMISSION_REQUIRED", "Grant My Man Screen Recording access in System Settings.") }
-        let date = Date(), meetingID = meetingIDProvider()
         let frozen = try await CaptureEngine.shared.captureAllDisplaysComposite()
         guard frozen.combinedFrame.contains(region), let image = frozen.crop(to: region) else { throw AgentError("INVALID_ARGUMENTS", "Region must fit within the captured desktop.") }
-        let result = try saveAgentImage(image, capturedAt: date, meetingID: meetingID, clipboard: clipboard)
+        return (image, frozen.scaleFactor)
+    }
+    func saveAgentContext(id: String, region: CGRect, meetingID: String?) async {
         let mainHeight = NSScreen.screens.first?.frame.height ?? 0
         let snapshot = await Task.detached(priority: .utility) { CaptureWindowSnapshot.take() }.value
         if let window = snapshot.selected(in: region, mainDisplayHeight: mainHeight) {
-            let origin = ScreenshotContext(itemID: result["id"] as! String, timezone: TimeZone.current.identifier, meetingID: meetingID, app: window.app, bundleID: window.bundleID, windowTitle: window.title, url: window.url)
-            try await Database.shared.write { try ScreenshotContext.saveOrigin(origin, in: $0, metadataEnabled: UserDefaults.standard.bool(forKey: "captureWindowMetadata"), excludedApps: UserDefaults.standard.string(forKey: "captureMetadataExcludedApps") ?? "") }
+            let origin = ScreenshotContext(itemID: id, timezone: TimeZone.current.identifier, meetingID: meetingID, app: window.app, bundleID: window.bundleID, windowTitle: window.title, url: window.url)
+            try? await Database.shared.write { try ScreenshotContext.saveOrigin(origin, in: $0, metadataEnabled: UserDefaults.standard.bool(forKey: "captureWindowMetadata"), excludedApps: UserDefaults.standard.string(forKey: "captureMetadataExcludedApps") ?? "") }
         }
-        return result
     }
 
     func saveAgentImage(_ image: NSImage, capturedAt: Date = Date(), meetingID: String? = nil, clipboard: Bool = false) throws -> [String: Any] {
@@ -88,7 +96,7 @@ final class CaptureController: SelectionOverlayDelegate {
         } catch { try? FileManager.default.removeItem(at: url); throw error }
         OCRStore.refresh(image: image, fileURL: url, id: id)
         if clipboard { NSPasteboard.general.clearContents(); NSPasteboard.general.setData(png, forType: .png) }
-        return ["id": "shot-" + id, "path": url.path, "width": AgentImages.size(image).width, "height": AgentImages.size(image).height, "ocr_status": "processing"]
+        return ["id": "shot-" + id, "kind": "screenshot", "path": url.path, "image_path": url.path, "created_at": AgentActions.date(capturedAt), "timezone": TimeZone.current.identifier, "brain_path": Brain.screenshotFilePath(id: id, createdAt: capturedAt), "width": AgentImages.size(image).width, "height": AgentImages.size(image).height, "ocr_status": "processing"]
     }
 
     /// Open an existing capture (e.g. from launcher search) in the editor.

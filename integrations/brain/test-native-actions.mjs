@@ -7,6 +7,8 @@ const root = process.argv[2];
 assert.ok(root?.startsWith('/private/tmp/man-verification-'));
 const ready = JSON.parse(await readFile(root + '/ready.json'));
 assert.equal(ready.root, root);
+assert.equal(ready.socket,root+'/IPC/control.sock');
+process.env.MYMAN_AGENT_SOCKET=ready.socket;
 const results = [];
 async function run(action, args = {}, options = {}) {
   const reply = await invoke(action, args, options);
@@ -15,7 +17,7 @@ async function run(action, args = {}, options = {}) {
   return reply.job.result;
 }
 const status = await run('app.status');
-assert.equal(status.version, '1.1.59-preview');
+assert.equal(status.version, '1.1.60-preview');
 const note = await run('note.create', { body: '# CLI fixture\nOriginal note body.' });
 const read = await run('item.read', { id: note.id });
 await run('note.update', { id: note.id, body: '# CLI fixture\nUpdated body.', expected_updated_at: read.updated_at });
@@ -51,7 +53,7 @@ const font = await run('font.create', { id: imported.id, name: 'Agent font fixtu
 const fontFile = await readFile(font.path); assert.equal(fontFile.subarray(0,4).toString(), 'OTTO');
 await run('font.file', { id: font.id });
 await run('item.read', { id: font.id });
-await run('item.delete', { id: note.id });
+await run('item.delete', { id: note.id, confirm: true });
 await run('item.delete', { id: once.id });
 await writeFile(root + '/report.json', JSON.stringify({ passed: true, results }, null, 2));
 console.log(JSON.stringify({ passed: true, actions: results.map(r => r.action), report: root + '/report.json' }));
