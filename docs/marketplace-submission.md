@@ -1,6 +1,6 @@
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.5.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.6.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -48,3 +48,5 @@ Keywords: myman, meetings, notes, macos, local, memory, transcripts, screenshots
 The first application used the GitHub organization avatar. Tommy chose to wait for review; use the My Man logo above in the next authorized update. A newly prepared candidate is not automatically submitted or accepted. While this application is pending, surface an update email to `marketplace-publishing@cursor.com` with `@muckstack`, the repository and candidate version rather than filing a duplicate application. No update email or second form submission is sent by this policy change.
 
 See [smoke results and remaining client checks](grok-bot-marketplace.md#verification-matrix).
+
+New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.6.0 marketplace update is prepared, not submitted or approved.

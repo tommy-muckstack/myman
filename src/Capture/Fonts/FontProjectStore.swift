@@ -44,7 +44,7 @@ enum FontProjectStore {
         guard font.count > 100, font.count <= 16 * 1024 * 1024, font.prefix(4) == Data("OTTO".utf8),
               let descriptors = CTFontManagerCreateFontDescriptorsFromData(font as CFData) as? [CTFontDescriptor], !descriptors.isEmpty else { throw AgentError("INVALID_FONT", "The generated file is not a valid OpenType CFF font.") }
     }
-    @MainActor static func save(font: Data, name: String, state: [String: Any], provenance: [[String: Any]], images: [Data], sourceTitle: String) throws -> (Note, URL) {
+    @MainActor static func save(font: Data, name: String, state: [String: Any], provenance: [[String: Any]], images: [Data], sourceTitle: String, matches: [[String: Any]] = []) throws -> (Note, URL) {
         try validate(font)
         try validateState(state)
         guard images.count <= 3, state["version"] as? Int == 1 else { throw AgentError("INVALID_PROJECT", "Invalid font project.") }
@@ -61,7 +61,7 @@ enum FontProjectStore {
             }
             guard let projectURL = asset(note.id, "font-project.json"), let fontURL = asset(note.id, "font.otf") else { throw CocoaError(.fileWriteNoPermission) }
             try FileManager.default.createDirectory(at: fontURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let container: [String: Any] = ["version": 1, "state": state, "images": refs, "provenance": provenance]
+            let container: [String: Any] = ["version": 1, "state": state, "images": refs, "provenance": provenance, "matches": matches]
             try JSONSerialization.data(withJSONObject: container, options: [.sortedKeys]).write(to: projectURL, options: .atomic); owned.append(projectURL)
             try font.write(to: fontURL, options: .atomic); owned.append(fontURL)
             let counts = Dictionary(grouping: provenance, by: { $0["source"] as? String ?? "missing" }).map { "\($0.value.count) \($0.key)" }.sorted().joined(separator: ", ")

@@ -45,19 +45,34 @@ final class FontWorkbenchController: NSObject, NSWindowDelegate, WKNavigationDel
         controller.savedURL = FontProjectStore.asset(noteID, "font.otf"); controller.show()
     }
     static func generateForAgent(image: NSImage, title: String, sourceID: String, name: String, capturedOnly: Bool) async throws -> [String: Any] {
+        let result = try await analyzeForAgent(image: image, title: title, sourceID: sourceID, name: name, capturedOnly: capturedOnly)
+        let matches = result["candidates"] as? [[String: Any]] ?? []
+        let (note, _) = try FontProjectStore.save(font: Data(base64Encoded: result["font"] as! String)!, name: name, state: result["project"] as! [String: Any], provenance: result["provenance"] as! [[String: Any]], images: [try AgentImages.png(image)], sourceTitle: title, matches: matches)
+        return try AgentFonts.file(noteID: note.id)
+    }
+    static func matchForAgent(image: NSImage, title: String, sourceID: String) async throws -> [String: Any] {
+        let result = try await analyzeForAgent(image: image, title: title, sourceID: sourceID, name: "Lettering specimen", capturedOnly: true)
+        let data = Data(base64Encoded: result["font"] as! String)!
+        return ["source_id": sourceID, "candidates": result["candidates"] ?? [], "catalog_size": result["catalog_size"] ?? 0,
+                "scope": "bundled_styles", "exact_identity_verified": false, "score_type": "distance_lower_is_better",
+                "captured_characters": result["captured"] ?? [], "preview": try AgentFonts.specimen(data: data, text: (result["captured"] as? [String] ?? []).joined(separator: " ")),
+                "limitations": "Closest bundled styles only; screenshot shape similarity does not establish the original font family."]
+    }
+    private static func analyzeForAgent(image: NSImage, title: String, sourceID: String, name: String, capturedOnly: Bool) async throws -> [String: Any] {
         let controller = FontWorkbenchController(); controller.sourceTitle = title; controller.sourceItemID = sourceID
         try controller.add(data: AgentImages.png(image), title: title); controller.show()
         defer { controller.window.close() }
         let deadline = Date().addingTimeInterval(30)
         while !controller.ready, !controller.closed, controller.startupError == nil, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
         guard controller.ready, !controller.closed else { throw AgentError("FONT_UNAVAILABLE", controller.startupError ?? "Font window did not open.") }
-        _ = try await controller.webView.callAsyncJavaScript("document.getElementById('name').value=name; await window.fontWorkbench.run(); if(capturedOnly){ const mode=document.getElementById('mode'); mode.value='captured'; mode.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,300)); }", arguments: ["name": name, "capturedOnly": capturedOnly], in: nil, contentWorld: .page)
+        _ = try await controller.webView.callAsyncJavaScript("document.getElementById('name').value=name; await window.fontWorkbench.run(capturedOnly);", arguments: ["name": name, "capturedOnly": capturedOnly], in: nil, contentWorld: .page)
         guard !controller.closed else { throw CancellationError() }
         let value = try await controller.webView.callAsyncJavaScript("const result=window.fontWorkbench.inspect(); if(!result.ready) throw Error(document.getElementById('status').textContent); return {...result, ...await window.fontWorkbench.exportProject()};", arguments: [:], in: nil, contentWorld: .page)
-        guard let result = value as? [String: Any], let encoded = result["font"] as? String, let font = Data(base64Encoded: encoded), let state = result["project"] as? [String: Any], let provenance = result["provenance"] as? [[String: Any]] else { throw AgentError("FONT_FAILED", "No valid font generated.") }
-        guard !controller.closed, CaptureIndex.item(sourceID) != nil else { throw AgentError("NOT_FOUND", "The source screenshot was deleted.") }
-        let (note, url) = try FontProjectStore.save(font: font, name: name, state: state, provenance: provenance, images: controller.imageData, sourceTitle: title)
-        return ["id": "note-" + note.id, "path": url.path, "provenance": provenance, "approximate": !capturedOnly]
+        guard let result = value as? [String: Any], let encoded = result["font"] as? String, let font = Data(base64Encoded: encoded), let state = result["project"] as? [String: Any], result["provenance"] is [[String: Any]] else { throw AgentError("FONT_FAILED", "No valid font generated.") }
+        guard !controller.closed, let source = CaptureIndex.item(sourceID), !source.excluded else { throw AgentError("NOT_FOUND", "The source screenshot was deleted or excluded.") }
+        try FontProjectStore.validate(font)
+        try FontProjectStore.validateState(state)
+        return result
     }
     override init() {
         let configuration = WKWebViewConfiguration()

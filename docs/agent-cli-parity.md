@@ -37,15 +37,15 @@ All first-class rows are implemented. Generic `invoke` remains available for exa
 | Dictation hold / toggle / cancel | `dictation start/status/stop/cancel` | Existing paste/clipboard behavior; result text and saved ID |
 | Notes create / append / replace / open | `note create/append/update/open` | Markdown, title, stdin/file input; replacement revision guard |
 | Note bold/lists/tables/link content | Markdown supplied to note create/update | Native visual selection menus are UI chrome |
-| Drop images into notes / full-screen image viewing | UI-only for asset import | Phase 2: app-owned document asset import; do not write Brain assets manually |
-| Search / recent captures / related / kinds | `library search/recent/related`, `latest`, `collect` | Export lexical matching; native semantic ranking is not exposed yet |
+| Drop images into notes / full-screen image viewing | `note attach --source-id/--path` | Document-owned copy and Markdown; full-screen viewing remains the native UI |
+| Search / recent captures / related / kinds | `library search/recent/related`, `latest`, `collect` | Search shares native fuzzy/semantic ranking; explicit offline mode retains export keywords |
 | Themes by keywords/date/descriptors | `collect` filters, `theme list` | Saved themes or agent synthesis from cited evidence |
 | Pin / rename / hide / delete | `library pin/unpin/rename/hide/unhide/delete` | Delete requires confirmation and normal data lifecycle |
 | Clear history | `history clear --confirm` | Separate library consent, native deletion pipeline |
 | Theme rename / pin / dismiss / merge / membership | `theme rename/pin/unpin/dismiss/merge/add/remove` | Correction controls, never tasks/projects |
 | Tasks create / list / title / notes / due / done / delete | `task add/list/update/complete/reopen/delete` | App DB then export; IDs returned |
 | People / vocabulary retrieval | `collect '{"kinds":["people","vocabulary"]}'` | Read-only; dictation vocabulary editing remains Settings UI |
-| Font from screenshot / export / reopen | `font create/file/open` | Glyph correction and font installation remain human UI |
+| Font from screenshot / match / specimen / export / reopen | `font match/create/preview/file/open` | Limited bundled-style matching; glyph correction and installation remain human UI |
 | On-image translation | UI-only on macOS 15+ | Current Apple translation session is supplied by SwiftUI and may need a language-download consent sheet; no headless claim |
 | Privacy/search settings | `settings get/set` | Allowlisted automatic_themes, semantic_search, window_metadata, excluded_apps |
 | Agent consent / TCC grants | Human-only Settings | Cannot be enabled through CLI, URL or MCP |
@@ -77,3 +77,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Attachment metadata | Capture/edit/record/export results | Path, MIME, dimensions, duration, bytes and preview |
 
 Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
+
+## Workflow completion in 1.1.62
+
+Live discovery reports installed app support; bundled fallback is marked unverified. Agents can attach screenshot copies to notes, use native search, inspect font match evidence/specimens and recover bounded durable job/session receipts after restart. The skills include [complete recipes](agent-workflows.md). Privacy grants remain user-controlled; recovery never replays interrupted actions.

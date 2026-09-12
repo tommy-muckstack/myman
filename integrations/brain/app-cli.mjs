@@ -2,13 +2,13 @@ import { parseArgs } from 'node:util';
 import { readFile, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { catalog, describe, invoke, request } from './actions.mjs';
+import { catalog, describe, discover, invoke, request } from './actions.mjs';
 import { Brain, BrainError } from './brain.mjs';
 import { execute } from './tools.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
 const strings = ['enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
-const booleans = ['help','json','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only'];
+const booleans = ['help','json','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only'];
 const options = Object.fromEntries([...strings.map(key=>[key,{type:'string'}]),...booleans.map(key=>[key,{type:'boolean'}]),...['tag','exclude-tag','participant'].map(key=>[key,{type:'string',multiple:true}])]);
 for(const action of catalog.actions)for(const [key,schema]of Object.entries(action.inputSchema.properties)){
   const flag=key.replaceAll('_','-');if(!options[flag])options[flag]={type:schema.type==='boolean'?'boolean':'string'};
@@ -25,7 +25,8 @@ const pairs = {
   'library read':'item.read','library open':'item.open','library related':'item.related','library rename':'item.rename','library pin':'item.pin','library unpin':'item.pin','library hide':'item.exclude','library unhide':'item.exclude','library delete':'item.delete',
   'theme rename':'theme.rename','theme pin':'theme.pin','theme unpin':'theme.pin','theme dismiss':'theme.dismiss','theme merge':'theme.merge','theme add':'theme.assign','theme remove':'theme.assign',
   'task add':'task.create','task create':'task.create','task update':'task.update','task complete':'task.update','task reopen':'task.update','task delete':'task.delete',
-  'font create':'font.create','font open':'font.open','font file':'font.file',
+  'font create':'font.create','font open':'font.open','font file':'font.file','font match':'font.match','font preview':'font.preview',
+  'note attach':'note.attach','library search':'capture.search',
   'settings get':'settings.read','settings set':'settings.update','history clear':'history.clear',
   'screens list':'screens.list','windows list':'windows.list',
 };
@@ -37,10 +38,11 @@ annotate --id ID --ops-file ops.json [--preview|--dry-run] [--clipboard] --json
 record start|status|result|pause|resume|stop|cancel|frames|export  meeting start|status|stop|cancel|rename|notes
 dictation start|status|stop|cancel  (stop/cancel require --session-id from start)
 note create|append|update|open --body TEXT|--body-file FILE|- [--title TITLE]
+note attach --id NOTE-ID --source-id SHOT-ID|--path FILE [--alt TEXT]
 library search|recent|read|open|related|rename|pin|unpin|hide|unhide|delete
 theme list|rename|pin|unpin|dismiss|merge|add|remove  task list|add|update|complete|reopen|delete
 capture import|targets|ocr|image|copy|remove-background  editor open|save
-font create|open|file  clipboard read|write  settings get|set  history clear
+font match|create|preview|open|file  clipboard read|write  settings get|set  history clear
 screens list  windows list  doctor  latest --kind screenshots
 capture-markup --mode agent --region x,y,w,h --ops-file ops.json
 
@@ -48,8 +50,13 @@ Media: record start --window-id ID --max-duration 30; record result --session-id
 record frames --id ID --times 0,2,5; record export --id ID --start 1 --end 10 --max-bytes 20000000
 Markup: capture targets --id ID --query TEXT; ops accept target_text or target_region.
 Ambiguous targets return candidates without saving. Preview paths expire after an hour.
-Discovery: actions [action.name] (complete JSON schemas); invoke <action.name> [JSON]
-Jobs: --no-wait returns a job ID; job UUID polls it. --request-id UUID deduplicates retries.
+Discovery: actions [action.name] queries the running app; --offline reads bundled schemas.
+Check live/verified_available before acting. invoke <action.name> [JSON] checks app support.
+Search: library search --query TEXT uses native fuzzy/semantic search; --offline uses Brain keywords.
+Fonts: font match --id SHOT-ID; font create --id SHOT-ID --name NAME; font preview --id NOTE-ID.
+Matching compares bundled styles, not an exact font identity. Saved results include .otf and specimen paths.
+Jobs: --no-wait returns a job ID; job UUID polls it; jobs lists recent durable receipts.
+--request-id UUID deduplicates retries. After interruption inspect receipts; never replay unknown work.
 Deletion: enable library access in Settings → Agents AND pass --confirm.
 Capture/markup/recording/library grants start off; the CLI cannot enable them.
 Geometry: --display + --region uses display-local points, top-left. Region alone uses
@@ -82,9 +89,10 @@ export async function plan(argv) {
   const waitMs=v['wait-timeout']===undefined?300000:number(v['wait-timeout'])*1000;
   if(waitMs<0 || waitMs>600000)fail('Wait timeout must be 0–600 seconds.');
   const control={id:v['request-id'],wait:!v['no-wait'],waitMs};
-  if(p[0]==='actions'){allowed(v,[]);if(p.length>2)fail('Use actions [name].');return {type:'value',value:describe(p[1])};}
+  if(p[0]==='actions'){allowed(v,['offline']);if(p.length>2)fail('Use actions [name].');return {type:'discovery',name:p[1],offline:!!v.offline};}
+  if(p[0]==='jobs'){allowed(v,[]);if(p.length!==1)fail('Use jobs.');return {type:'jobs'};}
   if(p[0]==='job'){allowed(v,[]);if(p.length!==2)fail('Use job UUID.');return {type:'job',id:p[1]};}
-  if(p[0]==='invoke') {allowed(v,[]);if(p.length<2||p.length>3)fail('Use invoke action.name [JSON].');describe(p[1]);return {type:'action',name:p[1],args:p[2]?json(p[2]):{},control,raw:true};}
+  if(p[0]==='invoke') {allowed(v,[]);if(p.length<2||p.length>3)fail('Use invoke action.name [JSON].');return {type:'action',name:p[1],args:p[2]?json(p[2]):{},control,raw:true};}
   if(p.length===1 && legacy[p[0]] && (!v.mode || v.mode==='interactive') && !Object.keys(v).some(k=>!['json','mode'].includes(k)))return {type:'interactive',host:legacy[p[0]]};
   if(v.mode==='interactive')fail('Use the legacy single command for interactive UI, or --mode agent.');
   if(p[0]==='doctor'){allowed(v,[]);if(p.length!==1)fail('Use doctor.');return {type:'doctor',root:v.root,control};}
@@ -95,6 +103,8 @@ export async function plan(argv) {
     return {type:'action',name:p[2]==='get'?'meeting.config.read':'meeting.config.update',args:p[2]==='get'?{}:{auto_record_meetings:onOff(v['auto-record-meetings'])},control};
   }
   const pair=p.slice(0,2).join(' ');
+  if(pair==='library search' && v.offline){allowed(v,['offline','query','kind','limit']);if(p.length!==2||!v.query)fail('Use library search --query TEXT --offline.');return {type:'read',name:'search',args:{query:v.query,...(v.kind?{kind:v.kind}:{}),...(v.limit?{limit:number(v.limit)}:{})},root:v.root};}
+  if(pair==='library search' && v.root)fail('Native search uses this app’s library; use --offline with --root for a Brain export.');
   let name=pairs[pair], args={}, consumed=2;
   if(['meeting status','dictation status'].includes(pair)){allowed(v,[]);if(p.length!==2)fail('Unexpected arguments.');return {type:'action',name:'app.status',args:{},control,select:p[0]==='record'?'screen_recording':p[0]};}
   if(['screenshot','capture-markup'].includes(p[0])){if(v.mode!=='agent')fail('Geometry capture requires --mode agent.');name=p[0]==='screenshot'?'screenshot.capture':'screenshot.capture_markup';consumed=1;}
@@ -159,7 +169,7 @@ export function exitCode(code){
 }
 export function unwrap(reply, selection){
   const job=reply.job;
-  if(job?.state==='failed')return {ok:false,job_id:job.id,error:job.error,launch_id:reply.launch_id};
+  if(['failed','interrupted'].includes(job?.state))return {ok:false,job_id:job.id,error:job.error,launch_id:reply.launch_id,recovered:reply.recovered??false};
   if(job?.state==='running')return {ok:true,pending:true,job_id:job.id,launch_id:reply.launch_id};
   const result=selection?job?.result?.[selection]:job?.result;
   return {ok:true,...(result&&typeof result==='object'&&!Array.isArray(result)?result:{result}),job_id:job?.id,launch_id:reply.launch_id};
@@ -167,6 +177,8 @@ export function unwrap(reply, selection){
 export async function run(argv, deps={}){
   const task=await plan(argv), call=deps.invoke??invoke;
   if(task.type==='help')return {help};
+  if(task.type==='discovery')return discover(task.name,{transport:deps.request??request,offline:task.offline});
+  if(task.type==='jobs')return (deps.request??request)({method:'jobs'});
   if(task.type==='value')return task.value;
   if(task.type==='interactive'){await (deps.open??((host)=>promisify(execFile)('/usr/bin/open',['-g',`myman://${host}`])))(task.host);return {ok:true,interactive:true,dispatched:task.host};}
   if(task.type==='job')return (deps.request??request)({method:'job',id:task.id});

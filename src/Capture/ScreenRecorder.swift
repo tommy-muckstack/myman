@@ -230,6 +230,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
         }
         Task { @MainActor in
             do {
+                if !resuming, maximumDuration != nil, let id = agentSessionID {
+                    guard AgentJournal.shared.saveSession(id, result: ["session_id":id,"state":"interrupted","active":false,"error":["code":"APP_RESTARTED","message":"Recording did not finalize before restart. Inspect saved captures; do not start a replacement automatically."]]) else { throw AgentError("RECOVERY_UNAVAILABLE", "Cannot persist recording receipt; capture did not start.") }
+                }
                 let content = try await SCShareableContent
                     .excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 let cgRegion = regionAppKit.map(Self.cgRect(from:))
@@ -405,7 +408,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     func statusForAgent(sessionID: String? = nil) throws -> [String: Any] {
         if let sessionID, sessionID != agentSessionID {
-            guard let result = sessionResults[sessionID] else { throw AgentError("SESSION_MISMATCH", "Unknown or expired session in this app launch.") }
+            guard let result = sessionResults[sessionID] ?? AgentJournal.shared.session(sessionID) else { throw AgentError("SESSION_MISMATCH", "Unknown or expired session; inspect recent jobs and saved recordings.") }
             return result
         }
         if let id = agentSessionID {
@@ -434,6 +437,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 result["transcript_status"] = "pending"
             }
             if let error { result["error"] = error }
+            result["recovery_persisted"] = AgentJournal.shared.saveSession(id, result: result)
             sessionResults[id] = result; sessionOrder.append(id)
             while sessionOrder.count > 32 { sessionResults[sessionOrder.removeFirst()] = nil }
         }

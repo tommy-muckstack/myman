@@ -27,6 +27,7 @@ final class AgentActions {
     private var exclusionObserver: NSObjectProtocol?
     private var contentRevision = 0
     let launchID = UUID().uuidString
+    private let journal = AgentJournal.shared
     init(capture: CaptureController, meetings: MeetingController, voice: VoiceController) {
         self.capture = capture; self.meetings = meetings; self.voice = voice
         deletionObserver = NotificationCenter.default.addObserver(forName: .captureDeleted, object: nil, queue: .main) { [weak self] _ in
@@ -44,11 +45,23 @@ final class AgentActions {
     func receive(_ request: [String: Any]) -> [String: Any] {
         do {
             guard let method = request["method"] as? String else { throw AgentError("INVALID_REQUEST", "A method is required.") }
-            if method == "actions" { return ["ok": true, "launch_id": launchID, "result": Self.catalog] }
+            if method == "actions" {
+                var catalog = Self.catalog
+                catalog["app_version"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
+                catalog["app_build"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "development"
+                catalog["permissions"] = AgentConsent.status()
+                catalog["recovery"] = ["durable": true, "retention_days": 7, "automatic_replay": false]
+                return ["ok": true, "launch_id": launchID, "result": catalog]
+            }
+            if method == "jobs" {
+                guard AgentConsent.status()["enabled"] == true else { throw AgentError("AGENT_DISABLED", "Local app actions are disabled.") }
+                return ["ok": true, "launch_id": launchID, "jobs": journal.list(), "retention_days": 7]
+            }
             guard let id = request["id"] as? String, UUID(uuidString: id) != nil else { throw AgentError("INVALID_REQUEST", "A UUID request/job id is required.") }
             if method == "job" {
-                guard let job = jobs[id] else { throw AgentError("JOB_NOT_FOUND", "Unknown or expired job; do not retry mutations automatically.") }
-                return ["ok": true, "launch_id": launchID, "job": job]
+                guard let job = jobs[id] ?? journal.job(id) else { throw AgentError("JOB_NOT_FOUND", "Unknown or expired job; do not retry mutations automatically.") }
+                try AgentConsent.validate(job["action"] as? String ?? "item.read", args: ["confirm": true])
+                return ["ok": true, "launch_id": launchID, "job": job, "recovered": jobs[id] == nil]
             }
             guard method == "invoke", let action = request["action"] as? String,
                   let args = request["arguments"] as? [String: Any],
@@ -58,19 +71,25 @@ final class AgentActions {
             guard !retired.contains(id) else { throw AgentError("JOB_EXPIRED", "That job has expired. Inspect existing results instead of replaying it.") }
             if let previous = requests[id] {
                 guard previous == fingerprint else { throw AgentError("ID_CONFLICT", "This request id was used with different arguments.") }
+                try AgentConsent.validate(action, args: args)
                 return ["ok": true, "launch_id": launchID, "job": jobs[id]!]
             }
             try AgentConsent.validate(action, args: args)
+            if let prior = try journal.prior(id, fingerprint: fingerprint) { return ["ok": true, "launch_id": launchID, "job": prior, "recovered": true] }
             guard inFlight < 8 else { throw AgentError("BUSY", "Too many active agent jobs; wait for an existing job.") }
             // Retain the most recent 256 terminal results. Never evict running work.
             if order.count >= 256, let index = order.firstIndex(where: { jobs[$0]?["state"] as? String != "running" }) {
                 let old = order.remove(at: index); jobs[old] = nil; requests[old] = nil; resultSizes[old] = nil; retired.insert(old)
             }
+            try journal.begin(id, action: action, fingerprint: fingerprint)
             requests[id] = fingerprint; order.append(id); inFlight += 1
             jobs[id] = ["id": id, "action": action, "state": "running"]
             let revision = contentRevision
             Task { @MainActor in
-                defer { inFlight -= 1; trimResults(keeping: id) }
+                defer {
+                    inFlight -= 1; trimResults(keeping: id)
+                    if let job = jobs[id], !journal.finish(id, job: job) { jobs[id]?["recovery_persisted"] = false }
+                }
                 do {
                     try AgentConsent.validate(action, args: args)
                     let result = try await execute(action, args)
@@ -85,6 +104,7 @@ final class AgentActions {
     deinit { if let exclusionObserver { NotificationCenter.default.removeObserver(exclusionObserver) }; if let deletionObserver { NotificationCenter.default.removeObserver(deletionObserver) } }
     private func purgeContentResults() {
         contentRevision += 1
+        journal.purgeContent()
         ScreenRecorder.shared.clearCompletedAgentSessions()
         // A copied image or related-items result can refer indirectly to a
         // deleted capture. Expire all completed results rather than retain it.
@@ -339,6 +359,10 @@ final class AgentActions {
             let source = try item(args)
             try AgentNoteUpdate.append(source: source, body: args["body"] as! String, expected: args["expected_updated_at"] as? String)
             return try await execute("item.read", ["id": source.id])
+        case "note.attach": return try AgentNoteAssets.attach(args)
+        case "capture.search":
+            let enabled = UserDefaults.standard.object(forKey: "captureSemanticSearch") as? Bool ?? true
+            return try await Task.detached(priority: .userInitiated) { try AgentSearch.run(args, semanticEnabled: enabled) }.value
         case "note.update":
             let source = try item(args)
             try AgentNoteUpdate.replace(source: source, body: args["body"] as! String, expected: args["expected_updated_at"] as! String)
@@ -394,14 +418,16 @@ final class AgentActions {
             if let excluded = args["excluded_apps"] as? String { try await Database.shared.write { try ScreenshotContext.clearWindowDetails(excludedApps: excluded, in: $0) } }
             if args["semantic_search"] as? Bool == false { try await Database.shared.write { try $0.execute(sql: "UPDATE captureChunk SET embedding = NULL; UPDATE note SET embedding = NULL; UPDATE screenshot SET embedding = NULL") }; SearchService.clearVectorCache() }
             CaptureEnrichment.shared.schedule(); return try await execute("settings.read", [:])
-        case "font.create":
+        case "font.create", "font.match":
             let (source, image) = try shot(args); image.size = AgentImages.size(image)
+            guard !source.excluded else { throw AgentError("NOT_FOUND", "Source screenshot is excluded.") }
             let model = EditorModel(image: image, fileURL: URL(fileURLWithPath: source.sourcePath))
             if let values = args["region"] as? [Double] { let region = try AgentImages.rect(values); guard CGRect(origin: .zero, size: image.size).contains(region), region.width > 10, region.height > 10 else { throw AgentError("INVALID_ARGUMENTS", "Select a text region within the screenshot.") }; model.applyCrop(region) }
+            if action == "font.match" { return try await FontWorkbenchController.matchForAgent(image: model.image, title: source.title, sourceID: source.id) }
             return try await FontWorkbenchController.generateForAgent(image: model.image, title: source.title, sourceID: source.id, name: args["name"] as! String, capturedOnly: args["captured_only"] as? Bool ?? false)
-        case "font.file":
-            let source = try item(args); guard source.kind == "note", FontProjectStore.exists(source.sourceID), let url = FontProjectStore.asset(source.sourceID, "font.otf") else { throw AgentError("NOT_FOUND", "Saved font not found.") }
-            try FontProjectStore.validate(Data(contentsOf: url)); return ["id": source.id, "path": url.path]
+        case "font.file", "font.preview":
+            let source = try item(args); guard source.kind == "note", FontProjectStore.exists(source.sourceID) else { throw AgentError("NOT_FOUND", "Saved font not found.") }
+            return try AgentFonts.file(noteID: source.sourceID, text: args["text"] as? String)
         case "font.open":
             let source = try item(args)
             if source.kind == "screenshot" { FontWorkbenchController.open(image: try shot(args).1, sourceURL: URL(fileURLWithPath: source.sourcePath)) }

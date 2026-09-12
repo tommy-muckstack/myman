@@ -83,3 +83,16 @@ test('OCR-targeted preview preserves native target selectors and rejects side ef
  await assert.rejects(plan(['record','result']));
  assert.equal(exitCode('AMBIGUOUS_TARGET'),5);
 });
+
+for(const [command,name,args]of[
+ ['library search --query pricing --kind screenshots --semantic --limit 5','capture.search',{query:'pricing',kind:'screenshots',semantic:true,limit:5}],
+ ['note attach --id note-a --source-id shot-a --alt Example','note.attach',{id:'note-a',source_id:'shot-a',alt:'Example'}],
+ ['font match --id shot-a --region 1,2,100,80','font.match',{id:'shot-a',region:[1,2,100,80]}],
+ ['font preview --id note-a --text ABC','font.preview',{id:'note-a',text:'ABC'}]
+])test(command,async()=>{const p=await plan(command.split(' '));assert.equal(p.name,name);assert.deepEqual(p.args,args);assert.ok(ajv.validate(describe(p.name).inputSchema,p.args));});
+test('discovery, receipts and explicit offline search route without hidden mutations',async()=>{
+ assert.equal((await plan(['actions'])).type,'discovery');assert.equal((await plan(['actions','--offline'])).offline,true);
+ assert.equal((await plan(['jobs'])).type,'jobs');assert.equal((await plan(['library','search','--query','pricing','--offline'])).type,'read');
+ await assert.rejects(plan(['library','search','--query','pricing','--root','/tmp/other']));
+ const interrupted=await run(['note','create','--body','x'],{invoke:async()=>({ok:true,recovered:true,job:{id:'saved',state:'interrupted',error:{code:'APP_RESTARTED'}}})});assert.equal(interrupted.ok,false);assert.equal(interrupted.recovered,true);
+});

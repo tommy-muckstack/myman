@@ -268,7 +268,7 @@ stdio. They do not read your actual Brain. The [implementation plan](../../docs/
 records the boundaries and release criteria. Automated tests do not establish
 Grok Bot account access or marketplace approval.
 
-The root marketplace candidate and companion are version **0.5.0**. New media
+The root marketplace candidate and companion are version **0.6.0**. New media
 commands require MyMan 1.1.61; Brain retrieval remains compatible with existing
 exports. See [media workflows](../../docs/agent-cli.md#window-recording-pause-inspection-and-export). The [smoke results](../../docs/grok-bot-marketplace.md#verification-matrix)
 record live Mac retrieval and official MCP SDK checks; Cursor UI discovery and
@@ -287,3 +287,5 @@ References: [Agent Plugins](https://agent-plugins.org/plugin-authors/mcp-servers
 ## Open source contributions
 
 MyMan is **Apache-2.0 open source**. Humans and agents, including GrokBot, are welcome to propose fixes and improvements through the [public repository](https://github.com/tommy-muckstack/myman). See the [contribution guide](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) for setup, checks and the pull request process.
+
+New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](../../docs/agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.6.0 marketplace update is prepared, not submitted or approved.

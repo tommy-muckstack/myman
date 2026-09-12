@@ -36,8 +36,26 @@ export function describe(action) {
   if (!found) throw new BrainError('UNKNOWN_ACTION', 'Use actions to discover supported actions.');
   return found;
 }
+export async function discover(action, { transport = request, offline = false } = {}) {
+  let value, live = false, unavailable;
+  if (!offline) {
+    try { value = (await transport({method:'actions'})).result; live = true; }
+    catch (error) {
+      if (!['APP_NOT_RUNNING','APP_UNAVAILABLE','CONNECTION_TIMEOUT','INCOMPLETE_REPLY'].includes(error.code)) throw error;
+      unavailable = {code:error.code,message:error.message};
+    }
+  }
+  value ??= catalog;
+  if (!Array.isArray(value.actions)) throw new BrainError('INVALID_REPLY','App returned an invalid action catalog.');
+  const metadata = {source:live?'running_app':'bundled_cli',live,verified_available:live,app_version:value.app_version??null,...(unavailable?{unavailable}:{})};
+  if (!action) return {...value,...metadata};
+  const found = value.actions.find(a=>a.name===action);
+  if (!found) throw new BrainError('UNSUPPORTED_ACTION',`The ${live?'running app':'bundled CLI'} does not advertise ${action}. Update MyMan and check actions again.`);
+  return {...found,...metadata};
+}
 export async function invoke(action, args = {}, { id = randomUUID(), wait = true, transport = request, waitMs = 300000 } = {}) {
-  describe(action);
+  const live = await discover(action,{transport});
+  if (!live.live) throw new BrainError(live.unavailable?.code??'APP_NOT_RUNNING',live.unavailable?.message??'Open MyMan to verify this action.');
   const first = await transport({ method: 'invoke', id, action, arguments: args });
   if (!wait) return first;
   const deadline = Date.now() + waitMs;
@@ -45,7 +63,7 @@ export async function invoke(action, args = {}, { id = randomUUID(), wait = true
   while (reply.job?.state === 'running' && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 200));
     reply = await transport({ method: 'job', id });
-    if (reply.launch_id !== first.launch_id) throw new BrainError('APP_RESTARTED', `App restarted; job ${id} cannot be verified. Do not replay automatically.`);
+    if (reply.launch_id !== first.launch_id && !reply.recovered) throw new BrainError('APP_RESTARTED', `App restarted; inspect job ${id}. Do not replay automatically.`);
   }
   return reply;
 }

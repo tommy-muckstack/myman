@@ -17,7 +17,7 @@ type SavedSample = Omit<Sample, 'bitmap'> & { png: string };
 type SavedState = { version: 1; name: string; samples: SavedSample[]; excluded: string[]; replacements: string[]; mode: string; preview: string };
 declare global { interface Window {
   webkit: { messageHandlers: { font: { postMessage(value: unknown): Promise<unknown> } } };
-  fontWorkbench: { start: (payload: { images: Source[]; palette?: Record<string, string>; project?: SavedState }) => Promise<void>; inspect: () => unknown; run: () => Promise<void>; exportProject: () => Promise<unknown> };
+  fontWorkbench: { start: (payload: { images: Source[]; palette?: Record<string, string>; project?: SavedState }) => Promise<void>; inspect: () => unknown; run: (capturedOnly?: boolean) => Promise<void>; exportProject: () => Promise<unknown> };
   FontEngine: { inferMissing: typeof inferMissing; measureStyle: typeof measureStyle; buildFont: typeof buildFont; parsePath: typeof parsePath };
 } }
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -28,6 +28,7 @@ let samples: Sample[] = [], captured: Record<string, VectorGlyph> = {}, inferred
 let metrics: FontMetrics | null = null, estimatedSpace: VectorGlyph | null = null, generation = 0, busy = false;
 let output: { bytes: ArrayBuffer; name: string; family: string; revision: number } | null = null;
 let face: FontFace | null = null, matchingFaces: FontFace[] = [], excluded = new Set<string>(), replacements = new Set<string>();
+let candidates: { name: string; distance: number; compared: number }[] = [], catalogSize = 0;
 let mode = 'completed', timer: ReturnType<typeof setTimeout> | undefined;
 const canvas = el<HTMLCanvasElement>('source'), nameInput = el<HTMLInputElement>('name');
 const cleanName = () => nameInput.value.trim().slice(0, 64) || 'Screenshot Font';
@@ -178,6 +179,7 @@ async function trace() {
     message('Comparing captured shapes with bundled fonts…');
     const bases = await loadBaseFonts(), matches = rankBaseFonts(bases, captured, metrics);
     if (run !== generation) return;
+    candidates = matches.slice(0, 5).map(m => ({ name: m.base.name, distance: m.score, compared: m.compared })); catalogSize = bases.length;
     const picked = pickBaseFont(matches.length ? [matches[0].base] : [], captured, metrics);
     if (picked) for (const char of BASIC_LATIN) if (!captured[char] && char !== ' ') { const glyph = picked.base.glyph(char, picked.adjust); if (glyph) fallback[char] = glyph; }
     await renderMatches(matches.slice(0, 3).map(m => m.base), bases.length, run);
@@ -260,7 +262,7 @@ window.fontWorkbench = {
       renderSamples(); el('review').hidden = false; await trace();
     }
   },
-  inspect: () => ({ status: el('status').textContent, matching: el('match-note').textContent, busy, generation, captured: Object.keys(captured), inferred: Object.keys(inferred), ready: !!output, name: output?.name, font: output ? b64(new Uint8Array(output.bytes)) : null, glyphs: selectedGlyphs(), metrics }),
+  inspect: () => ({ candidates, catalog_size: catalogSize, status: el('status').textContent, matching: el('match-note').textContent, busy, generation, captured: Object.keys(captured), inferred: Object.keys(inferred), ready: !!output, name: output?.name, font: output ? b64(new Uint8Array(output.bytes)) : null, glyphs: selectedGlyphs(), metrics }),
   exportProject: async () => ({ project: await serialize(), provenance: Object.values(selectedGlyphs()).map(g => ({ char: g.char, source: g.source, evidence: g.evidence ?? [], review: g.review ?? "", sourceFont: g.sourceFont ?? "" })) }),
-  run: async () => { await read(); if (samples.length) await trace(); },
+  run: async (capturedOnly = false) => { mode = capturedOnly ? 'captured' : 'completed'; el<HTMLSelectElement>('mode').value = mode; await read(); if (samples.length) await trace(); },
 };
