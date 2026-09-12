@@ -10,6 +10,7 @@
 <div class="row status-row"><p id="status" role="status" aria-live="polite">Works locally. Choose one typeface and weight per font.</p><button id="cancel" hidden>Cancel</button></div>
 <section id="review" hidden><div class="row"><div><h2>Check the characters</h2><p>Correct labels, clear bad samples, or prefer a cleaner occurrence.</p></div><button id="trace" class="primary" data-job>Create font</button></div><div id="samples" class="samples"></div></section>
 <section id="result" hidden><h2>Try your font</h2><p id="counts"></p><p id="style-note" class="muted"></p>
+<p class="muted">Different text sizes are aligned automatically. Small or blurry samples can still affect letter shapes and spacing; larger, clearer text gives better results. Use one typeface and weight per font.</p>
 <div class="row"><label>Font name<input id="name" maxlength="64" value="Screenshot Font"></label><label>Export<select id="mode"><option value="completed">Captured + inferred</option><option value="captured">Captured only</option></select></label></div>
 <label for="preview">Preview text</label><textarea id="preview" rows="2">The quick brown fox jumps over the lazy dog.</textarea>
 <label class="row size">Size<input id="size" type="range" min="16" max="96" value="42"></label>

@@ -5,6 +5,25 @@ import GRDB
 @testable import MyMan
 
 final class EmptyStateTests: XCTestCase {
+    @MainActor func testLauncherOpensWithOnlySearchAndTools() async throws {
+        _ = NSApplication.shared
+        let queue = try DatabaseQueue(); try Database.migrator.migrate(queue)
+        let model = CaptureLibraryModel(database: queue)
+        var measured = CGSize.zero
+        let actions = [LauncherAction(id: "note", icon: .note, title: "New Note", hint: nil, enabled: true, run: {})]
+        let panel = FloatingPanel(content: LauncherView(actions: actions, onOpenNote: { _ in }, onOpenScreenshot: { _ in }, onSaveQueryAsNote: { _ in }, onOpenChat: {}, onDismiss: {}, onSizeChange: { measured = $0 }, libraryModel: model), fixedSize: true)
+        panel.isReleasedWhenClosed = false
+        defer { panel.contentView = nil; panel.close(); model.cancel() }
+        let size = panel.contentIdeal
+        panel.setFrame(NSRect(origin: .zero, size: size), display: false)
+        panel.contentView?.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertGreaterThan(measured.height, 80)
+        XCTAssertLessThan(measured.height, 250, "No capture list, empty state, or footer before browsing")
+        XCTAssertTrue(model.results.isEmpty)
+        XCTAssertFalse(model.working)
+    }
+
     @MainActor func testNativeEmptySurfacesAndBlankEditorRemainsEditable() async throws {
         _ = NSApplication.shared; MM.Fonts.registerFonts()
         func render<V: View>(_ view: V, name: String, size: CGSize) async throws {

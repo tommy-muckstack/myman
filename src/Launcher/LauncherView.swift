@@ -73,7 +73,9 @@ struct LauncherView: View {
             searchField
             Divider().overlay(MM.Colors.border)
             if !searching && libraryMode == .search { actionBar }
-            CaptureLibraryView(query: $query, mode: $libraryMode, controls: libraryFilters, onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, model: libraryModel)
+            if searching || libraryMode == .themes || libraryFilters.active || libraryFilters.isBrowsing {
+                CaptureLibraryView(query: $query, mode: $libraryMode, controls: libraryFilters, onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, model: libraryModel)
+            }
         }
         .frame(width: MM.Layout.panelWidth)
         .background(

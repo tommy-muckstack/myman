@@ -5,6 +5,7 @@ import SwiftUI
     /// Hover browsing stays selected while moving into the results, but does
     /// not replace the user's explicit content filter when search starts.
     @Published var actionKind: String?
+    @Published var isBrowsing = false
     var displayedKind: String { actionKind ?? kind }
     @Published var period = "any"
     @Published var themeID = ""
@@ -12,7 +13,8 @@ import SwiftUI
     @Published var includeExcluded = false
     @Published var customStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     @Published var customEnd = Date()
-    func reset() { actionKind = nil; kind = "all"; period = "any"; themeID = ""; pinned = false; includeExcluded = false }
+    func reset() { actionKind = nil; isBrowsing = false; kind = "all"; period = "any"; themeID = ""; pinned = false; includeExcluded = false }
+    func showTheme(_ id: String) { reset(); themeID = id; isBrowsing = true }
     var active: Bool { displayedKind != "all" || period != "any" || !themeID.isEmpty || pinned || includeExcluded }
 }
 
@@ -21,12 +23,12 @@ struct CaptureFilterMenu: View {
     @ObservedObject var filters: CaptureLibraryFilters
     var body: some View {
         Menu {
-            Button { filters.reset(); mode = .search } label: { Label("All captures", systemImage: mode == .search && !filters.active ? "checkmark" : "square.grid.2x2") }
+            Button { filters.reset(); filters.isBrowsing = true; mode = .search } label: { Label("All captures", systemImage: mode == .search && !filters.active ? "checkmark" : "square.grid.2x2") }
             Button { filters.reset(); mode = .themes } label: { Label { Text("Themes") } icon: { Image(nsImage: MMIcon.themes.menuImage) } }
             Divider()
             Menu("Content") {
                 ForEach([("all", "All types"), ("screenshot", "Screenshots"), ("meeting", "Meetings"), ("dictation", "Dictation"), ("recording", "Recordings"), ("note", "Notes")], id: \.0) { kind, label in
-                    Button { filters.actionKind = nil; filters.kind = kind; mode = .search } label: { Label(label, systemImage: filters.displayedKind == kind ? "checkmark" : "circle") }
+                    Button { filters.actionKind = nil; filters.kind = kind; filters.isBrowsing = true; mode = .search } label: { Label(label, systemImage: filters.displayedKind == kind ? "checkmark" : "circle") }
                 }
             }
             Picker("Date", selection: $filters.period) {

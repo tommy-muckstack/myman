@@ -207,7 +207,7 @@ struct CaptureLibraryView: View {
         .onReceive(NotificationCenter.default.publisher(for: .captureLibraryCommand)) { event in
             if mode == .themes {
                 let index = visibleThemes.firstIndex { $0.id == selectedThemeID } ?? -1
-                if event.object as? String == "open", let theme = visibleThemes.first(where: { $0.id == selectedThemeID }) ?? visibleThemes.first { themeID = theme.id; query = ""; mode = .search }
+                if event.object as? String == "open", let theme = visibleThemes.first(where: { $0.id == selectedThemeID }) ?? visibleThemes.first { openTheme(theme.id) }
                 else if !visibleThemes.isEmpty {
                     let delta = event.object as? String == "up" ? -1 : 1
                     selectedThemeID = visibleThemes[min(max(0, index + delta), visibleThemes.count - 1)].id
@@ -244,10 +244,11 @@ struct CaptureLibraryView: View {
 
     private func reload(more: Bool = false) { model.reload(query: query, filter: filter, more: more) }
     private func open(_ match: CaptureMatch) { onDismiss(); CaptureActions.open(match.item, query: query) }
+    private func openTheme(_ id: String) { controls.showTheme(id); query = ""; mode = .search }
 
     private func themeRow(_ theme: CaptureTheme) -> some View {
         Button {
-            themeID = theme.id; query = ""; mode = .search
+            openTheme(theme.id)
         } label: {
             HStack(spacing: MM.Layout.spacing) {
                 IconView(icon: .themes, color: MM.Colors.accent).frame(width: 48)
