@@ -15,7 +15,7 @@ async function run(action, args = {}, options = {}) {
   return reply.job.result;
 }
 const status = await run('app.status');
-assert.equal(status.version, '1.1.58-preview');
+assert.equal(status.version, '1.1.59-preview');
 const note = await run('note.create', { body: '# CLI fixture\nOriginal note body.' });
 const read = await run('item.read', { id: note.id });
 await run('note.update', { id: note.id, body: '# CLI fixture\nUpdated body.', expected_updated_at: read.updated_at });

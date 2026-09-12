@@ -25,5 +25,5 @@ text, matches and provenance searchable without a separate toolbar section.
 Deleting the note uses the existing document-asset cleanup lifecycle.
 
 Development: `npm ci`, `npm test`, `npm run typecheck`, `npm run bundle`.
-This integration is local and unreleased pending the user’s separate release
-instruction. The existing 1.1.58 release does not contain it.
+This integration ships in My Man 1.1.59 after the user’s explicit release
+authorization. Version 1.1.58 does not contain it.

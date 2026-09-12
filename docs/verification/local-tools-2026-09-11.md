@@ -1,7 +1,8 @@
 # Local preview verification — September 11, 2026
 
-These changes are local and unreleased. Version 1.1.58 was published separately.
-The installed app and the user's production library were not replaced.
+This report records the local verification completed before the user authorized
+the 1.1.59 release. Version 1.1.58 was published separately. These checks did not
+replace the installed app or the user's production library.
 
 ## Interface
 

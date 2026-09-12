@@ -1,7 +1,8 @@
 # Local fonts and explicit agent actions
 
-This work continues after the separately published 1.1.58 release. Keep these
-new features local and unreleased, as requested by the font integration prompt.
+This work follows the separately published 1.1.58 release. It was implemented
+and verified locally first; the user subsequently authorized publishing it in
+1.1.59.
 
 ## Font integration
 

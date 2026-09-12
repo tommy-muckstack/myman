@@ -17,7 +17,7 @@ async function run(action,args={},expected) {
   await writeFile(root+'/all-actions-progress.json',JSON.stringify(report,null,2));
   return result.job.result;
 }
-const status = await run('app.status'); assert.equal(status.version,'1.1.58-preview');
+const status = await run('app.status'); assert.equal(status.version,'1.1.59-preview');
 await run('screens.list'); await run('app.open',{surface:'search'});
 const settings = await run('settings.read');
 await run('settings.update',{automatic_themes:false});

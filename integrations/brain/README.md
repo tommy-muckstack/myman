@@ -8,8 +8,8 @@ Retrieval reads exports; actions use a same-login Unix socket to the running nat
 
 ## Explicit app actions
 
-These app actions are in the local preview after 1.1.58; the published 1.1.58
-app does not yet expose the action bridge. Exported retrieval remains compatible.
+App actions require My Man 1.1.59 or later. Exported retrieval remains
+compatible with earlier versions.
 
 Run `node ~/MyManBrain/tools/cli.mjs actions` to discover every supported
 command and its JSON schema. The same commands appear as individual MCP tools,
