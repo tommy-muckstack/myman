@@ -40,6 +40,25 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private(set) var outputURL: URL?
     private(set) var agentSessionID: String?
     private(set) var lastSavedRecord: ScreenRecording?
+    @Published private(set) var isPaused = false
+    private(set) var sessionState = "idle"
+    private(set) var sessionError: [String: Any]?
+    private var sessionResults: [String: [String: Any]] = [:]
+    private var sessionOrder: [String] = []
+    private var segmentURLs: [URL] = []
+    private var segmentStartedAt: Date?
+    private var completedSeconds: Double = 0
+    var elapsedRecordingSeconds: Double { completedSeconds + (isRecording && !isPaused ? segmentStartedAt.map { Date().timeIntervalSince($0) } ?? 0 : 0) }
+    private var activeWindowID: String?
+    var allowsWebcam: Bool { activeWindowID == nil }
+    private var maximumDuration: Double?
+    private var deadline: Date?
+    private var durationTask: Task<Void, Never>?
+    private var changingSegment = false
+    private var stopAfterTransition = false
+    private var startedOutputs = Set<ObjectIdentifier>()
+    private var finishedOutputs = Set<ObjectIdentifier>()
+    private var outputErrors: [ObjectIdentifier: String] = [:]
     private var agentHideCamera = false
     private var agentSystemAudio: Bool?
     private var agentWantsCamera = false
@@ -184,8 +203,10 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     @available(macOS 15.0, *)
-    func startForAgent(region: CGRect, microphone: Bool, systemAudio: Bool = true, webcam: Bool = false) async throws {
+    func startForAgent(region: CGRect?, windowID: String? = nil, maximumDuration: Double = 300, microphone: Bool, systemAudio: Bool = true, webcam: Bool = false) async throws {
         guard !isBusy else { throw AgentError("BUSY", "A screen recording is already active or starting.") }
+        guard maximumDuration.isFinite, (1...3600).contains(maximumDuration) else { throw AgentError("INVALID_ARGUMENTS", "Maximum duration must be 1–3600 seconds.") }
+        guard windowID == nil || (region == nil && !webcam) else { throw AgentError("INVALID_ARGUMENTS", "Window recording cannot combine a region or webcam bubble.") }
         isBusy = true
         guard await CaptureEngine.shared.authorizeInteractively() else { isBusy = false; throw AgentError("PERMISSION_REQUIRED", "Grant Screen Recording access.") }
         if microphone {
@@ -197,11 +218,16 @@ final class ScreenRecorder: NSObject, ObservableObject {
         agentSystemAudio = systemAudio; agentWantsCamera = webcam
         agentPreviousMicrophone = microphoneEnabled
         microphoneEnabled = microphone; agentHideCamera = !webcam
-        start(regionAppKit: region)
+        self.maximumDuration = maximumDuration
+        start(regionAppKit: region, windowID: windowID)
     }
 
     @available(macOS 15.0, *)
-    fileprivate func start(regionAppKit: CGRect?) {
+    fileprivate func start(regionAppKit: CGRect?, windowID: String? = nil, resuming: Bool = false) {
+        if !resuming {
+            agentSessionID = UUID().uuidString; sessionState = "starting"; sessionError = nil
+            segmentURLs = []; completedSeconds = 0; lastSavedRecord = nil; activeWindowID = windowID; isPaused = false
+        }
         Task { @MainActor in
             do {
                 let content = try await SCShareableContent
@@ -210,14 +236,17 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 let display = content.displays.first(where: { d in
                     cgRegion.map { d.frame.contains(CGPoint(x: $0.midX, y: $0.midY)) } ?? false
                 }) ?? content.displays.first
-                guard let display else {
-                    self.isBusy = false
-                    return
+                let filter: SCContentFilter
+                if let windowID {
+                    guard let window = content.windows.first(where: { String($0.windowID) == windowID }) else { throw AgentError("NOT_FOUND", "Window is no longer available; use windows list.") }
+                    filter = SCContentFilter(desktopIndependentWindow: window)
+                } else {
+                    guard let display else { throw AgentError("NOT_FOUND", "Display is no longer available.") }
+                    filter = SCContentFilter(display: display, excludingWindows: [])
                 }
-                let filter = SCContentFilter(display: display, excludingWindows: [])
                 let config = SCStreamConfiguration()
                 let scale = CGFloat(filter.pointPixelScale)
-                if let cgRegion {
+                if let cgRegion, let display {
                     // Crop to the dragged region, display-local coordinates.
                     let local = CGRect(x: cgRegion.minX - display.frame.minX,
                                        y: cgRegion.minY - display.frame.minY,
@@ -230,6 +259,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     config.width = max(2, Int(filter.contentRect.width * scale) & ~1)
                     config.height = max(2, Int(filter.contentRect.height * scale) & ~1)
                 }
+                if resuming, let previous = self.streamConfiguration { config.width = previous.width; config.height = previous.height }
                 config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
                 // Preserve the display's real pixels. Automatic capture can
                 // choose a nominal surface on some Retina displays, which
@@ -270,6 +300,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     recordingConfig.videoCodecType = .hevc
                 }
                 let output = SCRecordingOutput(configuration: recordingConfig, delegate: self)
+                startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
 
                 // Our warm dictation engine's voice-processing unit ducks
                 // system audio + AECs the mic machine-wide — release it for
@@ -278,9 +309,15 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
                 let stream = SCStream(filter: filter, configuration: config, delegate: nil)
                 try stream.addRecordingOutput(output)
+                self.recordingOutput = output
+                self.stream = stream
+                self.outputURL = url
                 try await stream.startCapture()
+                try await self.waitForOutput(output, finished: false)
+                self.segmentStartedAt = Date()
                 if self.microphoneEnabled {
-                    await self.narration.start(alongside: url)
+                    await self.narration.start(alongside: url, videoStartedAt: self.segmentStartedAt!)
+                    guard self.narration.isActive else { throw AgentError("AUDIO_CAPTURE_FAILED", "Microphone recording could not start.") }
                 }
                 self.micLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                     Task { @MainActor in
@@ -293,12 +330,22 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 self.streamConfiguration = config
                 self.recordingOutput = output
                 self.outputURL = url
-                self.agentSessionID = UUID().uuidString
-                self.startedAt = Date()
+                if !resuming { self.startedAt = Date() }
+                self.isPaused = false
+                self.sessionState = "recording"
                 self.isRecording = true
+                if !resuming, let maximumDuration = self.maximumDuration {
+                    let sessionID = self.agentSessionID
+                    self.deadline = Date().addingTimeInterval(maximumDuration)
+                    self.durationTask = Task { @MainActor [weak self] in
+                        do { try await Task.sleep(for: .seconds(maximumDuration)) } catch { return }
+                        guard let self, self.agentSessionID == sessionID else { return }
+                        self.stop()
+                    }
+                }
                 self.activeRegion = regionAppKit
                 WebcamBubble.shared.preferredRegion = regionAppKit
-                if SettingsStore.shared.cursorEffects {
+                if windowID == nil, SettingsStore.shared.cursorEffects {
                     CursorEffects.shared.show(regionAppKit: regionAppKit)
                 }
                 Analytics.track("screen_recording_started",
@@ -313,6 +360,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 }
             } catch {
                 NSLog("My Man [Record] start failed: \(error)")
+                try? await self.stream?.stopCapture()
+                self.stream = nil; self.recordingOutput = nil
+                self.narration.stopDiscarding()
+                self.finishSession(state: "failed", error: self.recoveryError(error))
+                self.clearCaptureControls()
                 await AudioCapture.shared.setSuppressVoiceProcessing(false)
                 self.isBusy = false
                 self.agentHideCamera = false; self.agentSystemAudio = nil; self.agentWantsCamera = false
@@ -325,80 +377,181 @@ final class ScreenRecorder: NSObject, ObservableObject {
         }
     }
 
-    func stop() {
-        guard isRecording else { return }
-        isRecording = false
-        let url = outputURL
-        agentSessionID = nil; agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false
+    @available(macOS 15.0, *)
+    private func waitForOutput(_ output: SCRecordingOutput, finished: Bool) async throws {
+        let id = ObjectIdentifier(output), limit = Date().addingTimeInterval(finished ? 60 : 20)
+        while !(finished ? finishedOutputs.contains(id) : startedOutputs.contains(id)) {
+            if let error = outputErrors[id] { throw AgentError("CAPTURE_FAILED", error) }
+            guard Date() < limit else { throw AgentError("PROCESSING_TIMEOUT", "Recording output has not acknowledged its state.") }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        if let error = outputErrors[id] { throw AgentError("CAPTURE_FAILED", error) }
+    }
+
+    @available(macOS 15.0, *)
+    private func finishSegment() async throws {
+        guard let stream, let output = recordingOutput as? SCRecordingOutput, let url = outputURL else { throw AgentError("CAPTURE_FAILED", "Recording segment is unavailable.") }
+        try await stream.stopCapture()
+        self.stream = nil
+        try await waitForOutput(output, finished: true)
+        guard await narration.finish(into: url) else { throw AgentError("AUDIO_FINALIZATION_FAILED", "Narration could not be merged. Recover the video and narration sidecar from recovery_paths.") }
+        let metadata = try await AgentVideo.attachment(url, preview: false)
+        completedSeconds += metadata["duration"] as? Double ?? 0
+        segmentStartedAt = nil
+        segmentURLs.append(url)
+        startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
+        recordingOutput = nil; outputURL = nil
+    }
+
+    func statusForAgent(sessionID: String? = nil) throws -> [String: Any] {
+        if let sessionID, sessionID != agentSessionID {
+            guard let result = sessionResults[sessionID] else { throw AgentError("SESSION_MISMATCH", "Unknown or expired session in this app launch.") }
+            return result
+        }
+        if let id = agentSessionID {
+            var status: [String: Any] = ["session_id": id, "state": sessionState, "active": isRecording, "paused": isPaused, "busy": isBusy, "duration": elapsedRecordingSeconds]
+            if let deadline { status["deadline"] = AgentActions.date(deadline) }
+            if let activeWindowID { status["window_id"] = activeWindowID }
+            if let sessionError { status["error"] = sessionError }
+            return status
+        }
+        return ["state": "idle", "active": false, "busy": isBusy]
+    }
+    private func recoveryError(_ error: Error) -> [String: Any] {
+        var result = AgentActions.error(error)
+        let files = segmentURLs + (outputURL.map { [$0, $0.deletingPathExtension().appendingPathExtension("narration.wav")] } ?? [])
+        result["recovery_paths"] = files.filter { FileManager.default.fileExists(atPath: $0.path) }.map(\.path)
+        return result
+    }
+    func clearCompletedAgentSessions() { sessionResults.removeAll(); sessionOrder.removeAll() }
+    private func finishSession(state: String, record: ScreenRecording? = nil, error: [String: Any]? = nil) {
+        durationTask?.cancel(); durationTask = nil; deadline = nil; maximumDuration = nil; stopAfterTransition = false
+        if let id = agentSessionID {
+            var result: [String: Any] = ["session_id": id, "state": state, "active": false, "busy": false]
+            if let record {
+                result["id"] = "recording-" + record.id; result["path"] = record.path; result["duration"] = record.duration
+                result["brain_path"] = "recordings/\(Brain.day(record.createdAt))-\(record.id.prefix(8)).md"
+                result["transcript_status"] = "pending"
+            }
+            if let error { result["error"] = error }
+            sessionResults[id] = result; sessionOrder.append(id)
+            while sessionOrder.count > 32 { sessionResults[sessionOrder.removeFirst()] = nil }
+        }
+        agentSessionID = nil; sessionState = state; sessionError = error
+    }
+    private func clearCaptureControls() {
+        isRecording = false; isPaused = false; startedAt = nil; segmentStartedAt = nil
+        agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false
         if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
-        let duration = startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
-        startedAt = nil
-        dismissPill()
-        borderPanel?.orderOut(nil)
-        borderPanel = nil
-        activeRegion = nil
-        WebcamBubble.shared.preferredRegion = nil
-        WebcamBubble.shared.turnOff()
-        WebcamBubble.shared.resetPosition()
-        CursorEffects.shared.hide()
-        micLevelTimer?.invalidate()
-        micLevelTimer = nil
-        microphoneLevel = 0
+        dismissPill(); borderPanel?.orderOut(nil); borderPanel = nil; activeRegion = nil; activeWindowID = nil
+        WebcamBubble.shared.preferredRegion = nil; WebcamBubble.shared.turnOff(); WebcamBubble.shared.resetPosition()
+        CursorEffects.shared.hide(); micLevelTimer?.invalidate(); micLevelTimer = nil; microphoneLevel = 0
+        if #available(macOS 15.0, *), let output = recordingOutput as? SCRecordingOutput {
+            startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
+        }
+        streamConfiguration = nil; recordingOutput = nil; outputURL = nil
+    }
+    @available(macOS 15.0, *)
+    func pauseForAgent() async throws {
+        guard isRecording, !isPaused, !changingSegment else { throw AgentError("SESSION_MISMATCH", "The session is not available to pause.") }
+        changingSegment = true; sessionState = "pausing"
+        defer { changingSegment = false; if stopAfterTransition { stopAfterTransition = false; stop() } }
+        do {
+            try await finishSegment()
+            isPaused = true; sessionState = "paused"
+            micLevelTimer?.invalidate(); micLevelTimer = nil; microphoneLevel = 0
+        } catch {
+            sessionError = AgentActions.error(error)
+            if stream == nil {
+                if let outputURL { _ = await narration.finish(into: outputURL) }
+                finishSession(state: "failed", error: recoveryError(error)); clearCaptureControls()
+                await AudioCapture.shared.setSuppressVoiceProcessing(false); isBusy = false
+            } else { sessionState = "recording" }
+            throw error
+        }
+    }
+    @available(macOS 15.0, *)
+    func resumeForAgent() async throws {
+        guard isRecording, isPaused, !changingSegment else { throw AgentError("SESSION_MISMATCH", "The session is not paused.") }
+        changingSegment = true; sessionState = "starting"
+        defer { changingSegment = false; if stopAfterTransition { stopAfterTransition = false; stop() } }
+        start(regionAppKit: activeRegion, windowID: activeWindowID, resuming: true)
+        // Keep this transition owned by its job until the recorder acknowledges
+        // it. CLI timeouts leave the job running; they must not release the
+        // transition lock and allow a late resume to race a new recording.
+        while sessionState == "starting" { try await Task.sleep(for: .milliseconds(50)) }
+        guard sessionState == "recording" else { throw AgentError("CAPTURE_FAILED", "Could not resume; inspect record status for the failure.") }
+    }
+    func stop() {
+        guard #available(macOS 15.0, *), isRecording else { return }
+        if changingSegment { stopAfterTransition = true; return }
+        isRecording = false; sessionState = "finalizing"; sessionError = nil
+        durationTask?.cancel(); durationTask = nil
         Task { @MainActor in
-            try? await stream?.stopCapture()
-            stream = nil
-            streamConfiguration = nil
-            recordingOutput = nil
-            outputURL = nil
-            // Fold the self-captured narration into the movie BEFORE the
-            // toast — "Open" must play the finished file.
-            if let url { await self.narration.finish(into: url) }
+            do {
+                if !isPaused { try await finishSegment() }
+                guard let first = segmentURLs.first else { throw AgentError("CAPTURE_FAILED", "No complete recorded segments.") }
+                let final: URL
+                if segmentURLs.count == 1 { final = first }
+                else {
+                    final = first.deletingLastPathComponent().appendingPathComponent("Recording-\(UUID().uuidString).mov")
+                    try await AgentVideo.join(segmentURLs, to: final)
+                }
+                let metadata = try await AgentVideo.attachment(final, preview: false)
+                let duration = Int(ceil(metadata["duration"] as? Double ?? 0))
+                let record = ScreenRecording(id: UUID().uuidString, path: final.path, duration: duration, createdAt: startedAt ?? Date())
+                try await Database.shared.write { try record.insert($0) }
+                if segmentURLs.count > 1 { for segment in segmentURLs { try? FileManager.default.removeItem(at: segment) } }
+                segmentURLs = []; lastSavedRecord = record
+                finishSession(state: "finalized", record: record)
+                transcribeAndSync(record)
+                Analytics.track("screen_recording_saved", ["duration_s": duration])
+                Toast.show("Recording saved", actionLabel: "Open", action: { NSWorkspace.shared.open(final) }, secondaryLabel: "Copy", secondaryAction: {
+                    let item = NSPasteboardItem(); item.setString(final.path, forType: .string); item.setString(final.absoluteString, forType: .fileURL)
+                    NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([item])
+                })
+            } catch {
+                // A failed stop that leaves a live stream must remain stoppable.
+                if stream != nil {
+                    isRecording = true; sessionState = "recording"; sessionError = AgentActions.error(error)
+                    return
+                }
+                if let outputURL { _ = await narration.finish(into: outputURL) }
+                finishSession(state: "failed", error: recoveryError(error))
+                Toast.show("Recording could not be finalized", systemImage: "exclamationmark.triangle")
+            }
+            clearCaptureControls()
             await AudioCapture.shared.setSuppressVoiceProcessing(false)
-            defer { isBusy = false }
-            Analytics.track("screen_recording_saved", ["duration_s": duration])
-            guard let url else { return }
-            let record = ScreenRecording(id: UUID().uuidString, path: url.path,
-                                         duration: duration, createdAt: Date())
-            do { try await Database.shared.write { try record.insert($0) } }
-            catch { Toast.show("Couldn't add this recording to your library", systemImage: "exclamationmark.triangle"); return }
-            self.lastSavedRecord = record
-            // Narration → text → brain, in the background. The recording is
-            // useful the moment it saves; the transcript catches up.
-            self.transcribeAndSync(record)
-            Toast.show("Recording saved",
-                       actionLabel: "Open",
-                       action: { NSWorkspace.shared.open(url) },
-                       secondaryLabel: "Copy",
-                       secondaryAction: {
-                           // One item, two faces: plain text (a bare NSURL
-                           // pastes as NOTHING in most text fields) plus the
-                           // file URL for Finder-style paste targets.
-                           let item = NSPasteboardItem()
-                           item.setString(url.path, forType: .string)
-                           item.setString(url.absoluteString, forType: .fileURL)
-                           NSPasteboard.general.clearContents()
-                           NSPasteboard.general.writeObjects([item])
-                       })
+            isBusy = false
         }
     }
 
-    /// Discard without re-entering the picker or publishing a library item.
+    /// Discard every segment without saving a library item or reopening a picker.
     func cancelForAgent() async throws {
-        guard isRecording else { throw AgentError("SESSION_MISMATCH", "No active screen recording.") }
-        isRecording = false
-        do { try await stream?.stopCapture() }
-        catch { isRecording = true; throw AgentError("CAPTURE_FAILED", "Could not stop the recording. Its session remains active; retry stop or cancel.") }
-        let discardedURL = outputURL
-        agentSessionID = nil; agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false
-        if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
-        dismissPill(); borderPanel?.orderOut(nil); borderPanel = nil
-        CursorEffects.shared.hide(); WebcamBubble.shared.turnOff(); WebcamBubble.shared.resetPosition()
-        WebcamBubble.shared.preferredRegion = nil
-        narration.stopDiscarding(); micLevelTimer?.invalidate(); micLevelTimer = nil; microphoneLevel = 0
-        stream = nil; streamConfiguration = nil; recordingOutput = nil; outputURL = nil; activeRegion = nil; startedAt = nil
+        guard #available(macOS 15.0, *), isRecording, !changingSegment else { throw AgentError("SESSION_MISMATCH", "No available recording session.") }
+        changingSegment = true
+        defer { changingSegment = false }
+        if let stream {
+            do { try await stream.stopCapture(); self.stream = nil }
+            catch { throw AgentError("CAPTURE_FAILED", "Could not stop capture. This session remains active; retry stop or cancel.") }
+        }
+        // Even an encoder failure must not leave narration running after an
+        // explicit cancel. Keep undeletable files discoverable in the error.
+        do {
+            if let output = recordingOutput as? SCRecordingOutput { try await waitForOutput(output, finished: true) }
+            let files = segmentURLs + (outputURL.map { [$0] } ?? [])
+            narration.stopDiscarding()
+            for file in files where FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+            segmentURLs = []; finishSession(state: "cancelled")
+        } catch {
+            narration.stopDiscarding()
+            finishSession(state: "failed", error: recoveryError(error))
+            clearCaptureControls(); await AudioCapture.shared.setSuppressVoiceProcessing(false); isBusy = false
+            throw error
+        }
+        clearCaptureControls()
         await AudioCapture.shared.setSuppressVoiceProcessing(false)
-        defer { isBusy = false }
-        if let discardedURL { try FileManager.default.removeItem(at: discardedURL) }
+        isBusy = false
     }
 
     /// Throw away the current movie and return to selection. Unlike Stop this
@@ -406,31 +559,13 @@ final class ScreenRecorder: NSObject, ObservableObject {
     func restart() {
         guard isRecording else { return }
         let region = activeRegion
-        isRecording = false
-        dismissPill()
-        borderPanel?.orderOut(nil)
-        borderPanel = nil
-        // No recording, no effects: the trail must never run during the
-        // countdown/re-selection between takes.
-        CursorEffects.shared.hide()
-        narration.stopDiscarding()
-        micLevelTimer?.invalidate()
-        micLevelTimer = nil
-        microphoneLevel = 0
-        let discardedURL = outputURL
         Task { @MainActor in
-            try? await stream?.stopCapture()
-            stream = nil
-            streamConfiguration = nil
-            recordingOutput = nil
-            outputURL = nil
-            if let discardedURL { try? FileManager.default.removeItem(at: discardedURL) }
-            activeRegion = nil
-            // Restart preserves the exact frame and live camera panel. The
-            // only thing discarded is the partial movie.
-            pendingRegion = region ?? .zero
-            if let region { showBorder(around: region) }
-            showCountdown(for: region ?? .zero)
+            do {
+                try await cancelForAgent()
+                isBusy = true; pendingRegion = region ?? .zero
+                if let region { showBorder(around: region) }
+                showCountdown(for: region ?? .zero)
+            } catch { Toast.show("Could not discard this take", systemImage: "exclamationmark.triangle") }
         }
     }
 
@@ -541,12 +676,12 @@ final class ScreenRecorder: NSObject, ObservableObject {
             }
             self.microphoneEnabled = enabled
             UserDefaults.standard.set(enabled, forKey: "mm.screenRecordingMicrophone")
-            guard self.isRecording, let url = self.outputURL else { return }
+            guard self.isRecording, !self.isPaused, !self.changingSegment, let url = self.outputURL else { return }
             if enabled {
                 self.microphoneName = (await Self.defaultInputDeviceOffMain())?.name ?? "Microphone"
                 if self.narration.isActive {
                     self.narration.setMuted(false)
-                } else if let started = self.startedAt {
+                } else if let started = self.segmentStartedAt {
                     // Switched on mid-take: the track muxes in at the
                     // elapsed offset so timing stays true.
                     await self.narration.start(alongside: url, videoStartedAt: started)
@@ -753,11 +888,19 @@ private final class MicrophoneLevelMonitor: NSObject, SCStreamOutput {
 
 @available(macOS 15.0, *)
 extension ScreenRecorder: SCRecordingOutputDelegate {
-    nonisolated func recordingOutput(_ recordingOutput: SCRecordingOutput,
-                                     didFailWithError error: Error) {
+    nonisolated func recordingOutputDidStartRecording(_ recordingOutput: SCRecordingOutput) {
+        let id = ObjectIdentifier(recordingOutput)
+        Task { @MainActor in self.startedOutputs.insert(id) }
+    }
+    nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
+        let id = ObjectIdentifier(recordingOutput)
+        Task { @MainActor in self.finishedOutputs.insert(id) }
+    }
+    nonisolated func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: Error) {
+        let id = ObjectIdentifier(recordingOutput), message = error.localizedDescription
         Task { @MainActor in
-            NSLog("My Man [Record] failed: \(error)")
-            self.stop()
+            self.outputErrors[id] = message
+            if let current = self.recordingOutput as? SCRecordingOutput, ObjectIdentifier(current) == id, self.isRecording { self.stop() }
         }
     }
 }
@@ -1058,15 +1201,16 @@ private struct RecordingPillView: View {
     var body: some View {
         HStack(spacing: 10) {
             IconView(icon: .recordScreen, size: 14, color: .red.opacity(0.85))
-            Text(elapsed)
+            Text(recorder.isPaused ? "Paused" : elapsed)
                 .font(.system(size: 11.5, weight: .medium).monospacedDigit())
                 .foregroundStyle(MM.Colors.textSecondary)
                 .frame(width: 42, alignment: .leading)
             IconView(icon: webcam.isOn ? .recordScreen : .cameraOff, size: 14,
                      color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.danger)
                 .clickable(minSize: 24)
-                .onTapGesture { webcam.toggle() }
-                .help(webcam.isOn ? "Turn webcam bubble off" : "Turn webcam bubble on")
+                .onTapGesture { if recorder.allowsWebcam { webcam.toggle() } }
+                .opacity(recorder.allowsWebcam ? 1 : 0.4)
+                .help(!recorder.allowsWebcam ? "Webcam is unavailable for window-only recordings" : webcam.isOn ? "Turn webcam bubble off" : "Turn webcam bubble on")
             Button(action: { recorder.toggleMicrophone() }) {
                 MicrophoneToggleIcon(enabled: recorder.microphoneEnabled)
                     .clickable(minSize: 32)
@@ -1109,8 +1253,7 @@ private struct RecordingPillView: View {
     }
 
     private var elapsed: String {
-        guard let start = recorder.startedAt else { return "0:00" }
-        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        let seconds = max(0, Int(recorder.elapsedRecordingSeconds))
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }

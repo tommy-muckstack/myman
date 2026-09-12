@@ -1,6 +1,6 @@
 # Cursor Marketplace and GrokBot preparation
 
-Status (September 12, 2026): root Cursor candidate **0.4.1** is prepared and local retrieval is verified; **not submitted, listed, or verified inside Hugo/GrokBot**. The publish form requires sign-in in the available browser session. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
+Status (September 12, 2026): root Cursor candidate **0.5.0** is prepared and local retrieval is verified; **not submitted, listed, or verified inside Hugo/GrokBot**. The publish form requires sign-in in the available browser session. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
 
 ## Two packages, distinct execution locations
 
@@ -37,7 +37,7 @@ GrokBot package directory: `integrations/grok-bot`
 
 Local Mac MCP package directory: repository root
 
-License: Apache-2.0. GrokBot skill package and root Cursor candidate: 0.4.1. Companion runtime: 0.4.0 (packaging/instruction update; no app rebuild required).
+License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.5.0. New media actions require MyMan 1.1.61. See [media verification](verification/agent-media-2026-09-12.md); the matrix below records the earlier marketplace baseline.
 
 Cursor's documented submission flow is a public Git repository plus review through its publish form; it supports the Agent Plugins standard. That verifies the Cursor route, **not a GrokBot-specific submission API or a Mac-local MCP bridge**. [Cursor plugin reference](https://cursor.com/docs/reference/plugins), [submission form](https://cursor.com/marketplace/publish), [Agent Plugins schemas](https://agent-plugins.org/).
 

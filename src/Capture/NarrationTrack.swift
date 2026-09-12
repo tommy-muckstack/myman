@@ -64,8 +64,8 @@ final class NarrationTrack {
     /// mux into the movie as a second audio track. Returns when the movie is
     /// final. The sidecar WAV is deleted on success and kept beside the
     /// movie on mux failure — narration must never be silently lost.
-    func finish(into movieURL: URL) async {
-        guard let session else { return }
+    @discardableResult func finish(into movieURL: URL) async -> Bool {
+        guard let session else { return true }
         drain()
         _ = AudioCapture.shared.end(session)
         self.session = nil
@@ -73,16 +73,18 @@ final class NarrationTrack {
         drainTimer = nil
         guard let wavURL = writer?.close() else {
             writer = nil
-            return
+            return false
         }
         writer = nil
         Self.normalize(wavURL: wavURL)
         if await Self.mux(narration: wavURL, into: movieURL,
                           atOffsetSeconds: startOffsetSeconds) {
             try? FileManager.default.removeItem(at: wavURL)
+            return true
         } else {
             NSLog("My Man [Record] narration mux failed — WAV kept at \(wavURL.path)")
             Analytics.track("recording_narration_mux_failed")
+            return false
         }
     }
 

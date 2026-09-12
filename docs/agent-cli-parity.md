@@ -60,3 +60,20 @@ All first-class rows are implemented. Generic `invoke` remains available for exa
 ## Verification
 
 See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests distinguish parser/schema coverage, real native fixture actions, and host-dependent marketplace verification. A successful local MCP test is not evidence that GrokBot loaded a plugin.
+
+## Media workflows added for 1.1.61
+
+| Capability | CLI | Behavior |
+| --- | --- | --- |
+| OCR targets | `capture targets --query` | Stable line IDs, pixel rectangles, explicit ambiguity |
+| Rendered markup preview | `annotate --preview` | Temporary PNG; no library/clipboard/preference changes |
+| Circles and numbered callouts | `annotate --ops` | Text/region targets or explicit geometry; existing editor renderer |
+| Window video | `record start --window-id` | Selected window only; region/webcam conflicts rejected |
+| Bounded video | `record start --max-duration` | App-owned deadline survives client disconnect; default 300 seconds |
+| Pause/resume | `record pause/resume --session-id` | One session; paused time excluded through segment assembly |
+| Completed session retrieval | `record result --session-id` | Finalized file and attachment, including after automatic stop |
+| Frame/contact-sheet inspection | `record frames --times/--count` | Bounded temporary PNG previews with actual timestamps |
+| Trim/MP4/size cap | `record export --start/--end/--max-bytes` | New library item, source preserved; no truncation to meet size |
+| Attachment metadata | Capture/edit/record/export results | Path, MIME, dimensions, duration, bytes and preview |
+
+Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).

@@ -13,6 +13,14 @@ If you find a bug or missing capability, you can propose an improvement. When co
 
 MyMan is a Mac app. GrokBot's default cloud computer is not the user's Mac and does not contain their Brain. Use the registered Mac's local-computer Shell/Read execution for every MyMan command or file. Select that Mac's machineId when the host exposes machine targeting; never substitute the cloud box. Do not change local-execution or MyMan consent settings on the user's behalf. If the Mac is offline or local execution is denied, report that specific blocker and retain the requested task.
 
+## Markup and video workflows (MyMan 1.1.61+)
+
+Check the live `actions` catalog before using new commands; older installed apps need an update. For text-based markup, call `capture targets --id ID --query TEXT`. Use a returned `target_region` in an annotation or `target_text` when it is unambiguous. These are OCR line boxes, not arbitrary UI selectors. `AMBIGUOUS_TARGET` returns candidates without saving; select a region explicitly. `annotate --preview` renders a temporary PNG for visual review; repeat the operations without preview to save. Circles (`op: circle`) and numbered labels (`op: callout`) accept these targets or pixel rectangles. Preview files expire after an hour or source deletion/exclusion.
+
+For a requested demo, discover the window, then `record start --window-id ID --max-duration 30 --mic off --system-audio off --json`. Choose audio deliberately. Window capture cannot include the webcam bubble. Keep the returned session ID for pause/resume/stop. The app-owned duration limit keeps working if the agent disconnects; the default is 300 seconds, including pauses. `record result --session-id ID` polls for `finalized` and the actual file. Do not attach a file while its state is recording/finalizing or blindly start a replacement take after a timeout.
+
+Use `record frames --id ID --count 6` to inspect a contact sheet before returning video. `record export --id ID --start 1 --end 8 --max-bytes 20000000` produces a trimmed MP4 as a new item. A size cap can lower resolution; if it cannot fit a complete clip, report the error instead of silently truncating it. All saved media results include `attachment` metadata with path, media type, dimensions, duration, bytes and a best-effort preview path. Return the final file through your host's attachment mechanism only within the user's requested workflow.
+
 On that Mac, run:
 
 ```sh

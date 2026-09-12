@@ -1,6 +1,6 @@
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.4.1** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.5.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -20,7 +20,7 @@ Find evidence by people, time periods, keywords and saved Themes. Read meeting t
 
 The plugin includes a read-only local MCP server and an agent skill. The skill also explains how to use MyMan's separate Mac CLI for requested screenshot capture, markup, recording and note workflows. Those actions require the running app, explicit Settings → Agents grants and applicable macOS permissions; installing the plugin does not enable capture.
 
-Requires MyMan on macOS and Node.js 22+ on that Mac. Open MyMan to generate the local Brain export and catalog. The plugin's committed MCP bundle needs no npm install. Existing exports remain readable while MyMan is closed.
+Requires MyMan on macOS and Node.js 22+ on that Mac. New text-targeted markup, window recording, pause/resume and video export commands require MyMan 1.1.61; discover available actions on the installed app before use. Open MyMan to generate the local Brain export and catalog. The plugin's committed MCP bundle needs no npm install. Existing exports remain readable while MyMan is closed.
 
 The Brain MCP makes no network requests and never modifies MyMan's database. Brain sync is one-way from the app. Your agent/model provider can receive the excerpts and images it retrieves for your request. There is no hosted Brain, automatic upload, silent capture or cloud sync supplied by this plugin.
 

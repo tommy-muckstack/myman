@@ -103,7 +103,7 @@
     },
     {
       "name": "screenshot.edit",
-      "description": "Validate and render markup in original image pixels (top-left), saving a new capture with refreshed OCR. The source is preserved. dry_run validates without saving. Per-operation colors and text font_size supported; crop is applied last.",
+      "description": "Validate and render markup in original image pixels (top-left), saving a new capture with refreshed OCR. The source is preserved. dry_run validates without saving. Per-operation colors and text font_size supported; crop is applied last. Supports OCR target_text/target_region, circles and numbered callouts. preview renders a temporary PNG without saving a library item; dry_run only validates.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -126,7 +126,9 @@
                     "highlight",
                     "text",
                     "pixelate",
-                    "image"
+                    "image",
+                    "circle",
+                    "callout"
                   ]
                 },
                 "rect": {
@@ -178,6 +180,21 @@
                   "type": "number",
                   "minimum": 6,
                   "maximum": 300
+                },
+                "target_text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "target_region": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "number": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 100
                 }
               },
               "required": [
@@ -227,6 +244,9 @@
             "type": "boolean"
           },
           "open_editor": {
+            "type": "boolean"
+          },
+          "preview": {
             "type": "boolean"
           }
         },
@@ -319,7 +339,7 @@
     },
     {
       "name": "recording.start",
-      "description": "Start recording a display/region (macOS 15+). Returns session_id. Explicit microphone choice; existing recordings are never replaced.",
+      "description": "Start recording a display/region (macOS 15+). Returns session_id. Explicit microphone choice; existing recordings are never replaced. Window ID excludes other windows; cannot combine region/display or webcam. max_duration is a wall-clock safety limit including pauses (default 300 seconds). Returns only after recording output starts.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -354,6 +374,16 @@
           },
           "webcam": {
             "type": "boolean"
+          },
+          "window_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "max_duration": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 3600
           }
         },
         "required": [],
@@ -1415,7 +1445,9 @@
                     "highlight",
                     "text",
                     "pixelate",
-                    "image"
+                    "image",
+                    "circle",
+                    "callout"
                   ]
                 },
                 "rect": {
@@ -1467,6 +1499,21 @@
                   "type": "number",
                   "minimum": 6,
                   "maximum": 300
+                },
+                "target_text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "target_region": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "number": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 100
                 }
               },
               "required": [
@@ -1545,6 +1592,176 @@
         },
         "required": [
           "auto_record_meetings"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "screenshot.targets",
+      "description": "Find selectable OCR lines. Returns stable region IDs and image-pixel top-left rectangles; query matches text case-insensitively.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "recording.pause",
+      "description": "Pause the specified live session. Paused time is excluded from the final video; the duration safety limit still runs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "recording.resume",
+      "description": "Resume the specified live session. Paused time is excluded from the final video; the duration safety limit still runs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "recording.status",
+      "description": "Current or named session: starting/recording/paused/finalizing/finalized/cancelled/failed. Finalized sessions include the saved item and attachment. Results retained for the last 32 sessions in this app launch.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "recording.frames",
+      "description": "Extract up to 12 video frames at requested seconds, or evenly spaced frames. Returns temporary PNGs and a labeled contact sheet; no library writes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "times": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 86400
+            },
+            "minItems": 1,
+            "maxItems": 12
+          },
+          "count": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 12
+          },
+          "width": {
+            "type": "number",
+            "minimum": 160,
+            "maximum": 1280
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "recording.export",
+      "description": "Export a trimmed MP4 as a new library recording, preserving the source. Optional max_bytes rejects an export that cannot fit at supported quality; never returns a truncated video.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "start": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 86400
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 86400
+          },
+          "max_bytes": {
+            "type": "number",
+            "minimum": 1024,
+            "maximum": 1073741824
+          }
+        },
+        "required": [
+          "id"
         ],
         "additionalProperties": false
       },
