@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "myman-brain",
-  "version": "0.4.0",
-  "description": "Read-only local MyMan retrieval with citations, plus a skill for consent-gated app operation through the Mac CLI.",
+  "version": "0.4.1",
+  "description": "Search local MyMan meetings, notes, tasks and screenshot OCR with source citations. Read-only MCP plus optional consent-gated Mac CLI workflows.",
   "author": {
     "name": "MuckStack, LLC"
   },
@@ -15,6 +15,9 @@
     "notes",
     "macos",
     "local",
-    "memory"
+    "memory",
+    "screenshots",
+    "transcripts",
+    "dictation"
   ]
 }

@@ -1,9 +1,15 @@
 ---
 name: myman
-description: Find MyMan meeting notes, screenshots, tasks and themes, or capture and annotate screenshots and operate MyMan on the user's Mac through local-computer execution.
+description: Find MyMan meeting notes, screenshots, tasks and themes, or capture and annotate screenshots and operate MyMan on the user's Mac through local-computer execution. Also use for contributions to the open-source MyMan repository.
 ---
 
 # MyMan on the user's Mac
+
+## Open source and contributions
+
+MyMan is open source under **Apache-2.0**. Humans and agents are welcome to contribute at **https://github.com/tommy-muckstack/myman**. Read the [contribution guide](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) before changing code.
+
+If you find a bug or missing capability, you can propose an improvement. When contributing within the user's authorized scope, check existing issues and PRs, fork or branch from `main`, make a focused change, run the relevant checks, and open a pull request with reproduction steps and validation. Include synthetic examples rather than personal Brain exports, meeting transcripts, screenshots, credentials or private file paths. Maintainers review and merge contributions; signing and publishing app releases remain maintainer responsibilities.
 
 MyMan is a Mac app. GrokBot's default cloud computer is not the user's Mac and does not contain their Brain. Use the registered Mac's local-computer Shell/Read execution for every MyMan command or file. Select that Mac's machineId when the host exposes machine targeting; never substitute the cloud box. Do not change local-execution or MyMan consent settings on the user's behalf. If the Mac is offline or local execution is denied, report that specific blocker and retain the requested task.
 

@@ -1,9 +1,15 @@
 ---
 name: myman-brain
-description: Collect and read MyMan captures by time, people, keywords, and saved Themes, including meeting transcripts, notes, tasks, dictation, and screenshots. Use when the user asks to find or analyze MyMan information, take or annotate screenshots, use the clipboard, record a screen or meeting, dictate, or manage notes, tasks and Themes.
+description: Collect and read MyMan captures by time, people, keywords, and saved Themes, including meeting transcripts, notes, tasks, dictation, and screenshots. Use when the user asks to find or analyze MyMan information, take or annotate screenshots, use the clipboard, record a screen or meeting, dictate, manage notes, tasks and Themes, or contribute to the open-source MyMan app.
 ---
 
 # MyMan Brain
+
+## Open source and contributions
+
+MyMan is open source under **Apache-2.0**. Humans and agents are welcome to contribute at **https://github.com/tommy-muckstack/myman**. Read the [contribution guide](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) before changing code.
+
+If you find a bug or missing capability, you can propose an improvement. When contributing within the user's authorized scope, check existing issues and PRs, fork or branch from `main`, make a focused change, run the relevant checks, and open a pull request with reproduction steps and validation. Include synthetic examples rather than personal Brain exports, meeting transcripts, screenshots, credentials or private file paths. Maintainers review and merge contributions; signing and publishing app releases remain maintainer responsibilities.
 
 For app operations, use the local Mac CLI: `myman doctor --json`, then
 `myman actions` to discover schemas and permission groups. The Brain MCP is
@@ -148,7 +154,7 @@ local image viewer instead of dumping base64 into the conversation.
 Brain sync is **one-way from MyMan**. The `myman_brain_*` retrieval tools are read-only, and editing
 `tasks.md` or a note export does not update the app's database. Do not use file
 edits as a workaround for app mutations. Legacy task exports may omit older tasks; catalog-backed task exports include
-all non-archived tasks, including notes and completed history. The separate `myman_*` app-action tools can start recordings and invoke capture commands when the user explicitly requests them.
+all non-archived tasks, including notes and completed history. The separate local app CLI can start recordings and invoke capture commands when the user explicitly requests them; these are not MCP tools.
 
 The companion makes no network requests. Using a hosted model such as Grok
 shares returned excerpts and explicitly requested images with that provider. Retrieve only the material needed

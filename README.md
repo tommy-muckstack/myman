@@ -114,10 +114,15 @@ npm ci --ignore-scripts --prefix integrations/brain
 node integrations/brain/cli.mjs status
 ```
 
-The plugin is read-only and makes no network calls itself. A hosted agent such
+The Brain MCP is read-only and makes no network calls itself. The skill also
+documents optional app CLI actions, protected by Settings → Agents grants. A hosted agent such
 as Grok receives the excerpts and images you ask it to retrieve; this optional integration
-is separate from MyMan's on-device AI. Grok Bot marketplace availability has
-not yet been verified. See the setup guide for the local-command route.
+is separate from MyMan's on-device AI. The root Agent Plugin is the Cursor
+Marketplace candidate; Node 22+ is enough for its committed MCP bundle.
+See [marketplace checks and remaining host tests](docs/grok-bot-marketplace.md)
+and [paste-ready listing copy](docs/marketplace-submission.md). Cursor/Hugo
+client activation and marketplace acceptance are separate from local CLI/MCP
+verification. Grok Bot must execute on the Mac containing the Brain.
 
 ### Optional private voice replies (Chatterbox beta)
 
@@ -145,3 +150,7 @@ The meeting-capture architecture (CoreAudio process taps, diarization approach, 
 ## License
 
 [Apache-2.0](LICENSE) © MuckStack, LLC
+
+## Open source contributions
+
+MyMan is **Apache-2.0 open source**. Humans and agents, including GrokBot, are welcome to propose fixes and improvements through the [public repository](https://github.com/tommy-muckstack/myman). See the [contribution guide](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) for setup, checks and the pull request process.

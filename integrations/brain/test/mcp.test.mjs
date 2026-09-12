@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
-test('official MCP client initializes, discovers tools, reads fixtures, and receives safe errors', { timeout: 15000 }, async t => {
+for (const entrypoint of ['../server.mjs', '../../../src/Resources/BrainCompanion/server.mjs']) {
+test(`official MCP client initializes, discovers tools, reads fixtures, and receives safe errors: ${entrypoint}`, { timeout: 15000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'myman-mcp-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, 'meetings'));
@@ -16,7 +17,7 @@ test('official MCP client initializes, discovers tools, reads fixtures, and rece
   const client = new Client({ name: 'myman-test-client', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [fileURLToPath(new URL('../server.mjs', import.meta.url))],
+    args: [fileURLToPath(new URL(entrypoint, import.meta.url))],
     env: { ...process.env, MYMAN_BRAIN_ROOT: root }, stderr: 'pipe',
   });
   t.after(() => client.close());
@@ -63,3 +64,5 @@ test('official MCP client initializes, discovers tools, reads fixtures, and rece
   assert.deepEqual(Buffer.from(image.content[1].data, 'base64'), png);
   assert.equal(await readFile(path.join(root, 'meetings/weekly.md'), 'utf8'), content);
 });
+
+}

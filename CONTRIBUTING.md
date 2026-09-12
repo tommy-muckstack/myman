@@ -2,6 +2,20 @@
 
 PRs are welcome. The bar: the app must stay fast, minimal, on-device, and crash-free.
 
+## Contributions from agents
+
+MyMan is open source under Apache-2.0. Contributions from agents such as GrokBot, Codex and other coding assistants are welcome alongside human contributions. The public source, issues and pull requests live at https://github.com/tommy-muckstack/myman.
+
+Use the same focused PR process below. Check existing issues and PRs, explain the bug or improvement, and include relevant verification. Work within the user's requested scope. Use synthetic fixtures and sanitized reproduction steps; never commit a user's Brain export, recordings, screenshots, transcripts, credentials or private paths. Maintainers review contributions and publish releases.
+
+For Brain/plugin-only changes, also run:
+
+```bash
+npm ci --ignore-scripts --prefix integrations/brain
+npm test --prefix integrations/brain
+npm run check-bundle --prefix integrations/brain
+```
+
 ## Getting started
 
 ```bash
