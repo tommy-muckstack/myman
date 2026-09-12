@@ -16,6 +16,15 @@ struct LauncherAction: Identifiable {
     /// Shows a pulsing red dot on the tile (e.g. meeting recording live).
     var recording: Bool = false
     let run: () -> Void
+
+    var captureKind: String? {
+        switch id {
+        case "screenshot", "note", "meeting": return id
+        case "voice": return "dictation"
+        case "record": return "recording"
+        default: return nil
+        }
+    }
 }
 
 /// Small pulsing red indicator for in-progress recordings.
@@ -85,6 +94,8 @@ struct LauncherView: View {
         .onAppear {
             query = ""
             selectedAction = nil
+            hoveredAction = nil
+            libraryFilters.actionKind = nil
             showChatSwitch = false
             focused = true
             showAllHints = true
@@ -94,6 +105,16 @@ struct LauncherView: View {
                 // makes them look as though they rise out of the tile.
                 withAnimation(.easeInOut(duration: 0.16)) { showAllHints = false }
             }
+        }
+        .onChange(of: query) { _, _ in
+            selectedAction = nil
+            hoveredAction = nil
+            libraryFilters.actionKind = nil
+        }
+        .onChange(of: libraryMode) { _, _ in
+            selectedAction = nil
+            hoveredAction = nil
+            libraryFilters.actionKind = nil
         }
         .frame(maxHeight: .infinity, alignment: .top)
 
@@ -158,6 +179,7 @@ struct LauncherView: View {
                             hoveredAction = action.id
                             if action.enabled {
                                 selectedAction = index
+                                libraryFilters.actionKind = action.captureKind
                                 NSCursor.pointingHand.set()
                             }
                         } else {
@@ -165,6 +187,7 @@ struct LauncherView: View {
                                 // Hover owns tile selection; leaving restores
                                 // Return to the selected search result.
                                 if selectedAction == index { selectedAction = nil }
+                                hoveredAction = nil
                             }
                             NSCursor.arrow.set()
                         }
@@ -222,6 +245,7 @@ struct LauncherView: View {
         } else {
             selectedAction = delta > 0 ? enabledIndices.first : enabledIndices.last
         }
+        if let index = selectedAction { libraryFilters.actionKind = actions[index].captureKind }
         return .handled
     }
 

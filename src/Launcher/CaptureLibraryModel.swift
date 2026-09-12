@@ -102,12 +102,9 @@ enum CaptureThumbnailCache {
         SearchService.recordClick(query: query, hit: hit)
         switch hit {
         case .note(let note): NoteDocumentController.shared.open(note)
-        case .meeting(let meeting):
-            if query.isEmpty { MeetingDocumentController.shared.open(meetingID: meeting.id) }
-            else { CaptureDetailController.shared.open(item, query: CaptureQuery.resolve(query, filter: CaptureFilter()).text) }
+        case .meeting(let meeting): MeetingDocumentController.shared.open(meetingID: meeting.id)
         case .screenshot(let shot):
-            if !query.isEmpty { CaptureDetailController.shared.open(item, query: CaptureQuery.resolve(query, filter: CaptureFilter()).text) }
-            else if let image = NSImage(contentsOfFile: shot.path) { editor.open(image: image, fileURL: URL(fileURLWithPath: shot.path)) }
+            if let image = NSImage(contentsOfFile: shot.path) { editor.open(image: image, fileURL: URL(fileURLWithPath: shot.path)) }
             else { Toast.show("The original image is missing", systemImage: "exclamationmark.triangle") }
         case .recording(let recording): NSWorkspace.shared.open(URL(fileURLWithPath: recording.path))
         case .dictation: CaptureDetailController.shared.open(item, query: query)

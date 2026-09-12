@@ -2,14 +2,18 @@ import SwiftUI
 
 @MainActor final class CaptureLibraryFilters: ObservableObject {
     @Published var kind = "all"
+    /// Hover browsing stays selected while moving into the results, but does
+    /// not replace the user's explicit content filter when search starts.
+    @Published var actionKind: String?
+    var displayedKind: String { actionKind ?? kind }
     @Published var period = "any"
     @Published var themeID = ""
     @Published var pinned = false
     @Published var includeExcluded = false
     @Published var customStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     @Published var customEnd = Date()
-    func reset() { kind = "all"; period = "any"; themeID = ""; pinned = false; includeExcluded = false }
-    var active: Bool { kind != "all" || period != "any" || !themeID.isEmpty || pinned || includeExcluded }
+    func reset() { actionKind = nil; kind = "all"; period = "any"; themeID = ""; pinned = false; includeExcluded = false }
+    var active: Bool { displayedKind != "all" || period != "any" || !themeID.isEmpty || pinned || includeExcluded }
 }
 
 struct CaptureFilterMenu: View {
@@ -22,7 +26,7 @@ struct CaptureFilterMenu: View {
             Divider()
             Menu("Content") {
                 ForEach([("all", "All types"), ("screenshot", "Screenshots"), ("meeting", "Meetings"), ("dictation", "Dictation"), ("recording", "Recordings"), ("note", "Notes")], id: \.0) { kind, label in
-                    Button { filters.kind = kind; mode = .search } label: { Label(label, systemImage: filters.kind == kind ? "checkmark" : "circle") }
+                    Button { filters.actionKind = nil; filters.kind = kind; mode = .search } label: { Label(label, systemImage: filters.displayedKind == kind ? "checkmark" : "circle") }
                 }
             }
             Picker("Date", selection: $filters.period) {
