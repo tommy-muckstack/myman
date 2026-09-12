@@ -8,7 +8,7 @@ database or exported Markdown directly.
 
 ## Explicit app actions
 
-The next-version CLI adds resource/action commands, default-off granular consent,
+MyMan 1.1.60 adds resource/action commands, default-off granular consent,
 and stable JSON errors. All original 1.1.59 action names remain available through
 `invoke`; the new native consent rules apply to them too. **Version 0.4 removes
 app-action tools from Brain MCP.** Use the app CLI for capture and mutations.
@@ -246,8 +246,9 @@ and current thumbnail exports are removed when the capture is deleted/hidden.
 
 ## Privacy and write behavior
 
-The companion makes no network calls, writes no index/log/content cache, and
-does not invoke capture commands. Your MCP client or Grok Bot can send returned
+The Brain MCP makes no network calls, writes no index/log/content cache, and
+does not invoke capture commands. The separate app CLI can capture or mutate
+items when explicitly requested and allowed by MyMan Settings → Agents. Your MCP client or Grok Bot can send returned
 content, including explicitly requested images, to its model provider. Using this integration with a hosted model is
 different from MyMan's built-in on-device processing.
 
@@ -267,7 +268,11 @@ stdio. They do not read your actual Brain. The [implementation plan](../../docs/
 records the boundaries and release criteria. Automated tests do not establish
 Grok Bot account access or marketplace approval.
 
-The plugin is prepared for submission from this repository's root. After the
+The root marketplace candidate is plugin version **0.4.1**, using the unchanged
+0.4.0 companion shipped in MyMan 1.1.60. The [smoke results](../../docs/grok-bot-marketplace.md#verification-matrix)
+record live Mac retrieval and official MCP SDK checks; Cursor UI discovery and
+Hugo local execution remain explicitly unverified. [Listing copy](../../docs/marketplace-submission.md)
+is ready for the reviewer. The plugin is prepared for submission from this repository's root. After the
 changes are published to the public repository and the target-client smoke
 test passes, submit the repository URL at
 [Cursor Marketplace](https://cursor.com/marketplace/publish). Describe the Mac

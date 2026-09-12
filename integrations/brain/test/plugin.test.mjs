@@ -8,7 +8,7 @@ test('marketplace manifests match official pinned schemas and bundled MCP is por
  const ajv=new Ajv2020({strict:false,validateFormats:false});
  const plugin=await readJSON('./schemas/plugin.schema.json'), mcp=await readJSON('./schemas/mcp.schema.json');
  for(const path of ['../../../plugin.json','../../grok-bot/plugin.json']){
-   const manifest=await readJSON(path);assert.ok(ajv.validate(plugin,manifest),JSON.stringify(ajv.errors));assert.equal(manifest.version,'0.4.0');
+   const manifest=await readJSON(path);assert.ok(ajv.validate(plugin,manifest),JSON.stringify(ajv.errors));assert.equal(manifest.version,path === '../../../plugin.json' ? '0.4.1' : '0.4.0');
  }
  const config=await readJSON('../../../mcp.json');assert.ok(ajv.validate(mcp,config),JSON.stringify(ajv.errors));
  assert.equal(config.mcpServers['myman-brain'].args[0],'${PLUGIN_ROOT}/src/Resources/BrainCompanion/server.mjs');
