@@ -33,8 +33,9 @@ final class MeetingProcessingTests: XCTestCase {
         let started = expectation(description: "Started before document opens")
         var calls = 0
         let service = MeetingNotesService(database: db) { _, _, progress in
-            calls += 1; started.fulfill()
+            calls += 1
             await progress("Writing notes…")
+            started.fulfill()
             await gate.wait()
             return "## Summary\nThe complete notes."
         }
