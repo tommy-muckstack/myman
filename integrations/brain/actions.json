@@ -1,0 +1,1120 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "name": "app.status",
+      "description": "Live app state, recording sessions, permissions and processing jobs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "app.open",
+      "description": "Open an existing MyMan surface.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "surface": {
+            "type": "string",
+            "enum": [
+              "search",
+              "note",
+              "settings"
+            ]
+          }
+        },
+        "required": [
+          "surface"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "screens.list",
+      "description": "Available displays in desktop points (bottom-left origin).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "screenshot.capture",
+      "description": "Capture a display or desktop region; save and index it. No interactive selection. Clipboard changes only if requested.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "display": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+          },
+          "clipboard": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "screenshot.edit",
+      "description": "Export a new annotated screenshot; preserve the source. Coordinates are original image pixels, top-left origin. Crop is applied after annotations.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "annotations": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "arrow",
+                    "box",
+                    "highlight",
+                    "text",
+                    "pixelate",
+                    "image"
+                  ]
+                },
+                "rect": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": -100000,
+                    "maximum": 100000
+                  },
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+                },
+                "from": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "crop": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "background": {
+            "type": "string",
+            "enum": [
+              "none",
+              "dusk",
+              "ocean",
+              "meadow",
+              "slate"
+            ]
+          },
+          "corner_radius": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 300
+          },
+          "clipboard": {
+            "type": "boolean"
+          },
+          "background_color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "screenshot.ocr",
+      "description": "Read text and normalized bounding boxes from an existing screenshot.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "clipboard.read",
+      "description": "Read clipboard text, or explicitly request PNG image content. Image bytes are shared with the requesting agent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image"
+            ]
+          }
+        },
+        "required": [
+          "format"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "clipboard.write",
+      "description": "Copy text or a captured image/movie file. Supply exactly one of text or id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 500000
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "recording.start",
+      "description": "Start recording a display/region (macOS 15+). Returns session_id. Explicit microphone choice; existing recordings are never replaced.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "display": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+          },
+          "microphone": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "recording.stop",
+      "description": "Stop the specified recording and wait for its saved movie. Transcription continues separately.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "recording.microphone",
+      "description": "Set the microphone for the specified recording.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_id",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "meeting.start",
+      "description": "Start a meeting recording. Returns meeting session_id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "meeting.stop",
+      "description": "Stop the specified meeting. Audio/transcript/notes processing continues in the app.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "meeting.rename",
+      "description": "Rename the specified active meeting.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "meeting.discard",
+      "description": "Discard the specified active meeting without saving it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": true
+    },
+    {
+      "name": "meeting.notes",
+      "description": "Prepare/get generated notes for a saved meeting; processing may take time.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "dictation.start",
+      "description": "Start dictation. Returns session_id; stopping uses normal dictation insertion behavior.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "dictation.stop",
+      "description": "Stop the specified dictation and return recognized text. Uses the normal paste/copy workflow.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "dictation.cancel",
+      "description": "Cancel the specified dictation.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": true
+    },
+    {
+      "name": "note.create",
+      "description": "Create a Markdown note, indexed and exported to Brain.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500000
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "note.update",
+      "description": "Replace a note body. expected_updated_at is required to avoid overwriting concurrent human edits.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 500000
+          },
+          "expected_updated_at": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "expected_updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "item.read",
+      "description": "Read a live capture record including body, timestamps, and source path. Does not follow links.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "item.open",
+      "description": "Open the original captured item in its native surface.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "item.rename",
+      "description": "Change the displayed title of a capture.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "item.pin",
+      "description": "Set pinned state explicitly.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "pinned"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "item.exclude",
+      "description": "Set search exclusion explicitly.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "excluded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "excluded"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "item.delete",
+      "description": "Delete a capture and its derived index, OCR, exports and owned media through the normal lifecycle.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": true
+    },
+    {
+      "name": "item.related",
+      "description": "Related captures with scores and reasons.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "theme.rename",
+      "description": "Correct a theme title.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "theme.pin",
+      "description": "Set pinned state.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "pinned"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "theme.dismiss",
+      "description": "Dismiss an inferred theme.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": true
+    },
+    {
+      "name": "theme.assign",
+      "description": "Assign or remove a capture from a theme.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "item_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "remove": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "item_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "theme.merge",
+      "description": "Merge a source theme into the specified target.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "target_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id",
+          "target_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "task.create",
+      "description": "Create a manual task.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "due": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "task.update",
+      "description": "Update specified task fields; omitted fields are preserved. Read the task first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "due": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "clear_due": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "task.delete",
+      "description": "Delete a task.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": true
+    },
+    {
+      "name": "font.open",
+      "description": "Open the local font workbench from a screenshot or a saved font note.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "screenshot.import",
+      "description": "Import an explicitly supplied local image into capture history. Uses normal OCR/indexing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "screenshot.image",
+      "description": "Read PNG bytes directly from a captured screenshot, including newly captured images not yet exported. Shares pixels with the requesting agent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "screenshot.remove_background",
+      "description": "Create a cutout as a new screenshot using the existing local background-removal tool.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "clipboard": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "font.create",
+      "description": "Create and save a local screenshot font from an optional pixel region. Opens the workbench while processing. Captured-only or measured-style completion; approximations are labeled. Returns a searchable font note and .otf path.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+          },
+          "captured_only": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    },
+    {
+      "name": "font.file",
+      "description": "Get the validated managed OpenType font path for a saved font note.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "history.clear",
+      "description": "Delete all capture history and derived data using the app lifecycle. Requires explicit confirmation in the invocation.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": true
+    },
+    {
+      "name": "settings.read",
+      "description": "Read agent/capture privacy controls. No keys or credentials.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false
+    },
+    {
+      "name": "settings.update",
+      "description": "Set local automatic Themes, semantic search or capture metadata preferences.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "automatic_themes": {
+            "type": "boolean"
+          },
+          "semantic_search": {
+            "type": "boolean"
+          },
+          "window_metadata": {
+            "type": "boolean"
+          },
+          "excluded_apps": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false
+    }
+  ]
+}

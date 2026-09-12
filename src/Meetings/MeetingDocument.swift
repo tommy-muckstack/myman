@@ -185,6 +185,12 @@ struct MeetingDocumentView: View {
             if showSlides, !slidePaths.isEmpty { slideCarousel }
             if showTranscript {
                 transcriptEditor
+                    .overlay {
+                        if transcript.isEmpty {
+                            UtilityEmptyState(icon: .voice, title: "No words just yet", message: meeting.endedAt == nil ? "Your transcript will appear after recording." : "No speech was captured in this recording.")
+                                .allowsHitTesting(false)
+                        }
+                    }
                 HStack { Spacer(); SaveIndicator(state: autosave.state) }
                     .padding(.horizontal, MM.Document.margin).padding(.vertical, MM.Layout.spacing)
             } else {
@@ -199,7 +205,13 @@ struct MeetingDocumentView: View {
                     notesService.cancel(meetingID: meeting.id)
                     summary = text; hasEditedNotes = true; debouncedSave(text)
                 }), firstLineIsTitle: false, session: editor,
-                                   placeholder: "Write your notes…", documentID: "meeting-" + meeting.id)
+                                   placeholder: "Write your notes…", showsEmptyPlaceholder: false, documentID: "meeting-" + meeting.id)
+                .overlay {
+                    if summary.isEmpty, !isSummarizing {
+                        UtilityEmptyState(icon: .calendar, title: "Keep the good bits", message: "Write anything you want to remember.")
+                            .allowsHitTesting(false)
+                    }
+                }
                 DocumentFooter(session: editor, text: summary, autosave: autosave)
             }
             if showRelated { CaptureRelatedSection(itemID: "meeting-" + meeting.id).padding(MM.Layout.padding) }

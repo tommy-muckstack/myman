@@ -133,4 +133,30 @@ final class MeetingRecordingTitleTests: XCTestCase {
             panel.close()
         }
     }
+    @MainActor func testExpansionKeepsControlsAnchoredAtIntermediateHeights() async throws {
+        _ = NSApplication.shared
+        let (controller, _) = try fixture()
+        controller.setTitleEditorVisible(true)
+        let panel = FloatingPanel(content: MeetingPillView(controller: controller), fixedSize: true)
+        panel.isReleasedWhenClosed = false
+        defer { panel.contentView = nil; panel.close() }
+        var topPixels: Data?
+        for height in [76.0, 92, 112, 140] {
+            // Match the native animation's invariant: top and right edges stay put.
+            panel.setFrame(NSRect(x: 500, y: 600 - height, width: 248, height: height), display: false)
+            let host = try XCTUnwrap(panel.contentView); host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(30)); host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let image = try XCTUnwrap(bitmap.cgImage)
+            let scale = CGFloat(image.width) / 248
+            // Exclude the lower corners, where the card intentionally unfolds.
+            let controls = try XCTUnwrap(image.cropping(to: CGRect(x: 20 * scale, y: 8 * scale, width: 208 * scale, height: 53 * scale)))
+            let pixels = try XCTUnwrap(NSBitmapImageRep(cgImage: controls).representation(using: .png, properties: [:]))
+            if let topPixels { XCTAssertEqual(pixels, topPixels, "Recording controls moved during expansion") }
+            else { topPixels = pixels }
+            XCTAssertEqual(panel.frame.maxY, 600)
+        }
+    }
+
 }

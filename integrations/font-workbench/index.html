@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; worker-src 'none'">
+<title>Create font · My Man</title><link rel="stylesheet" href="workbench.css"><script defer src="workbench.js"></script></head>
+<body><main>
+<header><div><h1>Create a font</h1><p>Capture the letters you can see. Approximate the ones you can’t.</p></div><button id="add" data-job>Add screenshot</button></header>
+<section aria-label="Source screenshots"><div id="sources" class="row"></div><div class="source-wrap"><canvas id="source" aria-label="Select a text region by dragging"></canvas></div>
+<div class="row"><p id="selection-label"></p><button id="clear-selection" data-job>Clear selection</button><button id="read" class="primary" data-job>Read text</button></div>
+<details><summary>Label a character that recognition missed</summary><p>Select one complete glyph, including a little background, then give it a label.</p><div class="row"><input id="manual-label" maxlength="1" aria-label="Selected character" placeholder="A"><button id="manual" data-job>Add selected glyph</button></div></details></section>
+<div class="row status-row"><p id="status" role="status" aria-live="polite">Works locally. Choose one typeface and weight per font.</p><button id="cancel" hidden>Cancel</button></div>
+<section id="review" hidden><div class="row"><div><h2>Check the characters</h2><p>Correct labels, clear bad samples, or prefer a cleaner occurrence.</p></div><button id="trace" class="primary" data-job>Create font</button></div><div id="samples" class="samples"></div></section>
+<section id="result" hidden><h2>Try your font</h2><p id="counts"></p><p id="style-note" class="muted"></p>
+<div class="row"><label>Font name<input id="name" maxlength="64" value="Screenshot Font"></label><label>Export<select id="mode"><option value="completed">Captured + inferred</option><option value="captured">Captured only</option></select></label></div>
+<label for="preview">Preview text</label><textarea id="preview" rows="2">The quick brown fox jumps over the lazy dog.</textarea>
+<label class="row size">Size<input id="size" type="range" min="16" max="96" value="42"></label>
+<div id="font-preview" aria-label="Actual export font preview"></div><p id="missing" class="muted"></p>
+<div class="row"><button id="save" class="primary" disabled>Save .otf…</button><button id="open-font" hidden>Open in Font Book</button></div>
+<details><summary>Character coverage and corrections</summary><p>Captured outlines always stay yours. Inferred shapes are approximations. Each missing character can instead be excluded or explicitly supplied by a suggested font.</p><div id="coverage" class="coverage"></div></details>
+<details open><summary>Closest available fonts</summary><p id="match-note"></p><div id="matches" class="matches"></div></details>
+</section></main></body></html>

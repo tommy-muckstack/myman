@@ -195,7 +195,8 @@ final class SettingsStore: ObservableObject {
     }
 
     var screenshotFolderURL: URL {
-        URL(fileURLWithPath: screenshotFolderPath, isDirectory: true)
+        if let root = VerificationPaths.root { return root.appendingPathComponent("Captures") }
+        return URL(fileURLWithPath: screenshotFolderPath, isDirectory: true)
     }
 }
 

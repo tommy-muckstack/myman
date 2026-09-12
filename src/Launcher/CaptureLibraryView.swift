@@ -80,20 +80,21 @@ struct CaptureLibraryView: View {
     @Binding var mode: CaptureLibraryMode
     var onDismiss: () -> Void = {}
     var onSaveQueryAsNote: (String) -> Void = { _ in }
+    @ObservedObject private var controls: CaptureLibraryFilters
     @StateObject private var model: CaptureLibraryModel
-    init(query: Binding<String>, mode: Binding<CaptureLibraryMode>, onDismiss: @escaping () -> Void = {}, onSaveQueryAsNote: @escaping (String) -> Void = { _ in }, model: CaptureLibraryModel? = nil) {
+    init(query: Binding<String>, mode: Binding<CaptureLibraryMode>, controls: CaptureLibraryFilters? = nil, onDismiss: @escaping () -> Void = {}, onSaveQueryAsNote: @escaping (String) -> Void = { _ in }, model: CaptureLibraryModel? = nil) {
+        self.controls = controls ?? CaptureLibraryFilters()
         _query = query; _mode = mode; self.onDismiss = onDismiss
         self.onSaveQueryAsNote = onSaveQueryAsNote
         _model = StateObject(wrappedValue: model ?? CaptureLibraryModel())
     }
-    @State private var kind = "all"
-    @State private var period = "any"
-    @State private var themeID = ""
-    @State private var pinned = false
-    @State private var includeExcluded = false
-    @State private var customStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-    @State private var customEnd = Date()
-    @State private var showDates = false
+    private var kind: String { get { controls.kind } nonmutating set { controls.kind = newValue } }
+    private var period: String { get { controls.period } nonmutating set { controls.period = newValue } }
+    private var themeID: String { get { controls.themeID } nonmutating set { controls.themeID = newValue } }
+    private var pinned: Bool { get { controls.pinned } nonmutating set { controls.pinned = newValue } }
+    private var includeExcluded: Bool { get { controls.includeExcluded } nonmutating set { controls.includeExcluded = newValue } }
+    private var customStart: Date { get { controls.customStart } nonmutating set { controls.customStart = newValue } }
+    private var customEnd: Date { get { controls.customEnd } nonmutating set { controls.customEnd = newValue } }
     @State private var dateAnchor = Date()
     @State private var selectedThemeID: String?
 
@@ -117,12 +118,19 @@ struct CaptureLibraryView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            if mode != .themes { filters }
+            if !themeID.isEmpty, let theme = model.themes.first(where: { $0.id == themeID }) {
+                HStack {
+                    IconView(icon: .themes, size: 14, color: MM.Colors.accent)
+                    Text(theme.title).font(MM.Fonts.secondary)
+                    Spacer()
+                    Button("All themes") { themeID = ""; mode = .themes }.buttonStyle(.plain).clickable()
+                }.padding(MM.Layout.spacing)
+            }
             if let hint = model.queryHint { Text(hint).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary).padding(.horizontal, MM.Layout.padding) }
             if mode != .themes, period == "custom" {
                 HStack {
-                    DatePicker("From", selection: $customStart, displayedComponents: .date)
-                    DatePicker("Through", selection: $customEnd, displayedComponents: .date)
+                    DatePicker("From", selection: $controls.customStart, displayedComponents: .date)
+                    DatePicker("Through", selection: $controls.customEnd, displayedComponents: .date)
                 }.font(MM.Fonts.secondary).padding(.horizontal, MM.Layout.padding)
             }
             ScrollViewReader { proxy in
@@ -130,10 +138,6 @@ struct CaptureLibraryView: View {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         if mode == .themes {
                             ForEach(visibleThemes) { theme in themeRow(theme).id(theme.id).background(selectedThemeID == theme.id ? MM.Colors.surface : .clear) }
-                            if visibleThemes.isEmpty {
-                                Text("Themes appear when several captures share a topic. Keep capturing; there’s nothing to organize by hand.")
-                                    .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary).padding(MM.Layout.padding)
-                            }
                         } else {
                             if !query.isEmpty, themeID.isEmpty {
                                 ForEach(Array(visibleThemes.prefix(3))) { theme in themeRow(theme) }
@@ -145,14 +149,19 @@ struct CaptureLibraryView: View {
                                     .onTapGesture(count: 2) { open(match) }
                                     .contextMenu { itemMenu(match.item) }
                             }
-                            if model.results.isEmpty, !model.working {
-                                Text(model.error ?? (query.isEmpty ? "Your intentional captures will appear here." : "No matches yet. Try a shorter phrase or a different filter."))
-                                    .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary).padding(MM.Layout.padding)
-                                if !query.isEmpty { Button("Save as note ↵") { onDismiss(); onSaveQueryAsNote(query) }.buttonStyle(.plain).clickable().padding(.horizontal, MM.Layout.padding) }
-                            }
                             if model.hasMore { Button("Show more") { reload(more: true) }.buttonStyle(.plain).clickable().padding(MM.Layout.padding) }
                         }
                     }.padding(8)
+                }
+                .overlay {
+                    if !model.working {
+                        if mode == .themes && visibleThemes.isEmpty {
+                            UtilityEmptyState(icon: .themes, title: query.isEmpty ? "Ideas find each other" : "No themes found",
+                                              message: query.isEmpty ? "Related captures will gather here." : "Try another word or a broader idea.")
+                        } else if mode != .themes && model.results.isEmpty && (query.isEmpty || visibleThemes.isEmpty) {
+                            libraryEmptyState
+                        }
+                    }
                 }
                 .onChange(of: model.selectedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
                 .onChange(of: selectedThemeID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
@@ -179,7 +188,7 @@ struct CaptureLibraryView: View {
         .onReceive(NotificationCenter.default.publisher(for: .captureLibraryCommand)) { event in
             if mode == .themes {
                 let index = visibleThemes.firstIndex { $0.id == selectedThemeID } ?? -1
-                if event.object as? String == "open", let theme = visibleThemes.first(where: { $0.id == selectedThemeID }) ?? visibleThemes.first { themeID = theme.id; query = ""; mode = .history }
+                if event.object as? String == "open", let theme = visibleThemes.first(where: { $0.id == selectedThemeID }) ?? visibleThemes.first { themeID = theme.id; query = ""; mode = .search }
                 else if !visibleThemes.isEmpty {
                     let delta = event.object as? String == "up" ? -1 : 1
                     selectedThemeID = visibleThemes[min(max(0, index + delta), visibleThemes.count - 1)].id
@@ -196,41 +205,33 @@ struct CaptureLibraryView: View {
             }
         }
     }
-    private var filters: some View {
-        HStack(spacing: 6) {
-            Picker("Content", selection: $kind) {
-                Text("All").tag("all"); Text("Screenshots").tag("screenshot"); Text("Meetings").tag("meeting")
-                Text("Dictation").tag("dictation"); Text("Recordings").tag("recording"); Text("Notes").tag("note")
-            }.frame(width: 125)
-            Picker("Date", selection: $period) {
-                Text("Any time").tag("any"); Text("Today").tag("today"); Text("Last 7 days").tag("week")
-                Text("Last 30 days").tag("month"); Text("Date range…").tag("custom")
-            }.frame(width: 130)
-            Picker("Theme", selection: $themeID) {
-                Text("All themes").tag("")
-                ForEach(model.themes) { Text($0.title).tag($0.id) }
-            }.frame(maxWidth: 190)
-            Button { pinned.toggle() } label: { Image(systemName: pinned ? "pin.fill" : "pin").clickable() }.help("Pinned captures")
-            Menu {
-                Toggle("Include hidden captures", isOn: $includeExcluded)
-                Button("Clear capture history…") {
-                    let alert = NSAlert(); alert.messageText = "Clear all capture history?"
-                    alert.informativeText = "This deletes notes, dictations, meetings, screenshots and recordings, including local indexes and themes. Media moves to Trash. Current Brain exports are removed; earlier Git history and backups may remain."
-                    alert.addButton(withTitle: "Clear History"); alert.addButton(withTitle: "Cancel")
-                    if alert.runModal() == .alertFirstButtonReturn { CaptureActions.perform { try CaptureLifecycle.clearHistory() } }
-                }
-            } label: { Image(systemName: "ellipsis").clickable() }.menuStyle(.borderlessButton).frame(width: 28)
-        }.labelsHidden().pickerStyle(.menu).font(MM.Fonts.secondary).padding(MM.Layout.spacing)
+    @ViewBuilder private var libraryEmptyState: some View {
+        if model.error != nil {
+            UtilityEmptyState(icon: .search, title: "Couldn't load your captures", message: "Let's give that another try.", actionTitle: "Try again") { reload() }
+        } else if !query.isEmpty {
+            UtilityEmptyState(icon: .search, title: "Still looking?", message: "Try another word or a wider date range.", actionTitle: "Save as note") {
+                onDismiss(); onSaveQueryAsNote(query)
+            }
+        } else if kind != "all" || period != "any" || !themeID.isEmpty || pinned {
+            UtilityEmptyState(icon: kind == "note" ? .note : .search, title: kind == "note" ? "Room for a thought" : "Nothing here just yet", message: kind == "note" ? "Your saved notes will find a home here." : "Try opening things up a little.", actionTitle: "Clear filters") {
+                kind = "all"; period = "any"; themeID = ""; pinned = false
+            }
+        } else {
+            UtilityEmptyState(icon: .note, title: "Keep something worth finding", message: "Your notes, meetings, and captures will live here.", actionTitle: "Write a note") {
+                onDismiss(); NoteDocumentController.shared.open(Note(body: ""))
+            }
+        }
     }
+
     private func reload(more: Bool = false) { model.reload(query: query, filter: filter, more: more) }
     private func open(_ match: CaptureMatch) { onDismiss(); CaptureActions.open(match.item, query: query) }
 
     private func themeRow(_ theme: CaptureTheme) -> some View {
         Button {
-            themeID = theme.id; query = ""; mode = .history
+            themeID = theme.id; query = ""; mode = .search
         } label: {
             HStack(spacing: MM.Layout.spacing) {
-                Image(systemName: "square.stack").foregroundStyle(MM.Colors.accent).frame(width: 48)
+                IconView(icon: .themes, color: MM.Colors.accent).frame(width: 48)
                 VStack(alignment: .leading, spacing: 4) {
                     HighlightedCaptureText(text: theme.title, terms: CaptureText.words(query)).font(MM.Fonts.body).lineLimit(2)
                     if !theme.description.isEmpty {

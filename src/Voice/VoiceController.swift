@@ -23,6 +23,7 @@ final class VoiceController: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
+    private(set) var agentSessionID: String?
     @Published var levels: [Float] = []
 
     private let audio = AudioCapture.shared
@@ -53,7 +54,7 @@ final class VoiceController: ObservableObject {
     /// Starting the mic waits on CoreAudio, so that window is real: it keeps
     /// a second press from opening a second session, and remembers a dismiss
     /// that landed mid-start so the mic goes straight back.
-    private var starting = false
+    private(set) var starting = false
     private var cancelledWhileStarting = false
     private let notes = NotesStore()
 
@@ -116,6 +117,7 @@ final class VoiceController: ObservableObject {
 
     private func start() {
         guard !starting else { return }
+        agentSessionID = UUID().uuidString
         starting = true
         cancelledWhileStarting = false
         lingerTask?.cancel()
@@ -271,6 +273,7 @@ final class VoiceController: ObservableObject {
     }
 
     private func stopAndTranscribe() {
+        agentSessionID = nil
         if let escHotkeyID {
             HotkeyCenter.shared.unregister(escHotkeyID)
             self.escHotkeyID = nil
@@ -410,6 +413,7 @@ final class VoiceController: ObservableObject {
     }
 
     func dismiss() {
+        agentSessionID = nil
         if let escHotkeyID {
             HotkeyCenter.shared.unregister(escHotkeyID)
             self.escHotkeyID = nil

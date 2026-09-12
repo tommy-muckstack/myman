@@ -20,7 +20,7 @@ Everything you capture lands in **`~/MyManBrain`** as plain markdown in a git re
 
 ## Features
 
-- **⌥Space launcher** — keyboard-first Search, History and Themes across screenshots/OCR, meeting transcripts and editable notes, dictation, notes, and recording transcripts/filenames. Exact matches appear first; typo and on-device semantic matches follow.
+- **⌥Space launcher** — keyboard-first search with a Themes filter across screenshots/OCR, meeting transcripts and editable notes, dictation, notes, and recording transcripts/filenames. Exact matches appear first; typo and on-device semantic matches follow.
 - **Themes & related captures** — conservative automatic groups from repeated titles, terminology and domains, with timelines, pinning, rename/merge and membership corrections. A small Related section connects existing documents.
 - **Dictation** — hold Left ⌘, speak, release; text types into any app. On-device speech models, whisper-friendly, AI cleanup, a vocabulary that learns your proper nouns
 - **Meetings** — detects Zoom / Meet / Teams / Webex / Slack huddles / Discord / FaceTime; starts listening 45s before calendar meetings but saves nothing without your explicit click; auto-stops on hang-up; named speakers, timestamps, slide snapshots, on-device summaries
@@ -32,13 +32,14 @@ Everything you capture lands in **`~/MyManBrain`** as plain markdown in a git re
 
 Press **⌥Space** and type what you remember. Results show the matching passage
 and its source; use **↑/↓**, **Return**, **⌘Y** to preview, or **⇧⌘C** to copy.
-Quoted phrases stay exact. Type, date and Theme filters narrow the results.
+Quoted phrases stay exact. The funnel menu narrows results by type/date or opens Themes.
 Conversational queries such as “Find the screenshot where the number was $49”
 also recognize simple content/date constraints.
 
-**History** browses saved captures chronologically. Right-click to pin, rename,
+An empty search browses saved captures chronologically. Open the funnel menu to
+browse **Themes** or filter by type, date, and pinning. Right-click to pin, rename,
 assign/remove a Theme, hide from search, or delete. **Themes** appear after at
-least three captures share useful terminology or a domain. They are collections
+least three captures support a shared concept. They are collections
 of captured material; correcting one does not create tasks or initiate work.
 
 Screenshot search opens a text preview with highlighted OCR locations. Copy

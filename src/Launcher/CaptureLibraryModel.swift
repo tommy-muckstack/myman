@@ -3,7 +3,7 @@ import SwiftUI
 import GRDB
 import ImageIO
 
-enum CaptureLibraryMode: String, CaseIterable { case search = "Search", history = "History", themes = "Themes" }
+enum CaptureLibraryMode: String, CaseIterable { case search = "Search", themes = "Themes" }
 
 @MainActor final class CaptureLibraryModel: ObservableObject {
     @Published var results: [CaptureMatch] = []

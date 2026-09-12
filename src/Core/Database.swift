@@ -10,7 +10,8 @@ enum Database {
     private(set) static var startupRecoveryNotice: String?
 
     private static var directory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        if let root = VerificationPaths.root { return root.appendingPathComponent("Library") }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MyMan", isDirectory: true)
     }
 

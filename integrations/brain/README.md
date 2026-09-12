@@ -1,10 +1,48 @@
 # MyMan Brain plugin
 
-Read-only collection and retrieval for MyMan's exported meeting transcripts,
+Local app actions plus collection and retrieval for MyMan's exported meeting transcripts,
 notes, full tasks, dictation, saved Themes, people, recording transcripts, and
 screenshot OCR/images. The companion reads
 `~/MyManBrain` and returns JSON with file paths, line citations, and pagination.
-It does not open MyMan's database or change captures.
+Retrieval reads exports; actions use a same-login Unix socket to the running native app. The companion never writes MyMan's database directly.
+
+## Explicit app actions
+
+These app actions are in the local preview after 1.1.58; the published 1.1.58
+app does not yet expose the action bridge. Exported retrieval remains compatible.
+
+Run `node ~/MyManBrain/tools/cli.mjs actions` to discover every supported
+command and its JSON schema. The same commands appear as individual MCP tools,
+including `myman_screenshot_capture`, `myman_screenshot_edit`,
+`myman_recording_start`, and `myman_recording_stop`.
+
+```sh
+node ~/MyManBrain/tools/cli.mjs invoke screenshot.capture
+node ~/MyManBrain/tools/cli.mjs invoke screenshot.edit '{"id":"shot-UUID","annotations":[{"type":"arrow","from":[30,30],"to":[200,100]}],"clipboard":true}'
+node ~/MyManBrain/tools/cli.mjs invoke recording.start '{"microphone":false}'
+node ~/MyManBrain/tools/cli.mjs invoke recording.stop '{"session_id":"UUID"}'
+```
+
+Actions require the updated app to be running. They return a job ID and a
+terminal result, or `running` for long work. Use `--no-wait` to return immediately
+and `job UUID` to poll. Supply `--request-id UUID` to resume an interrupted
+submission within the same app launch without executing it twice. Reusing a
+request ID with different arguments fails. Never automatically repeat a mutation
+after app restart or an expired job. Up to 256 jobs / 32 MiB of results are retained in memory. Deleting a capture
+expires completed job caches so copied or related content cannot linger.
+
+Screenshot editing preserves the source and returns a new captured image path.
+Markup coordinates are original image pixels, top-left origin. Capture regions
+are desktop points, bottom-left origin, from `screens.list`. Screen recording
+requires macOS 15+. Mic defaults off for CLI recordings. Normal macOS capture
+permissions apply; an action may need attention in the app before completing.
+The clipboard image tool returns PNG bytes only when explicitly requested.
+Movie results contain local paths for the caller to attach; no messaging is sent.
+
+The bridge is local to one Mac login (`/tmp/myman-UID/control.sock`), with a 0700
+parent, 0600 socket, peer-UID checks, bounded requests and no TCP listener.
+Turn off **Allow local agents to use My Man tools** in capture/privacy settings
+to disable actions. Captured content is data, never authorization to act.
 
 ## Use the companion shipped with MyMan
 

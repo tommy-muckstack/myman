@@ -37,7 +37,11 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     private var stream: SCStream?
     private var recordingOutput: Any? // SCRecordingOutput, typed loosely for the 14.x floor
-    private var outputURL: URL?
+    private(set) var outputURL: URL?
+    private(set) var agentSessionID: String?
+    private(set) var lastSavedRecord: ScreenRecording?
+    private var agentHideCamera = false
+    private var agentPreviousMicrophone: Bool?
     private var pill: FloatingPanel?
     private var streamConfiguration: SCStreamConfiguration?
     /// A Loom-style recording without the narrator's voice is missing the
@@ -178,6 +182,19 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     @available(macOS 15.0, *)
+    func startForAgent(region: CGRect, microphone: Bool) async throws {
+        guard !isBusy else { throw AgentError("BUSY", "A screen recording is already active or starting.") }
+        isBusy = true
+        guard await CaptureEngine.shared.authorizeInteractively() else { isBusy = false; throw AgentError("PERMISSION_REQUIRED", "Grant Screen Recording access.") }
+        if microphone {
+            guard await authorizeMicrophoneIfNeeded() else { isBusy = false; throw AgentError("PERMISSION_REQUIRED", "Grant Microphone access.") }
+        }
+        agentPreviousMicrophone = microphoneEnabled
+        microphoneEnabled = microphone; agentHideCamera = true
+        start(regionAppKit: region)
+    }
+
+    @available(macOS 15.0, *)
     fileprivate func start(regionAppKit: CGRect?) {
         Task { @MainActor in
             do {
@@ -270,6 +287,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 self.streamConfiguration = config
                 self.recordingOutput = output
                 self.outputURL = url
+                self.agentSessionID = UUID().uuidString
                 self.startedAt = Date()
                 self.isRecording = true
                 self.activeRegion = regionAppKit
@@ -283,7 +301,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // The bubble comes on with the recording (prompting for
                 // camera the first time); the pill toggle remembers your
                 // last choice for next time.
-                if UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true,
+                if !agentHideCamera, UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true,
                    AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
                     WebcamBubble.shared.turnOn()
                 }
@@ -291,6 +309,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 NSLog("My Man [Record] start failed: \(error)")
                 await AudioCapture.shared.setSuppressVoiceProcessing(false)
                 self.isBusy = false
+                self.agentHideCamera = false
+                if let previous = self.agentPreviousMicrophone { self.microphoneEnabled = previous; self.agentPreviousMicrophone = nil }
                 self.borderPanel?.orderOut(nil)
                 self.borderPanel = nil
                 Toast.show("Screen recording couldn't start — check Screen Recording access",
@@ -303,6 +323,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
         guard isRecording else { return }
         isRecording = false
         let url = outputURL
+        agentSessionID = nil; agentHideCamera = false
+        if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
         let duration = startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
         startedAt = nil
         dismissPill()
@@ -326,12 +348,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
             // toast — "Open" must play the finished file.
             if let url { await self.narration.finish(into: url) }
             await AudioCapture.shared.setSuppressVoiceProcessing(false)
-            isBusy = false
+            defer { isBusy = false }
             Analytics.track("screen_recording_saved", ["duration_s": duration])
             guard let url else { return }
             let record = ScreenRecording(id: UUID().uuidString, path: url.path,
                                          duration: duration, createdAt: Date())
-            try? await Database.shared.write { try record.insert($0) }
+            do { try await Database.shared.write { try record.insert($0) } }
+            catch { Toast.show("Couldn't add this recording to your library", systemImage: "exclamationmark.triangle"); return }
+            self.lastSavedRecord = record
             // Narration → text → brain, in the background. The recording is
             // useful the moment it saves; the transcript catches up.
             self.transcribeAndSync(record)

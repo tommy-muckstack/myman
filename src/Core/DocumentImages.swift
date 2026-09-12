@@ -18,7 +18,7 @@ struct DocumentAssets {
         guard target.hasPrefix("../assets/") else { return nil }
         let parts = target.dropFirst("../assets/".count).split(separator: "/").map(String.init)
         guard parts.count == 2, parts.allSatisfy(validComponent) else { return nil }
-        let url = root.appendingPathComponent(parts[0]).appendingPathComponent(parts[1])
+        let url = root.resolvingSymlinksInPath().appendingPathComponent(parts[0]).appendingPathComponent(parts[1])
         guard url.resolvingSymlinksInPath().path.hasPrefix(root.resolvingSymlinksInPath().path + "/") else { return nil }
         return url
     }

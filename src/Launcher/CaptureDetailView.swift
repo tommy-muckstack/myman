@@ -39,7 +39,7 @@ struct CaptureRelatedSection: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(themes) { theme in
                     Button { CaptureThemeWindow.shared.open(theme) } label: {
-                        Label("\(theme.title) · \(theme.count) items", systemImage: "square.stack")
+                        Label { Text("\(theme.title) · \(theme.count) items") } icon: { IconView(icon: .themes) }
                     }.buttonStyle(.plain).clickable().foregroundStyle(MM.Colors.accent)
                 }
                 ForEach(related) { relation in
@@ -52,7 +52,7 @@ struct CaptureRelatedSection: View {
                         }
                     }.buttonStyle(.plain).clickable()
                 }
-                if themes.isEmpty && related.isEmpty { Text("No related captures yet.").foregroundStyle(MM.Colors.textTertiary) }
+                if themes.isEmpty && related.isEmpty { UtilityEmptyState(icon: .related, title: "Connections take shape", message: "Related captures will show up here.", compact: true) }
             }.padding(.top, 8)
         }
         .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary)
@@ -97,6 +97,7 @@ struct ThemeTimelineView: View {
                                 Button("Remove from theme") { CaptureActions.perform { try ThemeStore.assign(item.id, to: theme.id, remove: true) } }
                             }
                     }
+                    if items.isEmpty { UtilityEmptyState(icon: .themes, title: "A little room to grow", message: "Captures in this theme will appear here.").frame(minHeight: 300) }
                     if items.count == limit { Button("Show more") { limit += 60 }.clickable() }
                 }
             }
@@ -191,6 +192,11 @@ struct CaptureDetailView: View {
                         }
                     }.font(MM.Fonts.secondary).padding(8).frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(minWidth: 230, idealWidth: 300)
+                    .overlay {
+                        if item.kind == "screenshot", lines.isEmpty, item.body.isEmpty {
+                            UtilityEmptyState(icon: .screenshot, title: "A picture can be enough", message: "No readable text was found in this capture.", compact: true)
+                        }
+                    }
             }
             CaptureRelatedSection(itemID: item.id, database: database)
         }.padding(MM.Layout.paddingLarge).background(MM.Colors.background).foregroundStyle(MM.Colors.textPrimary)
