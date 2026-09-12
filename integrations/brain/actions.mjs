@@ -7,7 +7,7 @@ import catalog from './actions.json' with { type: 'json' };
 import { BrainError } from './brain.mjs';
 export { catalog };
 
-export async function request(payload, { socketPath = `/tmp/myman-${process.getuid()}/control.sock`, timeout = 15000 } = {}) {
+export async function request(payload, { socketPath = process.env.MYMAN_AGENT_SOCKET ?? `/tmp/myman-${process.getuid()}/control.sock`, timeout = 15000 } = {}) {
   let folder, socket;
   try { [folder, socket] = await Promise.all([lstat(path.dirname(socketPath)), lstat(socketPath)]); }
   catch { throw new BrainError('APP_NOT_RUNNING', 'Open the updated My Man app, then retry. This command requires its local action bridge.'); }

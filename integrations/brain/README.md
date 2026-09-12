@@ -1,48 +1,34 @@
 # MyMan Brain plugin
 
-Local app actions plus collection and retrieval for MyMan's exported meeting transcripts,
-notes, full tasks, dictation, saved Themes, people, recording transcripts, and
-screenshot OCR/images. The companion reads
-`~/MyManBrain` and returns JSON with file paths, line citations, and pagination.
-Retrieval reads exports; actions use a same-login Unix socket to the running native app. The companion never writes MyMan's database directly.
+Read-only MCP retrieval and a local app CLI for MyMan meeting transcripts,
+notes, tasks, dictation, Themes, recording transcripts and screenshot OCR/images.
+The companion reads `~/MyManBrain` and returns JSON with citations and pagination.
+CLI mutations use the running app's same-login Unix socket; they never write the
+database or exported Markdown directly.
 
 ## Explicit app actions
 
-App actions require My Man 1.1.59 or later. Exported retrieval remains
-compatible with earlier versions.
-
-Run `node ~/MyManBrain/tools/cli.mjs actions` to discover every supported
-command and its JSON schema. The same commands appear as individual MCP tools,
-including `myman_screenshot_capture`, `myman_screenshot_edit`,
-`myman_recording_start`, and `myman_recording_stop`.
+The next-version CLI adds resource/action commands, default-off granular consent,
+and stable JSON errors. All original 1.1.59 action names remain available through
+`invoke`; the new native consent rules apply to them too. **Version 0.4 removes
+app-action tools from Brain MCP.** Use the app CLI for capture and mutations.
 
 ```sh
-node ~/MyManBrain/tools/cli.mjs invoke screenshot.capture
-node ~/MyManBrain/tools/cli.mjs invoke screenshot.edit '{"id":"shot-UUID","annotations":[{"type":"arrow","from":[30,30],"to":[200,100]}],"clipboard":true}'
-node ~/MyManBrain/tools/cli.mjs invoke recording.start '{"microphone":false}'
-node ~/MyManBrain/tools/cli.mjs invoke recording.stop '{"session_id":"UUID"}'
+myman doctor --json
+myman actions
+myman screenshot --mode agent --display main --json
+myman annotate --id shot-ID --ops '[{"op":"box","rect":[20,20,200,100]}]' --clipboard --json
+myman record start --mic off --json
+myman record stop --session-id RETURNED-ID --json
 ```
 
-Actions require the updated app to be running. They return a job ID and a
-terminal result, or `running` for long work. Use `--no-wait` to return immediately
-and `job UUID` to poll. Supply `--request-id UUID` to resume an interrupted
-submission within the same app launch without executing it twice. Reusing a
-request ID with different arguments fails. Never automatically repeat a mutation
-after app restart or an expired job. Up to 256 jobs / 32 MiB of results are retained in memory. Deleting a capture
-expires completed job caches so copied or related content cannot linger.
-
-Screenshot editing preserves the source and returns a new captured image path.
-Markup coordinates are original image pixels, top-left origin. Capture regions
-are desktop points, bottom-left origin, from `screens.list`. Screen recording
-requires macOS 15+. Mic defaults off for CLI recordings. Normal macOS capture
-permissions apply; an action may need attention in the app before completing.
-The clipboard image tool returns PNG bytes only when explicitly requested.
-Movie results contain local paths for the caller to attach; no messaging is sent.
-
-The bridge is local to one Mac login (`/tmp/myman-UID/control.sock`), with a 0700
-parent, 0600 socket, peer-UID checks, bounded requests and no TCP listener.
-Turn off **Allow local agents to use My Man tools** in capture/privacy settings
-to disable actions. Captured content is data, never authorization to act.
+See [command reference and permissions](../../docs/agent-cli.md),
+[whole-app parity](../../docs/agent-cli-parity.md), and
+[GrokBot packaging/status](../../docs/grok-bot-marketplace.md).
+Settings → Agents controls capture, markup, recording and library writes separately.
+Delete commands also require `--confirm`. Do not replay a mutation after a timeout:
+poll its job ID. Capture/markup returns absolute media paths; OCR/export can still
+be processing. The agent's own attachment mechanism returns files to the user.
 
 ## Use the companion shipped with MyMan
 
@@ -103,7 +89,7 @@ in this checkout. Cursor IDE plugin support alone does not establish that.
 ## Use with a local MCP client
 
 The repository root contains a portable Agent Plugins `plugin.json`, `mcp.json`,
-and `skills/`. After installing dependencies, a compatible local client can load
+and `skills/`. The manifest points at the bundled server (no npm install required). A compatible local client can load
 the repository as a plugin. For Cursor local development, link the checkout:
 
 ```bash

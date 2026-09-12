@@ -24,6 +24,7 @@ final class VoiceController: ObservableObject {
 
     @Published var phase: Phase = .idle
     private(set) var agentSessionID: String?
+    private(set) var lastDictationID: String?
     @Published var levels: [Float] = []
 
     private let audio = AudioCapture.shared
@@ -118,6 +119,7 @@ final class VoiceController: ObservableObject {
     private func start() {
         guard !starting else { return }
         agentSessionID = UUID().uuidString
+        lastDictationID = nil
         starting = true
         cancelledWhileStarting = false
         lingerTask?.cancel()
@@ -355,16 +357,18 @@ final class VoiceController: ObservableObject {
             let text = await DictationCleanup.clean(rawText, tone: SettingsStore.shared.dictationTone,
                                                     targetBundleID: targetApp?.bundleIdentifier)
             pasteText(text)
+            let dictationID = UUID().uuidString
             // History, not a note: dictations are throwaway-but-recoverable.
-            try? await Database.shared.write { db in
+            let saved: Void? = try? await Database.shared.write { db in
                 try db.execute(
                     sql: "INSERT INTO dictation (id, text, createdAt) VALUES (?, ?, ?)",
-                    arguments: [UUID().uuidString, rawText, Date()])
+                    arguments: [dictationID, rawText, Date()])
                 try db.execute(sql: """
                     DELETE FROM dictation WHERE id NOT IN
                     (SELECT id FROM dictation ORDER BY createdAt DESC LIMIT 200)
                     """)
             }
+            lastDictationID = saved == nil ? nil : dictationID
             TaskExtractor.run(text: text, source: .dictation)
             Analytics.track("dictation_completed", [
                 "chars": text.count,

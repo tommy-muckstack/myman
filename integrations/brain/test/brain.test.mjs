@@ -151,7 +151,7 @@ test('arguments reject invalid limits, unknown fields, and attempted root overri
   await assert.rejects(execute(brain, 'constructor'), { code: 'UNKNOWN_TOOL' });
 });
 
-test('CLI returns JSON, uses a root with spaces, and reports errors on stderr', async t => {
+test('CLI returns JSON, uses a root with spaces, and reports JSON errors on stdout', async t => {
   const { brain, root } = await fixture(t);
   const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
   const run = (...args) => spawnSync(process.execPath, [cli, '--root', root, ...args], { encoding: 'utf8' });
@@ -160,11 +160,11 @@ test('CLI returns JSON, uses a root with spaces, and reports errors on stderr', 
   assert.deepEqual(JSON.parse(good.stdout), await execute(brain, 'tasks'));
   assert.equal(good.stderr, '');
   const invalid = run('read', '{invalid');
-  assert.equal(invalid.status, 1);
-  assert.equal(invalid.stdout, '');
-  assert.equal(JSON.parse(invalid.stderr).error.code, 'INVALID_COMMAND');
+  assert.equal(invalid.status, 5);
+  assert.equal(invalid.stderr, '');
+  assert.equal(JSON.parse(invalid.stdout).error.code, 'INVALID_ARGUMENTS');
   const denied = run('read', '{"path":"../secret.md"}');
-  assert.equal(JSON.parse(denied.stderr).error.code, 'INVALID_PATH');
+  assert.equal(JSON.parse(denied.stdout).error.code, 'INVALID_PATH');
 });
 
 test('meeting discovery separates participants from mentions and preserves ambiguous calls', async t => {

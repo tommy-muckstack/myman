@@ -52,6 +52,8 @@ enum BackdropStyle: String, CaseIterable, Identifiable {
 @MainActor
 final class EditorModel: ObservableObject {
     @Published var image: NSImage
+    var annotationColors: [UUID: NSColor] = [:]
+    var annotationFontSizes: [UUID: CGFloat] = [:]
     @Published var annotations: [Annotation] = []
     @Published var backdrop: BackdropStyle = .none
     @Published var customBackdropColor: NSColor {
@@ -409,7 +411,7 @@ final class EditorModel: ObservableObject {
         let scale = CGFloat(cgImage.width) / image.size.width
         let pixelRect = CGRect(
             x: rect.origin.x * scale,
-            y: (image.size.height - rect.maxY) * scale,
+            y: rect.origin.y * scale,
             width: rect.width * scale,
             height: rect.height * scale
         ).intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
@@ -496,6 +498,8 @@ final class EditorModel: ObservableObject {
         }
 
         for annotation in annotations {
+            let color = annotationColors[annotation.id] ?? annotationColor
+            let fontSize = annotationFontSizes[annotation.id] ?? annotationFontSize
             switch annotation {
             case .pixelate(let id, let rect):
                 pixelatePreviews[id]?.draw(in: flip(rect))
@@ -503,7 +507,7 @@ final class EditorModel: ObservableObject {
             case .highlight(_, let rect):
                 ctx.saveGState()
                 ctx.setBlendMode(.multiply)
-                ctx.setFillColor(Self.highlightColor.cgColor)
+                ctx.setFillColor((annotationColors[annotation.id] ?? Self.highlightColor).cgColor)
                 ctx.fill(flip(rect))
                 ctx.restoreGState()
 
@@ -511,25 +515,25 @@ final class EditorModel: ObservableObject {
                 overlayImages[id]?.draw(in: flip(rect))
 
             case .box(_, let rect):
-                ctx.setStrokeColor(annotationColor.cgColor)
+                ctx.setStrokeColor(color.cgColor)
                 ctx.setLineWidth(3)
                 let path = NSBezierPath(roundedRect: flip(rect), xRadius: 3, yRadius: 3)
                 path.lineWidth = 3
-                annotationColor.setStroke()
+                color.setStroke()
                 path.stroke()
 
             case .arrow(_, let from, let to):
-                drawArrow(from: flip(from), to: flip(to), in: ctx)
+                drawArrow(from: flip(from), to: flip(to), in: ctx, color: color)
 
             case .text(_, let string, let origin):
                 let attributes: [NSAttributedString.Key: Any] = [
-                    .font: NSFont(name: "Gellix-SemiBold", size: annotationFontSize)
-                        ?? NSFont.boldSystemFont(ofSize: annotationFontSize),
-                    .foregroundColor: annotationColor,
+                    .font: NSFont(name: "Gellix-SemiBold", size: fontSize)
+                        ?? NSFont.boldSystemFont(ofSize: fontSize),
+                    .foregroundColor: color,
                 ]
                 let flipped = flip(origin)
                 (string as NSString).draw(
-                    at: CGPoint(x: flipped.x, y: flipped.y - annotationFontSize * 1.2),
+                    at: CGPoint(x: flipped.x, y: flipped.y - fontSize * 1.2),
                     withAttributes: attributes
                 )
             }
@@ -539,10 +543,10 @@ final class EditorModel: ObservableObject {
         return NSImage(cgImage: output, size: canvasSize)
     }
 
-    private func drawArrow(from: CGPoint, to: CGPoint, in ctx: CGContext) {
+    private func drawArrow(from: CGPoint, to: CGPoint, in ctx: CGContext, color: NSColor) {
         ctx.saveGState()
-        ctx.setStrokeColor(annotationColor.cgColor)
-        ctx.setFillColor(annotationColor.cgColor)
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setFillColor(color.cgColor)
         ctx.setLineWidth(3)
         ctx.setLineCap(.round)
 

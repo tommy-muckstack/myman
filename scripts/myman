@@ -1,8 +1,23 @@
 #!/bin/bash
-# Installed/exported companion works without npm install; Node.js 22+ required.
+# No npm install needed. Resolve symlinks so ~/.local/bin/myman works too.
 set -euo pipefail
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$script_dir/../src/Resources/BrainCompanion/cli.mjs" ]]; then
-  exec node "$script_dir/../src/Resources/BrainCompanion/cli.mjs" "$@"
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+  script_parent="$(cd -P -- "$(dirname -- "$script_path")" && pwd)"
+  script_path="$(readlink "$script_path")"
+  [[ "$script_path" = /* ]] || script_path="$script_parent/$script_path"
+done
+script_dir="$(cd -P -- "$(dirname -- "$script_path")" && pwd)"
+if ! command -v node >/dev/null 2>&1; then
+  echo '{"ok":false,"error":{"code":"NODE_REQUIRED","message":"Install Node.js 22 or newer on this Mac."}}'
+  exit 6
 fi
-exec node "$HOME/MyManBrain/tools/cli.mjs" "$@"
+if ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' 2>/dev/null; then
+  echo '{"ok":false,"error":{"code":"NODE_REQUIRED","message":"My Man requires Node.js 22 or newer."}}'
+  exit 6
+fi
+for companion in "$script_dir/BrainCompanion/cli.mjs" "$script_dir/MyMan_MyMan.bundle/BrainCompanion/cli.mjs" "$script_dir/MyMan_MyMan.bundle/Contents/Resources/BrainCompanion/cli.mjs" "$script_dir/../src/Resources/BrainCompanion/cli.mjs" "$script_dir/cli.mjs" "$HOME/MyManBrain/tools/cli.mjs"; do
+  if [[ -f "$companion" ]]; then exec node "$companion" "$@"; fi
+done
+echo '{"ok":false,"error":{"code":"COMPANION_MISSING","message":"Open the updated My Man app once to install its bundled CLI."}}'
+exit 6

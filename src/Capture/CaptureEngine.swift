@@ -53,6 +53,21 @@ final class CaptureEngine: ObservableObject {
         Task { await checkAuthorization() }
     }
 
+    func captureWindowForAgent(id: String) async throws -> (NSImage, Double) {
+        guard await authorizeInteractively() else { throw AgentError("PERMISSION_REQUIRED", "Grant My Man Screen Recording access.") }
+        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        guard let window = content.windows.first(where: { String($0.windowID) == id }) else { throw AgentError("NOT_FOUND", "Window is no longer available; run windows list again.") }
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let config = SCStreamConfiguration()
+        let scale = Double(filter.pointPixelScale)
+        config.width = max(1, Int(filter.contentRect.width * scale))
+        config.height = max(1, Int(filter.contentRect.height * scale))
+        config.showsCursor = false
+        config.ignoreShadowsSingleWindow = true
+        let cg = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        return (NSImage(cgImage: cg, size: CGSize(width: cg.width, height: cg.height)), scale)
+    }
+
     /// Passive check — never triggers a system prompt. The preflight gates the
     /// SCShareableContent probe because probing while undetermined shows the
     /// system dialog on its own.

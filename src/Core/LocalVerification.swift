@@ -26,6 +26,12 @@ import GRDB
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            // These fixture-only grants never run in production and only
+            // affect the preview app's preferences, not the installed app.
+            UserDefaults.standard.set(true, forKey: "agentActionsEnabled")
+            for key in AgentConsent.keys.values {
+                UserDefaults.standard.set(ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_AGENT_ACCESS"] == "enabled", forKey: key)
+            }
             MM.Fonts.registerFonts()
             _ = Database.shared
             Brain.bootstrap()

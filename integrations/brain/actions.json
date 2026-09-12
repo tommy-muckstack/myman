@@ -11,7 +11,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "app.open",
@@ -34,7 +35,8 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "screens.list",
@@ -46,7 +48,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "screenshot.capture",
@@ -68,9 +71,24 @@
             },
             "minItems": 4,
             "maxItems": 4,
-            "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+            "description": "[x,y,width,height]. Global AppKit points (bottom-left), or display-local points (top-left) when display is supplied. Explicit coordinates overrides default."
           },
           "clipboard": {
+            "type": "boolean"
+          },
+          "coordinates": {
+            "type": "string",
+            "enum": [
+              "global",
+              "display-local"
+            ]
+          },
+          "window_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "open_editor": {
             "type": "boolean"
           }
         },
@@ -78,11 +96,14 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "capture"
+      ]
     },
     {
       "name": "screenshot.edit",
-      "description": "Export a new annotated screenshot; preserve the source. Coordinates are original image pixels, top-left origin. Crop is applied after annotations.",
+      "description": "Validate and render markup in original image pixels (top-left), saving a new capture with refreshed OCR. The source is preserved. dry_run validates without saving. Per-operation colors and text font_size supported; crop is applied last.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -148,6 +169,15 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 2000
+                },
+                "color": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                },
+                "font_size": {
+                  "type": "number",
+                  "minimum": 6,
+                  "maximum": 300
                 }
               },
               "required": [
@@ -192,6 +222,12 @@
           "background_color": {
             "type": "string",
             "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "open_editor": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -200,7 +236,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "markup"
+      ]
     },
     {
       "name": "screenshot.ocr",
@@ -220,7 +259,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "clipboard.read",
@@ -242,7 +282,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "clipboard.write",
@@ -258,13 +299,23 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 1000
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image"
+            ]
           }
         },
         "required": [],
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "recording.start",
@@ -286,9 +337,22 @@
             },
             "minItems": 4,
             "maxItems": 4,
-            "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+            "description": "[x,y,width,height]. Global AppKit points (bottom-left), or display-local points (top-left) when display is supplied. Explicit coordinates overrides default."
           },
           "microphone": {
+            "type": "boolean"
+          },
+          "coordinates": {
+            "type": "string",
+            "enum": [
+              "global",
+              "display-local"
+            ]
+          },
+          "system_audio": {
+            "type": "boolean"
+          },
+          "webcam": {
             "type": "boolean"
           }
         },
@@ -296,7 +360,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
     },
     {
       "name": "recording.stop",
@@ -316,7 +383,8 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "recording.microphone",
@@ -340,7 +408,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
     },
     {
       "name": "meeting.start",
@@ -358,7 +429,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
     },
     {
       "name": "meeting.stop",
@@ -378,7 +452,8 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "meeting.rename",
@@ -404,7 +479,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
     },
     {
       "name": "meeting.discard",
@@ -424,7 +502,8 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": true
+      "destructive": true,
+      "permissions": []
     },
     {
       "name": "meeting.notes",
@@ -444,7 +523,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
     },
     {
       "name": "dictation.start",
@@ -456,7 +538,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
     },
     {
       "name": "dictation.stop",
@@ -476,7 +561,8 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "dictation.cancel",
@@ -496,7 +582,8 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": true
+      "destructive": true,
+      "permissions": []
     },
     {
       "name": "note.create",
@@ -508,6 +595,11 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 500000
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
           }
         },
         "required": [
@@ -516,7 +608,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "note.update",
@@ -547,7 +642,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "item.read",
@@ -567,7 +665,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "item.open",
@@ -587,7 +686,8 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "item.rename",
@@ -613,7 +713,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "item.pin",
@@ -637,7 +740,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "item.exclude",
@@ -661,7 +767,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "item.delete",
@@ -673,6 +782,9 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 1000
+          },
+          "confirm": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -681,7 +793,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": true
+      "destructive": true,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "item.related",
@@ -701,7 +816,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "theme.rename",
@@ -727,7 +843,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "theme.pin",
@@ -751,7 +870,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "theme.dismiss",
@@ -771,7 +893,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": true
+      "destructive": true,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "theme.assign",
@@ -800,7 +925,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "theme.merge",
@@ -826,7 +954,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "task.create",
@@ -855,7 +986,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "task.update",
@@ -895,7 +1029,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "task.delete",
@@ -907,6 +1044,9 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 1000
+          },
+          "confirm": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -915,7 +1055,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": true
+      "destructive": true,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "font.open",
@@ -935,7 +1078,8 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "screenshot.import",
@@ -955,7 +1099,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "markup"
+      ]
     },
     {
       "name": "screenshot.image",
@@ -975,7 +1122,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "screenshot.remove_background",
@@ -998,7 +1146,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "markup"
+      ]
     },
     {
       "name": "font.create",
@@ -1038,7 +1189,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "markup"
+      ]
     },
     {
       "name": "font.file",
@@ -1058,7 +1212,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "history.clear",
@@ -1076,7 +1231,10 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": true
+      "destructive": true,
+      "permissions": [
+        "library"
+      ]
     },
     {
       "name": "settings.read",
@@ -1088,7 +1246,8 @@
         "additionalProperties": false
       },
       "readOnly": true,
-      "destructive": false
+      "destructive": false,
+      "permissions": []
     },
     {
       "name": "settings.update",
@@ -1114,7 +1273,286 @@
         "additionalProperties": false
       },
       "readOnly": false,
-      "destructive": false
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "app.doctor",
+      "description": "Passive OS permission, local agent consent, and Brain setup diagnostics.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "windows.list",
+      "description": "List currently shareable windows by app, title and window ID. Requires agent capture consent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "capture"
+      ]
+    },
+    {
+      "name": "recording.cancel",
+      "description": "Discard the active recording without saving a library item. Requires its session ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "note.append",
+      "description": "Atomically append Markdown to an existing note, preserving its title. Optional revision check.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500000
+          },
+          "expected_updated_at": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "screenshot.capture_markup",
+      "description": "Capture then annotate through the existing editor and save only the finished image. Requires capture and markup consent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "display": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height]. Global AppKit points (bottom-left), or display-local points (top-left) when display is supplied. Explicit coordinates overrides default."
+          },
+          "clipboard": {
+            "type": "boolean"
+          },
+          "coordinates": {
+            "type": "string",
+            "enum": [
+              "global",
+              "display-local"
+            ]
+          },
+          "window_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "open_editor": {
+            "type": "boolean"
+          },
+          "annotations": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "arrow",
+                    "box",
+                    "highlight",
+                    "text",
+                    "pixelate",
+                    "image"
+                  ]
+                },
+                "rect": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": -100000,
+                    "maximum": 100000
+                  },
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+                },
+                "from": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "color": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                },
+                "font_size": {
+                  "type": "number",
+                  "minimum": 6,
+                  "maximum": 300
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "crop": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height]; desktop points bottom-left for capture, image pixels top-left for markup."
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "background": {
+            "type": "string",
+            "enum": [
+              "none",
+              "dusk",
+              "ocean",
+              "meadow",
+              "slate"
+            ]
+          },
+          "corner_radius": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 300
+          },
+          "background_color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "capture",
+        "markup"
+      ]
+    },
+    {
+      "name": "meeting.config.read",
+      "description": "Read the existing auto-record-on-meeting-detection preference. No call joining.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "meeting.config.update",
+      "description": "Change the existing auto-record-on-meeting-detection preference. Requires recording consent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "auto_record_meetings": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "auto_record_meetings"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
     }
   ]
 }

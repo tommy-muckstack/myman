@@ -22,12 +22,9 @@ test('official MCP client initializes, discovers tools, reads fixtures, and rece
   t.after(() => client.close());
   await client.connect(transport);
   const { tools } = await client.listTools();
-  assert.ok(tools.length > 40);
-  assert.ok(tools.filter(tool => tool.name.startsWith('myman_brain_')).every(tool => tool.annotations.readOnlyHint && !tool.annotations.destructiveHint));
-  assert.equal(tools.find(tool => tool.name === 'myman_item_delete').annotations.destructiveHint, true);
-  assert.equal(tools.find(tool => tool.name === 'myman_screenshot_capture').annotations.readOnlyHint, false);
-  const actions = await client.callTool({ name: 'myman_actions', arguments: {} });
-  assert.ok(JSON.parse(actions.content[0].text).actions.some(action => action.name === 'recording.stop'));
+  assert.equal(tools.length, 10);
+  assert.ok(tools.every(tool => tool.name.startsWith('myman_brain_') && tool.annotations.readOnlyHint && !tool.annotations.destructiveHint));
+  assert.ok(!tools.some(tool => /screenshot_capture|item_delete|myman_actions/.test(tool.name)));
   const search = await client.callTool({ name: 'myman_brain_search', arguments: { query: 'proposal' } });
   assert.ok(!search.isError, JSON.stringify(search));
   const found = JSON.parse(search.content[0].text).results[0];

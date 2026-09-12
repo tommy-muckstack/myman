@@ -3,6 +3,9 @@ import AVFoundation
 import GRDB
 import ImageIO
 import CoreFoundation
+import ScreenCaptureKit
+import ApplicationServices
+import EventKit
 
 /// All mutations run on the main actor through existing stores/controllers.
 /// Request IDs are idempotency keys for this app launch; never automatically
@@ -36,7 +39,6 @@ final class AgentActions {
     }
     func receive(_ request: [String: Any]) -> [String: Any] {
         do {
-            guard UserDefaults.standard.object(forKey: "agentActionsEnabled") as? Bool ?? true else { throw AgentError("DISABLED", "Agent actions are disabled in My Man settings.") }
             guard let method = request["method"] as? String else { throw AgentError("INVALID_REQUEST", "A method is required.") }
             if method == "actions" { return ["ok": true, "launch_id": launchID, "result": Self.catalog] }
             guard let id = request["id"] as? String, UUID(uuidString: id) != nil else { throw AgentError("INVALID_REQUEST", "A UUID request/job id is required.") }
@@ -54,6 +56,7 @@ final class AgentActions {
                 guard previous == fingerprint else { throw AgentError("ID_CONFLICT", "This request id was used with different arguments.") }
                 return ["ok": true, "launch_id": launchID, "job": jobs[id]!]
             }
+            try AgentConsent.validate(action, args: args)
             guard inFlight < 8 else { throw AgentError("BUSY", "Too many active agent jobs; wait for an existing job.") }
             // Retain the most recent 256 terminal results. Never evict running work.
             if order.count >= 256, let index = order.firstIndex(where: { jobs[$0]?["state"] as? String != "running" }) {
@@ -65,6 +68,7 @@ final class AgentActions {
             Task { @MainActor in
                 defer { inFlight -= 1; trimResults(keeping: id) }
                 do {
+                    try AgentConsent.validate(action, args: args)
                     let result = try await execute(action, args)
                     guard revision == contentRevision || ["item.delete", "history.clear"].contains(action) else { throw AgentError("CONTENT_CHANGED", "Captured content was deleted while this job ran. Inspect existing items; do not replay the action automatically.") }
                     jobs[id] = ["id": id, "action": action, "state": "succeeded", "result": result]
@@ -102,15 +106,33 @@ final class AgentActions {
         return (item, try AgentImages.load(URL(fileURLWithPath: item.sourcePath)))
     }
     private func desktopRegion(_ args: [String: Any]) throws -> CGRect {
+        let screens = NSScreen.screens
+        let selected: NSScreen?
+        if let display = args["display"] as? String {
+            if display.hasPrefix("id:") { selected = screens.first { String(($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0) == String(display.dropFirst(3)) } }
+            else if display == "main" { selected = screens.first }
+            else if let index = Int(display), screens.indices.contains(index) { selected = screens[index] }
+            else { selected = screens.first { String(($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0) == display } }
+        } else { selected = screens.first }
+        guard let screen = selected else { throw AgentError("NOT_FOUND", "Display not found; use screens list.") }
         if let values = args["region"] as? [Double] {
-            guard args["display"] == nil else { throw AgentError("INVALID_ARGUMENTS", "Choose display or region, not both.") }
             let rect = try AgentImages.rect(values)
-            guard NSScreen.screens.contains(where: { $0.frame.contains(rect) }) else { throw AgentError("INVALID_ARGUMENTS", "Region must fit inside one display.") }; return rect
+            let local = args["coordinates"] as? String == "display-local" || (args["coordinates"] == nil && args["display"] != nil)
+            let global = local ? CGRect(x: screen.frame.minX + rect.minX, y: screen.frame.maxY - rect.maxY, width: rect.width, height: rect.height) : rect
+            guard (args["display"] != nil ? [screen] : screens).contains(where: { $0.frame.contains(global) }) else { throw AgentError("INVALID_ARGUMENTS", "Region must fit inside the selected display.") }
+            return global
         }
-        let screen: NSScreen?
-        if let id = args["display"] as? String { screen = NSScreen.screens.first { String(($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0) == id } }
-        else { screen = NSScreen.screens.first }
-        guard let screen else { throw AgentError("NOT_FOUND", "Display not found; use screens.list.") }; return screen.frame
+        return screen.frame
+    }
+    private func capturedImage(_ args: [String: Any]) async throws -> (NSImage, CGRect?, Double, String?) {
+        if let id = args["window_id"] as? String {
+            guard args["display"] == nil, args["region"] == nil, args["coordinates"] == nil else { throw AgentError("INVALID_ARGUMENTS", "Choose window-id or display/region.") }
+            let (image, scale) = try await CaptureEngine.shared.captureWindowForAgent(id: id)
+            return (image, nil, scale, id)
+        }
+        let region = try desktopRegion(args)
+        let (image, scale) = try await capture.imageForAgent(region: region)
+        return (image, region, scale, nil)
     }
     private func wait(_ seconds: Double = 30, until predicate: () -> Bool) async throws {
         let end = Date().addingTimeInterval(seconds)
@@ -131,6 +153,12 @@ final class AgentActions {
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
         defer { if isAudio { audioCommand = false } }
         switch action {
+        case "app.doctor":
+            return ["permissions": ["screen_recording": CGPreflightScreenCaptureAccess(), "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, "camera": AVCaptureDevice.authorizationStatus(for: .video) == .authorized, "accessibility": AXIsProcessTrusted(), "calendar": EKEventStore.authorizationStatus(for: .event) == .fullAccess, "input_monitoring": "not_required"], "agents": AgentConsent.status(), "brain_root": Brain.root.path, "brain_available": FileManager.default.fileExists(atPath: Brain.root.appendingPathComponent("catalog.json").path), "screen_recording_supported": ScreenRecorder.isSupported, "pointer_control": "not_supported"] as [String: Any]
+        case "windows.list":
+            guard CGPreflightScreenCaptureAccess() else { throw AgentError("PERMISSION_REQUIRED", "Grant My Man Screen Recording permission first.") }
+            let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            return content.windows.map { ["id": String($0.windowID), "app": $0.owningApplication?.applicationName ?? "", "title": $0.title ?? "", "frame": [$0.frame.minX, $0.frame.minY, $0.frame.width, $0.frame.height], "coordinates": "quartz-global-top-left"] as [String: Any] }
         case "app.status":
             return ["launch_id": launchID, "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
                     "screen_recording": ["active": ScreenRecorder.shared.isRecording, "busy": ScreenRecorder.shared.isBusy, "session_id": ScreenRecorder.shared.agentSessionID as Any? ?? NSNull()],
@@ -139,41 +167,30 @@ final class AgentActions {
                     "permissions": ["screen_recording": CGPreflightScreenCaptureAccess(), "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized],
                     "note_processing": MeetingNotesService.shared.stages] as [String: Any]
         case "app.open": openSurface(args["surface"] as! String); return ["opened": true]
-        case "screens.list": return NSScreen.screens.map { screen in ["id": String((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0), "name": screen.localizedName, "frame": [screen.frame.minX, screen.frame.minY, screen.frame.width, screen.frame.height], "scale": screen.backingScaleFactor] as [String: Any] }
-        case "screenshot.capture": return try await capture.captureForAgent(region: desktopRegion(args), clipboard: args["clipboard"] as? Bool ?? false)
+        case "screens.list": return NSScreen.screens.map { screen in ["id": String((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0), "selector": "id:" + String((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0), "name": screen.localizedName, "frame": [screen.frame.minX, screen.frame.minY, screen.frame.width, screen.frame.height], "scale": screen.backingScaleFactor] as [String: Any] }
+        case "screenshot.capture", "screenshot.capture_markup":
+            let date = Date(), meetingID = capture.meetingIDProvider()
+            let (image, region, scale, windowID) = try await capturedImage(args)
+            let output = action == "screenshot.capture_markup" ? try annotationModel(image: image, path: "", args: args).renderFinal() : image
+            var result = try capture.saveAgentImage(output, capturedAt: date, meetingID: meetingID, clipboard: args["clipboard"] as? Bool ?? false)
+            result["scale"] = scale
+            result["window_id"] = windowID
+            if let region {
+                result["region"] = [region.minX, region.minY, region.width, region.height]
+                result["display"] = NSScreen.screens.first(where: { $0.frame.contains(region) }).flatMap { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue }
+                await capture.saveAgentContext(id: result["id"] as! String, region: region, meetingID: meetingID)
+            }
+            if args["open_editor"] as? Bool == true { capture.openInEditor(fileURL: URL(fileURLWithPath: result["path"] as! String)) }
+            return result
         case "screenshot.edit":
             let (source, image) = try shot(args)
-            let size = AgentImages.size(image); image.size = size
-            let model = EditorModel(image: image, fileURL: URL(fileURLWithPath: source.sourcePath))
-            if let color = args["color"] as? String { model.annotationColor = AgentImages.color(color) }
-            for annotation in args["annotations"] as? [[String: Any]] ?? [] {
-                let id = UUID(), type = annotation["type"] as! String
-                if type == "arrow" {
-                    guard let start = annotation["from"] as? [Double], let end = annotation["to"] as? [Double] else { throw AgentError("INVALID_ARGUMENTS", "Arrows require from and to points.") }
-                    let from = CGPoint(x: start[0], y: start[1]), to = CGPoint(x: end[0], y: end[1])
-                    guard CGRect(origin: .zero, size: size).contains(from), CGRect(origin: .zero, size: size).contains(to) else { throw AgentError("INVALID_ARGUMENTS", "Arrow lies outside the image.") }
-                    model.add(.arrow(id: id, from: from, to: to))
-                } else {
-                    guard let values = annotation["rect"] as? [Double] else { throw AgentError("INVALID_ARGUMENTS", "This annotation requires rect.") }
-                    let rect = try AgentImages.rect(values)
-                    guard CGRect(origin: .zero, size: size).contains(rect) else { throw AgentError("INVALID_ARGUMENTS", "Annotation lies outside the image.") }
-                    switch type {
-                    case "image":
-                        guard let path = annotation["path"] as? String, path.hasPrefix("/") else { throw AgentError("INVALID_ARGUMENTS", "Overlay requires an absolute image path.") }
-                        model.overlayImages[id] = try AgentImages.load(URL(fileURLWithPath: path)); model.add(.image(id: id, rect: rect))
-                    case "box": model.add(.box(id: id, rect: rect))
-                    case "highlight": model.add(.highlight(id: id, rect: rect))
-                    case "pixelate": model.add(.pixelate(id: id, rect: rect))
-                    case "text": guard let text = annotation["text"] as? String else { throw AgentError("INVALID_ARGUMENTS", "Text annotation requires text.") }; model.add(.text(id: id, string: text, origin: rect.origin))
-                    default: throw AgentError("INVALID_ARGUMENTS", "Unknown annotation.")
-                    }
-                }
-            }
-            if let crop = args["crop"] as? [Double] { let rect = try AgentImages.rect(crop); guard CGRect(origin: .zero, size: size).contains(rect), rect.width > 10, rect.height > 10 else { throw AgentError("INVALID_ARGUMENTS", "Crop must fit inside the image and exceed 10 pixels.") }; model.applyCrop(rect) }
-            if let background = args["background"] as? String { model.backdrop = BackdropStyle.allCases.first { $0.rawValue.lowercased() == background } ?? .none }
-            if let color = args["background_color"] as? String { model.customBackdropColor = AgentImages.color(color); model.backdrop = .custom }
-            model.cornerRadius = args["corner_radius"] as? Double ?? 0
-            return try capture.saveAgentImage(model.renderFinal(), clipboard: args["clipboard"] as? Bool ?? false)
+            let model = try annotationModel(image: image, path: source.sourcePath, args: args)
+            let count = (args["annotations"] as? [Any])?.count ?? 0
+            if args["dry_run"] as? Bool == true { return ["valid": true, "source_id": source.id, "annotation_count": count] as [String: Any] }
+            var result = try capture.saveAgentImage(model.renderFinal(), clipboard: args["clipboard"] as? Bool ?? false)
+            result["source_id"] = source.id; result["annotation_count"] = count
+            if args["open_editor"] as? Bool == true { capture.openInEditor(fileURL: URL(fileURLWithPath: result["path"] as! String)) }
+            return result
         case "screenshot.import":
             let path = args["path"] as! String
             guard path.hasPrefix("/") else { throw AgentError("INVALID_ARGUMENTS", "Use an absolute image path.") }
@@ -200,7 +217,8 @@ final class AgentActions {
             if let text = args["text"] as? String { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
             else {
                 let source = try item(args)
-                if source.kind == "screenshot" { let png = try AgentImages.png(AgentImages.load(URL(fileURLWithPath: source.sourcePath))); NSPasteboard.general.clearContents(); NSPasteboard.general.setData(png, forType: .png) }
+                if args["format"] as? String == "text" { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(source.body, forType: .string) }
+                else if source.kind == "screenshot" { let png = try AgentImages.png(AgentImages.load(URL(fileURLWithPath: source.sourcePath))); NSPasteboard.general.clearContents(); NSPasteboard.general.setData(png, forType: .png) }
                 else if source.kind == "recording" { let url = URL(fileURLWithPath: source.sourcePath); guard FileManager.default.fileExists(atPath: url.path) else { throw AgentError("NOT_FOUND", "Recording file is missing.") }; NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([url as NSURL]) }
                 else { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(source.body, forType: .string) }
             }; return ["copied": true, "change_count": NSPasteboard.general.changeCount]
@@ -208,16 +226,19 @@ final class AgentActions {
             try audioIdle()
             guard #available(macOS 15.0, *) else { throw AgentError("UNSUPPORTED", "Screen recording requires macOS 15 or later.") }
             let recorder = ScreenRecorder.shared
-            try await recorder.startForAgent(region: desktopRegion(args), microphone: args["microphone"] as? Bool ?? false)
+            try await recorder.startForAgent(region: desktopRegion(args), microphone: args["microphone"] as? Bool ?? false, systemAudio: args["system_audio"] as? Bool ?? true, webcam: args["webcam"] as? Bool ?? false)
             try await wait { recorder.isRecording || !recorder.isBusy }
             guard let id = recorder.agentSessionID, recorder.isRecording else { throw AgentError("CAPTURE_FAILED", "Screen recording did not start.") }
             return ["session_id": id, "state": "recording"]
+        case "recording.cancel":
+            let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
+            try await recorder.cancelForAgent(); return ["cancelled": true]
         case "recording.stop":
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
             let path = recorder.outputURL?.path; recorder.stop()
             try await wait(180) { !recorder.isBusy }
             guard let record = recorder.lastSavedRecord, record.path == path else { throw AgentError("SAVE_FAILED", "Recording could not be saved.") }
-            return ["id": "recording-" + record.id, "path": record.path, "duration": record.duration, "transcript_status": "processing"] as [String: Any]
+            return ["id": "recording-" + record.id, "path": record.path, "duration": record.duration, "transcript_status": "pending", "brain_path": "recordings/\(Brain.day(record.createdAt))-\(record.id.prefix(8)).md"] as [String: Any]
         case "recording.microphone":
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
             let enabled = args["enabled"] as! Bool
@@ -226,6 +247,10 @@ final class AgentActions {
                 try await wait { recorder.microphoneEnabled == enabled }
             }
             return ["enabled": recorder.microphoneEnabled]
+        case "meeting.config.read": return ["auto_record_meetings": SettingsStore.shared.autoRecordMeetings]
+        case "meeting.config.update":
+            SettingsStore.shared.autoRecordMeetings = args["auto_record_meetings"] as! Bool
+            return ["auto_record_meetings": SettingsStore.shared.autoRecordMeetings]
         case "meeting.start":
             try audioIdle(); try await meetings.startForAgent(title: args["title"] as? String)
             return ["session_id": meetings.activeCaptureMeetingID!]
@@ -245,13 +270,19 @@ final class AgentActions {
         case "dictation.stop":
             try session(args, voice.agentSessionID); voice.toggle()
             try await wait(300) { if case .done = voice.phase { return true }; return voice.phase == .idle }
-            guard case .done(let text) = voice.phase else { throw AgentError("TRANSCRIPTION_FAILED", "No dictation result.") }; return ["text": text]
+            guard case .done(let text) = voice.phase else { throw AgentError("TRANSCRIPTION_FAILED", "No dictation result.") }; return ["text": text, "id": voice.lastDictationID.map { "dictation-" + $0 } as Any? ?? NSNull()]
         case "dictation.cancel": try session(args, voice.agentSessionID); voice.dismiss(); return ["cancelled": true]
         case "note.create":
-            let note = Note(body: args["body"] as! String)
+            var created = Note(body: args["body"] as! String)
+            if let title = args["title"] as? String { created.title = title }
+            let note = created
             try await Database.shared.write { try note.insert($0) }
             Brain.syncNote(id: note.id, title: note.title, body: note.body, createdAt: note.createdAt, updatedAt: note.updatedAt)
-            return ["id": "note-" + note.id, "updated_at": Self.date(note.updatedAt)]
+            return ["id": "note-" + note.id, "updated_at": Self.date(note.updatedAt), "brain_path": Brain.noteFilePath(id: note.id, createdAt: note.createdAt)]
+        case "note.append":
+            let source = try item(args)
+            try AgentNoteUpdate.append(source: source, body: args["body"] as! String, expected: args["expected_updated_at"] as? String)
+            return try await execute("item.read", ["id": source.id])
         case "note.update":
             let source = try item(args)
             try AgentNoteUpdate.replace(source: source, body: args["body"] as! String, expected: args["expected_updated_at"] as! String)
@@ -300,7 +331,7 @@ final class AgentActions {
             guard args["confirm"] as? Bool == true else { throw AgentError("CONFIRMATION_REQUIRED", "Set confirm=true only for an explicit request to clear all history.") }
             try CaptureLifecycle.clearHistory(); return ["cleared": true]
         case "settings.read":
-            return ["agent_actions": UserDefaults.standard.object(forKey: "agentActionsEnabled") as? Bool ?? true, "automatic_themes": UserDefaults.standard.object(forKey: "automaticCaptureThemes") as? Bool ?? true, "semantic_search": UserDefaults.standard.object(forKey: "captureSemanticSearch") as? Bool ?? true, "window_metadata": UserDefaults.standard.bool(forKey: "captureWindowMetadata"), "excluded_apps": UserDefaults.standard.string(forKey: "captureMetadataExcludedApps") ?? ""] as [String: Any]
+            return ["agents": AgentConsent.status(), "agent_actions": UserDefaults.standard.object(forKey: "agentActionsEnabled") as? Bool ?? true, "automatic_themes": UserDefaults.standard.object(forKey: "automaticCaptureThemes") as? Bool ?? true, "semantic_search": UserDefaults.standard.object(forKey: "captureSemanticSearch") as? Bool ?? true, "window_metadata": UserDefaults.standard.bool(forKey: "captureWindowMetadata"), "excluded_apps": UserDefaults.standard.string(forKey: "captureMetadataExcludedApps") ?? ""] as [String: Any]
         case "settings.update":
             for (key, preference) in ["automatic_themes": "automaticCaptureThemes", "semantic_search": "captureSemanticSearch", "window_metadata": "captureWindowMetadata", "excluded_apps": "captureMetadataExcludedApps"] { if let value = args[key] { UserDefaults.standard.set(value, forKey: preference) } }
             if args["window_metadata"] as? Bool == false { try await Database.shared.write { try ScreenshotContext.clearWindowDetails(in: $0) } }
@@ -323,6 +354,41 @@ final class AgentActions {
             return ["opened": source.id]
         default: throw AgentError("UNKNOWN_ACTION", "Action not implemented.")
         }
+    }
+    private func annotationModel(image: NSImage, path: String, args: [String: Any]) throws -> EditorModel {
+            let size = AgentImages.size(image); image.size = size
+            let model = EditorModel(image: image, fileURL: URL(fileURLWithPath: path))
+            if let color = args["color"] as? String { model.annotationColor = AgentImages.color(color) }
+            for annotation in args["annotations"] as? [[String: Any]] ?? [] {
+                let id = UUID(), type = annotation["type"] as! String
+                if let color = annotation["color"] as? String { model.annotationColors[id] = AgentImages.color(color) }
+                if let font = annotation["font_size"] as? Double { model.annotationFontSizes[id] = font }
+                if type == "arrow" {
+                    guard let start = annotation["from"] as? [Double], let end = annotation["to"] as? [Double] else { throw AgentError("INVALID_ARGUMENTS", "Arrows require from and to points.") }
+                    let from = CGPoint(x: start[0], y: start[1]), to = CGPoint(x: end[0], y: end[1])
+                    guard CGRect(origin: .zero, size: size).contains(from), CGRect(origin: .zero, size: size).contains(to) else { throw AgentError("INVALID_ARGUMENTS", "Arrow lies outside the image.") }
+                    model.add(.arrow(id: id, from: from, to: to))
+                } else {
+                    guard let values = annotation["rect"] as? [Double] else { throw AgentError("INVALID_ARGUMENTS", "This annotation requires rect.") }
+                    let rect = try AgentImages.rect(values)
+                    guard CGRect(origin: .zero, size: size).contains(rect) else { throw AgentError("INVALID_ARGUMENTS", "Annotation lies outside the image.") }
+                    switch type {
+                    case "image":
+                        guard let path = annotation["path"] as? String, path.hasPrefix("/") else { throw AgentError("INVALID_ARGUMENTS", "Overlay requires an absolute image path.") }
+                        model.overlayImages[id] = try AgentImages.load(URL(fileURLWithPath: path)); model.add(.image(id: id, rect: rect))
+                    case "box": model.add(.box(id: id, rect: rect))
+                    case "highlight": model.add(.highlight(id: id, rect: rect))
+                    case "pixelate": model.add(.pixelate(id: id, rect: rect))
+                    case "text": guard let text = annotation["text"] as? String else { throw AgentError("INVALID_ARGUMENTS", "Text annotation requires text.") }; model.add(.text(id: id, string: text, origin: rect.origin))
+                    default: throw AgentError("INVALID_ARGUMENTS", "Unknown annotation.")
+                    }
+                }
+            }
+            if let crop = args["crop"] as? [Double] { let rect = try AgentImages.rect(crop); guard CGRect(origin: .zero, size: size).contains(rect), rect.width > 10, rect.height > 10 else { throw AgentError("INVALID_ARGUMENTS", "Crop must fit inside the image and exceed 10 pixels.") }; model.applyCrop(rect) }
+            if let background = args["background"] as? String { model.backdrop = BackdropStyle.allCases.first { $0.rawValue.lowercased() == background } ?? .none }
+            if let color = args["background_color"] as? String { model.customBackdropColor = AgentImages.color(color); model.backdrop = .custom }
+            model.cornerRadius = args["corner_radius"] as? Double ?? 0
+            return model
     }
     private var voicePhase: String { switch voice.phase { case .idle: return "idle"; case .recording: return "recording"; case .preparing: return "preparing"; case .transcribing: return "transcribing"; case .done: return "done" } }
     static func date(_ date: Date) -> String { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f.string(from: date) }
@@ -354,6 +420,7 @@ enum AgentSchema {
 
 enum AgentImages {
     static func size(_ image: NSImage) -> CGSize {
+        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) { return CGSize(width: cg.width, height: cg.height) }
         let reps = image.representations.compactMap { $0 as? NSBitmapImageRep }
         if let rep = reps.max(by: { $0.pixelsWide * $0.pixelsHigh < $1.pixelsWide * $1.pixelsHigh }) { return CGSize(width: rep.pixelsWide, height: rep.pixelsHigh) }
         return image.size
@@ -369,7 +436,7 @@ enum AgentImages {
         return NSImage(cgImage: cg, size: CGSize(width: width, height: height))
     }
     static func png(_ image: NSImage) throws -> Data {
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) else { throw AgentError("INVALID_IMAGE", "Cannot encode image.") }; return png
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { throw AgentError("INVALID_IMAGE", "Cannot encode image.") }; return png
     }
     static func rect(_ values: [Double]) throws -> CGRect {
         guard values.count == 4, values.allSatisfy(\.isFinite), values[2] > 0, values[3] > 0 else { throw AgentError("INVALID_ARGUMENTS", "Rectangle requires positive width and height.") }
@@ -379,6 +446,17 @@ enum AgentImages {
 }
 
 @MainActor enum AgentNoteUpdate {
+    static func append(source: CaptureItem, body: String, expected: String?) throws {
+        guard source.kind == "note" else { throw AgentError("INVALID_ARGUMENTS", "Expected a note.") }
+        let note = try Database.shared.write { db -> Note in
+            guard var note = try Note.fetchOne(db, key: source.sourceID) else { throw AgentError("NOT_FOUND", "Note not found.") }
+            if let expected, AgentActions.date(note.updatedAt) != expected { throw AgentError("EDIT_CONFLICT", "Note changed; read it again before appending.") }
+            note.body += (note.body.isEmpty ? "" : "\n\n") + body
+            guard note.body.count <= 500000 else { throw AgentError("TOO_LARGE", "The resulting note exceeds 500,000 characters.") }
+            note.updatedAt = Date(); try note.update(db); return note
+        }
+        Brain.syncNote(id: note.id, title: note.title, body: note.body, createdAt: note.createdAt, updatedAt: note.updatedAt)
+    }
     static func replace(source: CaptureItem, body: String, expected: String) throws {
         guard source.kind == "note" else { throw AgentError("INVALID_ARGUMENTS", "Expected a note.") }
         let note = try Database.shared.write { db -> Note in

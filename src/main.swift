@@ -9,6 +9,7 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     private var statusItem: NSStatusItem?
+    private var agentDefaultsObserver: NSObjectProtocol?
     private let launchedAt = Date()
     private let notesPanel = NotesPanelController()
     private let notesStore = NotesStore()
@@ -359,6 +360,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         menu.addItem(withTitle: "Quit My Man", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = menu
         statusItem = item
+        updateAgentIndicator()
+        agentDefaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateAgentIndicator() }
+        }
+    }
+
+    private func updateAgentIndicator() {
+        let grants = AgentConsent.status()
+        let armed = grants["enabled"] == true && (grants["capture"] == true || grants["recording"] == true)
+        statusItem?.button?.title = armed ? " •" : ""
+        statusItem?.button?.toolTip = armed ? "My Man · agent capture access enabled" : "My Man"
     }
 
     private var hotkeyIDs: [UInt32] = []
