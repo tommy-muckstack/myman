@@ -1,16 +1,8 @@
 #!/bin/bash
-# Drive the installed My Man app from a shell, test runner, or coding agent.
-# Commands open the app if needed and use its local `myman://` URL interface.
+# Installed/exported companion works without npm install; Node.js 22+ required.
 set -euo pipefail
-
-usage() {
-    echo "Usage: myman {open|screenshot|note|dictation|meeting|cancel-meeting|record|settings}" >&2
-    exit 64
-}
-
-case "${1:-}" in
-    open|screenshot|note|dictation|meeting|cancel-meeting|record|settings) ;;
-    *) usage ;;
-esac
-
-open -g "myman://$1"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$script_dir/../src/Resources/BrainCompanion/cli.mjs" ]]; then
+  exec node "$script_dir/../src/Resources/BrainCompanion/cli.mjs" "$@"
+fi
+exec node "$HOME/MyManBrain/tools/cli.mjs" "$@"

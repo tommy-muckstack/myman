@@ -53,6 +53,7 @@ struct RichMarkdownEditor: NSViewRepresentable {
     var firstLineIsTitle = true
     var session: RichEditorSession? = nil
     var placeholder = "Start writing…"
+    var showsEmptyPlaceholder = true
     var documentID = ""
     var assets = DocumentAssets.shared
 
@@ -73,6 +74,7 @@ struct RichMarkdownEditor: NSViewRepresentable {
         if !documentID.isEmpty { textView.documentID = documentID }
         textView.registerForDraggedTypes([.string, .rtf, .rtfd, .fileURL, .png, .tiff])
         textView.placeholder = placeholder
+        textView.showsEmptyPlaceholder = showsEmptyPlaceholder
         textView.setAccessibilityLabel(firstLineIsTitle ? "Note document" : "Meeting notes")
         textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle, assets: assets))
         textView.typingAttributes = textView.baseAttributes(title: firstLineIsTitle && markdown.isEmpty)
@@ -92,6 +94,7 @@ struct RichMarkdownEditor: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = scroll.documentView as? RichNoteTextView else { return }
         session?.textView = textView
+        textView.showsEmptyPlaceholder = showsEmptyPlaceholder
         if context.coordinator.lastMarkdown != markdown {
             let selection = textView.selectedRange()
             textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle, assets: assets))
@@ -125,6 +128,7 @@ final class RichNoteTextView: NSTextView {
     var assets = DocumentAssets.shared
     var imageDropLocation: Int?
     var placeholder = "Start writing…"
+    var showsEmptyPlaceholder = true
     private var formatBar: NSHostingView<FormatBar>?
     private var slashMenu: NSHostingView<BlockPicker>?
     private var slashRange: NSRange?
@@ -179,7 +183,7 @@ final class RichNoteTextView: NSTextView {
             NSColor(MM.Colors.accent).setFill()
             NSRect(x: textContainerInset.width, y: rect.minY, width: max(0, bounds.width - 2 * textContainerInset.width), height: 2).fill()
         }
-        if string.isEmpty {
+        if string.isEmpty && showsEmptyPlaceholder {
             let attrs: [NSAttributedString.Key: Any] = [.font: firstLineIsTitle ? MarkdownRich.titleFont : MarkdownRich.bodyFont(bold: false), .foregroundColor: NSColor.tertiaryLabelColor]
             ((firstLineIsTitle ? "Untitled note" : placeholder) as NSString).draw(at: NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height), withAttributes: attrs)
         }

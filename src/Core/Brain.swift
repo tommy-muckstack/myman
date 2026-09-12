@@ -12,7 +12,8 @@ import CryptoKit
 enum Brain {
     // Home root, tommy-brain style — and unlike ~/Documents, no TCC prompt.
     static var root: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        if let root = VerificationPaths.root { return root.resolvingSymlinksInPath().appendingPathComponent("Brain") }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("MyManBrain", isDirectory: true)
     }
 
@@ -50,13 +51,19 @@ enum Brain {
             - `task-items/` — complete task details and dates, including completed tasks
             - `themes/` — saved MyMan Themes and their source items
             - `catalog.json` — current allowlist, metadata, meeting links, tags, local times, and thumbnail references
-            - `tools/cli.mjs` — bundled, read-only query companion (Node.js 22+; no npm install needed)
+            - `tools/cli.mjs` — bundled query and app-action companion (Node.js 22+; no npm install needed)
             - `tools/server.mjs` — the same tools over local stdio MCP
 
             From this folder, run `node tools/cli.mjs --root "$PWD" screenshots --meeting "Jared demo"`.
             Add `--exclude-tag slide-deck`, `--app Chrome`, `--tag web-app`, or `--unique` as needed.
             For a time range, use `--after 2026-09-01T00:00:00-04:00 --before 2026-09-02T00:00:00-04:00`.
             Run `node tools/cli.mjs --root "$PWD" status` or `--help` to discover other commands.
+            Use `node tools/cli.mjs actions` for all app actions and JSON schemas, then
+            `node tools/cli.mjs invoke screenshot.capture` (updated app must be running).
+            Actions cover captures, markup, clipboard, recordings, meetings, dictation,
+            notes, tasks and Themes. Invoke only what the human requested. Poll job IDs
+            after a timeout; never blindly repeat a mutation. The MCP companion exposes
+            the same actions as individual tools. Image reads share pixels with the agent.
             Ambiguous meeting descriptions return candidates instead of choosing a call silently.
             Screenshots are primary evidence for visual/design reference; inspect thumbnails or originals.
             Tags and sensitivity hints are heuristics, not evidence that reuse is authorized or safe.
@@ -71,6 +78,7 @@ enum Brain {
 
             Canonical, auto-synced record of the user's My Man captures.
             The companion ships here: `node tools/cli.mjs --root "$PWD" --help` (Node.js 22+).
+            Discover explicit app actions with `node tools/cli.mjs actions`. Use `invoke` to capture, edit, record or manage content only when requested. Poll job IDs after timeouts instead of repeating mutations. The updated app must be running.
             Start with `screenshots --meeting "Jared demo" --exclude-tag slide-deck` for visual retrieval.
             `--meeting` accepts a meeting ID, export path, or description; ambiguous matches return candidates.
             Use `image '{"path":"screenshots/returned-file.md","size":"thumbnail"}'` for a compact visual preview.

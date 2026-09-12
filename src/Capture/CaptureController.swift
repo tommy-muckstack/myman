@@ -57,6 +57,40 @@ final class CaptureController: SelectionOverlayDelegate {
         }
     }
 
+    /// Explicit agent capture uses the same save/OCR/context pipeline as the overlay.
+    func captureForAgent(region: CGRect, clipboard: Bool) async throws -> [String: Any] {
+        guard overlay?.isShowing != true else { throw AgentError("BUSY", "Finish the current screenshot selection first.") }
+        guard await CaptureEngine.shared.authorizeInteractively() else { throw AgentError("PERMISSION_REQUIRED", "Grant My Man Screen Recording access in System Settings.") }
+        let date = Date(), meetingID = meetingIDProvider()
+        let frozen = try await CaptureEngine.shared.captureAllDisplaysComposite()
+        guard frozen.combinedFrame.contains(region), let image = frozen.crop(to: region) else { throw AgentError("INVALID_ARGUMENTS", "Region must fit within the captured desktop.") }
+        let result = try saveAgentImage(image, capturedAt: date, meetingID: meetingID, clipboard: clipboard)
+        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        let snapshot = await Task.detached(priority: .utility) { CaptureWindowSnapshot.take() }.value
+        if let window = snapshot.selected(in: region, mainDisplayHeight: mainHeight) {
+            let origin = ScreenshotContext(itemID: result["id"] as! String, timezone: TimeZone.current.identifier, meetingID: meetingID, app: window.app, bundleID: window.bundleID, windowTitle: window.title, url: window.url)
+            try await Database.shared.write { try ScreenshotContext.saveOrigin(origin, in: $0, metadataEnabled: UserDefaults.standard.bool(forKey: "captureWindowMetadata"), excludedApps: UserDefaults.standard.string(forKey: "captureMetadataExcludedApps") ?? "") }
+        }
+        return result
+    }
+
+    func saveAgentImage(_ image: NSImage, capturedAt: Date = Date(), meetingID: String? = nil, clipboard: Bool = false) throws -> [String: Any] {
+        let png = try AgentImages.png(image)
+        let id = UUID().uuidString
+        let url = Self.saveFolder.appendingPathComponent("My Man \(id).png")
+        try FileManager.default.createDirectory(at: Self.saveFolder, withIntermediateDirectories: true)
+        try png.write(to: url, options: .withoutOverwriting)
+        do {
+            try Database.shared.write { db in
+                try Screenshot(id: id, path: url.path, ocrText: "", createdAt: capturedAt).insert(db)
+                try ScreenshotContext.saveOrigin(ScreenshotContext(itemID: "shot-" + id, timezone: TimeZone.current.identifier, meetingID: meetingID), in: db)
+            }
+        } catch { try? FileManager.default.removeItem(at: url); throw error }
+        OCRStore.refresh(image: image, fileURL: url, id: id)
+        if clipboard { NSPasteboard.general.clearContents(); NSPasteboard.general.setData(png, forType: .png) }
+        return ["id": "shot-" + id, "path": url.path, "width": AgentImages.size(image).width, "height": AgentImages.size(image).height, "ocr_status": "processing"]
+    }
+
     /// Open an existing capture (e.g. from launcher search) in the editor.
     func openInEditor(fileURL: URL) {
         guard let image = NSImage(contentsOf: fileURL) else {
@@ -91,36 +125,11 @@ final class CaptureController: SelectionOverlayDelegate {
     // MARK: Save pipeline
 
     private func save(_ image: NSImage, rect: CGRect) {
-        guard let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [.compressionFactor: 1.0])
-        else { return }
-
-        let folder = Self.saveFolder
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        // Fixed format — a localized date once produced "08/5/2026" and the
-        // slashes made every write silently fail.
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        let url = folder.appendingPathComponent("My Man \(formatter.string(from: Date())).png")
-        do {
-            try png.write(to: url)
-        } catch {
-            NSLog("My Man [Capture] save failed: \(error)")
-            Toast.show("Couldn't save the screenshot file", systemImage: "exclamationmark.triangle")
-            return
-        }
-
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setData(png, forType: .png)
-
-        let record = Screenshot(id: UUID().uuidString, path: url.path, ocrText: "", createdAt: capturedAt)
-        var origin = ScreenshotContext(itemID: "shot-" + record.id, timezone: TimeZone.current.identifier, meetingID: capturedMeetingID)
-        try? Database.shared.write { db in
-            try record.insert(db)
-            try ScreenshotContext.saveOrigin(origin, in: db)
-        }
+        let result: [String: Any]
+        do { result = try saveAgentImage(image, capturedAt: capturedAt, meetingID: capturedMeetingID, clipboard: true) }
+        catch { Toast.show("Couldn't save the screenshot file", systemImage: "exclamationmark.triangle"); return }
+        let url = URL(fileURLWithPath: result["path"] as! String)
+        var origin = ScreenshotContext(itemID: result["id"] as! String, timezone: TimeZone.current.identifier, meetingID: capturedMeetingID)
         let windowTask = windowsTask, displayHeight = captureMainDisplayHeight
         windowsTask = nil
         Task {
@@ -135,9 +144,6 @@ final class CaptureController: SelectionOverlayDelegate {
                 }
             }
         }
-
-        // OCR off the critical path; the index catches up seconds later.
-        OCRStore.refresh(image: image, fileURL: url, id: record.id)
 
         Analytics.track("screenshot_captured")
         showThumbnail(image: image, fileURL: url)

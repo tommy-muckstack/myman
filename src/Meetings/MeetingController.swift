@@ -4,6 +4,7 @@ import ScreenCaptureKit
 import EventKit
 import GRDB
 import SwiftUI
+import QuartzCore
 
 struct Meeting: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "meeting"
@@ -77,7 +78,7 @@ final class MeetingController: ObservableObject {
     @Published var phase: Phase = .idle
     /// True from the first permission callback until `phase` is set, which is
     /// no longer the same instant: bringing the mic up awaits CoreAudio.
-    private var isStarting = false
+    private(set) var isStarting = false
     /// Meetings whose audio is still being transcribed in the background.
     /// Transcription never occupies the recorder: stopping a meeting returns
     /// the phase to .idle immediately, so a back-to-back call can start while
@@ -202,7 +203,8 @@ final class MeetingController: ObservableObject {
     }
 
     static var recordingsFolder: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        if let root = VerificationPaths.root { return root.appendingPathComponent("MeetingAudio") }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MyMan/meetings", isDirectory: true)
     }
 
@@ -233,6 +235,18 @@ final class MeetingController: ObservableObject {
         // this" — convert and keep rolling, don't stop.
         case .recording: isProvisional ? keepProvisional() : stop()
         }
+    }
+
+    func startForAgent(title: String?) async throws {
+        guard phase == .idle, !isStarting else { throw AgentError("BUSY", "A meeting is already recording or starting.") }
+        guard await AVCaptureDevice.requestAccess(for: .audio) else { throw AgentError("PERMISSION_REQUIRED", "Allow Microphone access in macOS settings.") }
+        guard SystemAudioTap.hasPermission() else { throw AgentError("PERMISSION_REQUIRED", "Allow System Audio Recording access in My Man before starting a meeting through an agent.") }
+        // A human may start recording while the permission prompt is open.
+        // Never claim that unrelated take as the agent's new session.
+        guard phase == .idle, !isStarting else { throw AgentError("BUSY", "A meeting started while waiting for permission.") }
+        pendingTitle = title
+        await startAuthorized(pauseMusic: false)
+        guard activeCaptureMeetingID != nil else { throw AgentError("CAPTURE_FAILED", "Meeting audio could not start. Inspect permissions and the selected microphone.") }
     }
 
     /// Detection fires this: capture starts NOW so no words are lost, but
@@ -324,7 +338,7 @@ final class MeetingController: ObservableObject {
         }
     }
 
-    private func startAuthorized(provisional: Bool = false) async {
+    private func startAuthorized(provisional: Bool = false, pauseMusic: Bool = true) async {
         // Permission callbacks can arrive more than once when a calendar
         // nudge and a manual click race. Only the first one may create a row —
         // and since starting the mic suspends, `phase` alone can't hold that
@@ -369,7 +383,7 @@ final class MeetingController: ObservableObject {
             Task { @MainActor in self?.drainMic(final: false) }
         }
 
-        pauseMusicIfPlaying()
+        if pauseMusic, VerificationPaths.root == nil { pauseMusicIfPlaying() }
 
         let started = Date()
         let title = pendingTitle
@@ -1558,7 +1572,7 @@ final class MeetingController: ObservableObject {
         // Height covers header + waveform + action row + text-only Cancel.
         if provisional { return CGSize(width: 320, height: 186) }
         if transcribing { return CGSize(width: 216, height: 40) }
-        if editingTitle { return CGSize(width: 320, height: 130) }
+        if editingTitle { return CGSize(width: 248, height: 140) }
         return CGSize(width: 248, height: 76)
     }
 
@@ -1568,6 +1582,8 @@ final class MeetingController: ObservableObject {
         if case .idle = phase { return isTranscribing }
         return false
     }
+
+    var pointerIsInsidePill: Bool { panel?.frame.contains(NSEvent.mouseLocation) == true }
 
     private var pillFrameRevision = 0
     func applyPillFrame(animated: Bool = false) {
@@ -1583,7 +1599,8 @@ final class MeetingController: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.pillFrameRevision == revision, self.panel === panel else { return }
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.25 : 0
+                context.duration = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.30 : 0
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 panel.animator().setFrame(frame, display: true)
             }
         }
@@ -1671,13 +1688,6 @@ struct MeetingPillView: View {
     @State private var hovering = false
     @State private var collapseTask: Task<Void, Never>?
     @FocusState private var titleFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var fixedSize: CGSize {
-        MeetingController.pillSize(provisional: controller.isProvisional,
-                                   transcribing: controller.pillShowsTranscribing,
-                                   editingTitle: controller.titleEditorVisible)
-    }
     private var isRecording: Bool {
         if case .recording = controller.phase { return true }
         return false
@@ -1685,16 +1695,34 @@ struct MeetingPillView: View {
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        Group {
-            if case .recording(let start) = controller.phase, controller.isProvisional {
-                provisionalCard(start: start)
-            } else {
-                pillRow
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+        // The AppKit window is the only animation driver. Fill its actual
+        // bounds instead of immediately laying out at the destination size.
+        GeometryReader { _ in
+            Group {
+                if case .recording(let start) = controller.phase, controller.isProvisional {
+                    provisionalCard(start: start)
+                } else if isRecording {
+                    VStack(spacing: 0) {
+                        pillRow
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .frame(width: 248, height: 76)
+                        titleEditor
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 8)
+                            .frame(width: 248, height: 64)
+                            .allowsHitTesting(controller.titleEditorVisible)
+                            .accessibilityHidden(!controller.titleEditorVisible)
+                    }
+                } else {
+                    pillRow
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         }
-        .frame(width: fixedSize.width, height: fixedSize.height)
+        .clipped()
         .background(
             Group {
                 if controller.isProvisional || isRecording {
@@ -1710,7 +1738,6 @@ struct MeetingPillView: View {
             }
         )
         .contentShape(Rectangle())
-        .animation(reduceMotion ? nil : MM.Motion.gentle, value: controller.titleEditorVisible)
         .onAppear { titleDraft = controller.recordingTitle }
         .onHover { inside in
             hovering = inside
@@ -1720,8 +1747,9 @@ struct MeetingPillView: View {
             } else if !titleFocused {
                 // Resizing under the pointer can briefly produce an exit.
                 collapseTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(180))
-                    guard !Task.isCancelled, !hovering, !titleFocused else { return }
+                    try? await Task.sleep(for: .milliseconds(400))
+                    guard !Task.isCancelled, !hovering, !titleFocused,
+                          !controller.pointerIsInsidePill else { return }
                     controller.setTitleEditorVisible(false)
                 }
             }
@@ -1730,7 +1758,7 @@ struct MeetingPillView: View {
             if !focused {
                 controller.flushRecordingTitle()
                 titleDraft = controller.recordingTitle
-                if !hovering { controller.setTitleEditorVisible(false) }
+                if !hovering && !controller.pointerIsInsidePill { controller.setTitleEditorVisible(false) }
             }
         }
         .onChange(of: controller.recordingTitle) { _, title in
@@ -1776,7 +1804,6 @@ struct MeetingPillView: View {
                 .accessibilityLabel("Meeting name")
                 .help("Changes save while recording. Press Return to finish editing.")
         }
-        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     /// The in-your-face pre-meeting card: logo, live waveform, one obvious
@@ -1912,7 +1939,6 @@ struct MeetingPillView: View {
             }
             }
             if isRecording {
-                if controller.titleEditorVisible { titleEditor }
                 Button {
                     controller.discardRecording()
                 } label: {

@@ -49,7 +49,7 @@ struct CapturePanelView: View {
             .foregroundStyle(MM.Colors.textPrimary)
             .scrollContentBackground(.hidden)
             .scrollIndicators(.never)
-            .frame(minHeight: 44, maxHeight: 180)
+            .frame(minHeight: draft.isEmpty && editing == nil ? 280 : 44, maxHeight: draft.isEmpty && editing == nil ? 280 : 180)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, MM.Layout.padding)
             .padding(.top, MM.Layout.padding)
@@ -57,11 +57,7 @@ struct CapturePanelView: View {
             .focused($focused)
             .overlay(alignment: .topLeading) {
                 if draft.isEmpty {
-                    Text(editing == nil ? "Just type…" : "Editing note")
-                        .font(MM.Fonts.bodyInput)
-                        .foregroundStyle(MM.Colors.textTertiary)
-                        .padding(.horizontal, MM.Layout.padding + 5)
-                        .padding(.top, MM.Layout.padding)
+                    UtilityEmptyState(icon: .note, title: editing == nil ? "Room for a thought" : "A fresh start", message: "Start typing. Press Return to keep it.")
                         .allowsHitTesting(false)
                 }
             }

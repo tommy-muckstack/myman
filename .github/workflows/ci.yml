@@ -16,6 +16,10 @@ jobs:
       - run: npm ci --ignore-scripts --prefix integrations/brain
       - run: npm test --prefix integrations/brain
       - run: npm run check-bundle --prefix integrations/brain
+      - run: npm ci --ignore-scripts --prefix integrations/font-workbench
+      - run: npm run typecheck --prefix integrations/font-workbench
+      - run: npm test --prefix integrations/font-workbench
+      - run: npm run check-bundle --prefix integrations/font-workbench
   build:
     runs-on: macos-latest
     steps:

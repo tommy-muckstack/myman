@@ -33,17 +33,9 @@ struct TasksPanelView: View {
             .padding(.bottom, 8)
 
             if store.openTasks.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Nothing on your plate.")
-                        .font(MM.Fonts.body)
-                        .foregroundStyle(MM.Colors.textSecondary)
-                    Text("Tasks appear here automatically from your meetings, notes, and dictations.")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
+                UtilityEmptyState(icon: .addBox, title: "Nothing on your plate", message: "A little room to breathe.", actionTitle: "Add a task") {
+                    TaskComposerController.shared.show()
                 }
-                .padding(.horizontal, MM.Layout.padding)
-                .padding(.vertical, 8)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
@@ -54,7 +46,6 @@ struct TasksPanelView: View {
                     .padding(.horizontal, 8)
                 }
             }
-            Spacer(minLength: MM.Layout.padding)
         }
         .frame(width: 260, height: 420, alignment: .topLeading)
         .background(
@@ -219,7 +210,6 @@ struct CalendarPanelView: View {
                 .scrollTargetBehavior(.paging)
                 .frame(maxHeight: .infinity)
             }
-            Spacer(minLength: MM.Layout.padding)
         }
         .frame(width: 300, height: 420, alignment: .topLeading)
         .background(
@@ -234,21 +224,8 @@ struct CalendarPanelView: View {
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(needsAccessRequest ? "Calendar access needed."
-                 : accessDenied ? "Calendar access is off."
-                 : "No events coming up.")
-                .font(MM.Fonts.body)
-                .foregroundStyle(MM.Colors.textSecondary)
-            Text(needsAccessRequest
-                 ? "My Man needs full calendar access to show your schedule here."
-                 : accessDenied
-                 ? "Allow My Man under System Settings → Privacy & Security → Calendars."
-                 : "My Man reads whatever macOS Calendar syncs. To see your Google Calendar here, add your Google account in System Settings → Internet Accounts.")
-                .font(MM.Fonts.secondary)
-                .foregroundStyle(MM.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
+        CalendarEmptyState(needsAccessRequest: needsAccessRequest, accessDenied: accessDenied) {
+
                 if needsAccessRequest {
                     // macOS shows the calendar prompt ONCE per app, ever. If it
                     // was already answered (incl. "Add Events Only"), this call
@@ -271,21 +248,8 @@ struct CalendarPanelView: View {
                 if let url = URL(string: pane) {
                     NSWorkspace.shared.open(url)
                 }
-            } label: {
-                Text(needsAccessRequest ? "Enable Calendar Access"
-                     : accessDenied ? "Open Privacy Settings"
-                     : "Open Internet Accounts")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.textPrimary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(MM.Colors.surface))
-                    .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
         }
-        .padding(.horizontal, MM.Layout.padding)
-        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func dayColumn(_ day: DayEvents) -> some View {
@@ -293,11 +257,6 @@ struct CalendarPanelView: View {
             Text(dayLabel(day.date))
                 .font(MM.Fonts.secondary)
                 .foregroundStyle(MM.Colors.textSecondary)
-            if day.events.isEmpty {
-                Text("Free")
-                    .font(MM.Fonts.metadata)
-                    .foregroundStyle(MM.Colors.textTertiary)
-            }
             let isToday = Calendar.current.isDateInToday(day.date)
             let pastCount = day.events.filter { $0.start <= Date() }.count
             ScrollViewReader { proxy in
@@ -313,6 +272,11 @@ struct CalendarPanelView: View {
                         }
                     }
                     .padding(.bottom, 4)
+                }
+                .overlay {
+                    if day.events.isEmpty {
+                        UtilityEmptyState(icon: .calendar, title: "A little breathing room", message: "No events this day.")
+                    }
                 }
                 .onAppear {
                     // Land with NOW near the top: at most one finished event
@@ -486,5 +450,20 @@ struct CalendarPanelView: View {
             collected.append(DayEvents(id: "day-\(offset)", date: dayStart, events: Array(events)))
         }
         days = collected
+    }
+}
+
+/// Shared previewable empty surface; permission behavior stays in CalendarPanelView.
+struct CalendarEmptyState: View {
+    let needsAccessRequest: Bool
+    let accessDenied: Bool
+    var action: () -> Void = {}
+    private var needsConnection: Bool { needsAccessRequest || accessDenied }
+    var body: some View {
+        UtilityEmptyState(icon: .calendar,
+                          title: needsConnection ? "Your day, at a glance" : "A little breathing room",
+                          message: needsConnection ? "Bring your calendar along." : "No events coming up.",
+                          actionTitle: needsAccessRequest ? "Connect calendar" : accessDenied ? "Allow calendar access" : "Add a calendar",
+                          action: action)
     }
 }

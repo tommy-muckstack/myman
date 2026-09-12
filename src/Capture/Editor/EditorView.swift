@@ -89,6 +89,7 @@ struct EditorView: View {
                     .buttonStyle(.plain).font(MM.Fonts.secondary).clickable()
             }.padding(.horizontal, MM.Layout.paddingLarge)
             canvas
+                .contextMenu { Button("Create font…") { FontWorkbenchController.open(image: model.image, sourceURL: model.fileURL) } }
                 .padding(MM.Layout.paddingLarge)
         }
         .background(MM.Colors.background)

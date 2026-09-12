@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     private let calendar = CalendarWatcher()
     private let meetingDetector = MeetingDetector()
     private var launcher: LauncherPanelController!
+    private var agentActions: AgentActions?
+    private var agentBridge: AgentBridge?
     private var updater: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -64,6 +66,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             },
             openChat: { BrainChatController.shared.show() }
         )
+        let actions = AgentActions(capture: capture, meetings: meetings, voice: voice)
+        actions.openSurface = { [weak self] surface in
+            switch surface { case "note": self?.notesPanel.show(); case "settings": SettingsController.shared.show(); default: self?.launcher.open() }
+        }
+        agentActions = actions
+        let bridge = AgentBridge { actions.receive($0) }
+        do { try bridge.start(); agentBridge = bridge }
+        catch { NSLog("My Man: local agent bridge unavailable: \(error.localizedDescription)") }
         setUpStatusItem()
         setUpHotkeys()
         if let notice = Database.startupRecoveryNotice {
@@ -436,6 +446,13 @@ MainActor.assumeIsolated {
     // Regular app: Dock icon + ⌘Tab. Users expect to SEE the app (Dock click
     // opens the launcher); panels stay non-activating so it never steals focus.
     app.setActivationPolicy(.regular)
+    #if DEBUG
+    if let root = VerificationPaths.root {
+        let delegate = LocalVerification(root: root); app.delegate = delegate
+        withExtendedLifetime(delegate) { app.run() }
+        return
+    }
+    #endif
     let delegate = AppDelegate()
     app.delegate = delegate
     withExtendedLifetime(delegate) { app.run() }

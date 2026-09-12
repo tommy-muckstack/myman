@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Read-only local MyMan Brain tools for agents",
+  "description": "Local MyMan retrieval and explicit app actions for agents",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=22"

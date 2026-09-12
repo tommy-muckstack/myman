@@ -41,18 +41,15 @@ struct LauncherView: View {
     var onOpenChat: () -> Void
     var onDismiss: () -> Void
     var onSizeChange: (CGSize) -> Void = { _ in }
+    var libraryModel: CaptureLibraryModel? = nil
 
     @State private var query = ""
+    @StateObject private var libraryFilters = CaptureLibraryFilters()
     @State private var libraryMode: CaptureLibraryMode = .search
     @State private var selectedAction: Int?
     @State private var hoveredAction: String?
-    @State private var recentHits: [SearchHit] = []
     /// On open, every tile's hotkey shows briefly, then fades (hover recalls it).
     @State private var showAllHints = false
-    @State private var copiedMeetingID: String?
-    @State private var hoveredRowID: String?
-    @State private var copiedRowID: String?
-    @State private var rowsSettled = false
     /// Chat is deliberately a quiet beta: reveal its switch from the search
     /// icon, rather than giving it a launcher tile or a global shortcut.
     @State private var showChatSwitch = false
@@ -65,50 +62,9 @@ struct LauncherView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             searchField
-            Picker("Library", selection: $libraryMode) {
-                ForEach(CaptureLibraryMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }.pickerStyle(.segmented).labelsHidden().padding(.horizontal, MM.Layout.padding).padding(.bottom, 8)
             Divider().overlay(MM.Colors.border)
-            if searching || libraryMode != .search {
-                CaptureLibraryView(query: $query, mode: $libraryMode, onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote)
-            } else {
-                VStack(spacing: 0) {
-                    actionBar
-                    if !recentHits.isEmpty {
-                        Divider().overlay(MM.Colors.border)
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(recentHits) { hit in
-                                resultRow(hit, selected: false)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { open(hit) }
-                                    .onHover { hovering in
-                                        if hovering {
-                                            hoveredRowID = hit.id
-                                            NSCursor.pointingHand.set()
-                                        } else {
-                                            if hoveredRowID == hit.id { hoveredRowID = nil }
-                                            NSCursor.arrow.set()
-                                        }
-                                    }
-                                    .opacity(rowsSettled ? 1 : 0)
-                                    .offset(y: rowsSettled ? 0 : -6)
-                            }
-                        }
-                        .padding(8)
-                        .transition(.opacity)
-                    }
-                }
-                // Recents stay open while the cursor is anywhere in this
-                // section (bar OR list) — clearing on chip-exit would make
-                // the list unreachable.
-                .onHover { hovering in
-                    if !hovering {
-                        hoveredAction = nil
-                        recentHits = []
-                        rowsSettled = false
-                    }
-                }
-            }
+            if !searching && libraryMode == .search { actionBar }
+            CaptureLibraryView(query: $query, mode: $libraryMode, controls: libraryFilters, onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, model: libraryModel)
         }
         .frame(width: MM.Layout.panelWidth)
         .background(
@@ -162,6 +118,7 @@ struct LauncherView: View {
                     .onKeyPress(.downArrow) { moveResult(1); return .handled }
                     .onKeyPress(.upArrow) { moveResult(-1); return .handled }
                     .onKeyPress(.return) { execute(); return .handled }
+                CaptureFilterMenu(mode: $libraryMode, filters: libraryFilters)
                 IconView(icon: .settings, size: 15, color: MM.Colors.textTertiary)
                     .clickable()
                     .onTapGesture {
@@ -185,209 +142,6 @@ struct LauncherView: View {
         }
     }
 
-    // MARK: Search results
-
-    private func kindBadge(_ hit: SearchHit) -> some View {
-        Text(hit.kindLabel)
-            .font(MM.Fonts.metadata)
-            .foregroundStyle(MM.Colors.textTertiary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(MM.Colors.surface))
-            .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 0.5))
-    }
-
-    /// Hover actions shared by every row: Open (what clicking does) + Copy
-    /// (contents to clipboard, no navigation).
-    private func rowActions(_ hit: SearchHit) -> some View {
-        HStack(spacing: 4) {
-            Button {
-                copyHit(hit)
-            } label: {
-                Group {
-                    if copiedRowID == hit.id {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.green)
-                    } else {
-                        IconView(icon: .copy, size: 13, color: MM.Colors.textSecondary)
-                    }
-                }
-                .clickable(minSize: 24)
-            }
-            .buttonStyle(.plain)
-            .help("Copy to clipboard")
-
-            Button {
-                open(hit)
-            } label: {
-                IconView(icon: .open, size: 13, color: MM.Colors.textSecondary)
-                    .clickable(minSize: 24)
-            }
-            .buttonStyle(.plain)
-            .help("Open")
-
-            Button {
-                deleteHit(hit)
-            } label: {
-                IconView(icon: .trash, size: 13, color: MM.Colors.textSecondary)
-                    .clickable(minSize: 24)
-            }
-            .buttonStyle(.plain)
-            .help("Delete")
-        }
-        .padding(.horizontal, 6)
-        .background(
-            RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
-                .fill(MM.Colors.surface)
-        )
-    }
-
-    private func deleteHit(_ hit: SearchHit) {
-        if let item = CaptureIndex.item(hit.id) { CaptureActions.confirmDelete(item) }
-        recentHits.removeAll { CaptureIndex.item($0.id) == nil }
-    }
-
-    private func copyHit(_ hit: SearchHit) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        switch hit {
-        case .note(let note):
-            pasteboard.setString(MarkdownRich.plainText(note.body), forType: .string)
-        case .dictation(let dictation):
-            pasteboard.setString(dictation.text, forType: .string)
-        case .meeting(let meeting):
-            pasteboard.setString(meeting.transcript, forType: .string)
-        case .screenshot(let shot):
-            if let image = NSImage(contentsOfFile: shot.path) {
-                pasteboard.writeObjects([image])
-            } else {
-                pasteboard.setString(shot.path, forType: .string)
-            }
-        case .recording(let recording):
-            pasteboard.writeObjects([URL(fileURLWithPath: recording.path) as NSURL])
-        }
-        Analytics.track("row_copied", ["kind": hit.kindLabel])
-        copiedRowID = hit.id
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.2))
-            if copiedRowID == hit.id { copiedRowID = nil }
-        }
-    }
-
-    @ViewBuilder
-    private func resultRow(_ hit: SearchHit, selected: Bool) -> some View {
-        HStack(spacing: MM.Layout.spacing) {
-            switch hit {
-            case .note(let note):
-                IconView(icon: .note, size: 16, color: MM.Colors.textSecondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(note.title.isEmpty ? "Untitled" : note.title)
-                        .font(MM.Fonts.body)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                        .lineLimit(1)
-                    Text(MarkdownRich.plainText(note.body).replacingOccurrences(of: "\n", with: "  "))
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 2) {
-                    kindBadge(hit)
-                    Text(note.updatedAt.formatted(.relative(presentation: .named)))
-                        .font(MM.Fonts.metadata)
-                        .foregroundStyle(MM.Colors.textTertiary)
-                }
-                .opacity(hoveredRowID == hit.id || copiedRowID == hit.id ? 0 : 1)
-
-            case .screenshot(let shot):
-                RecentScreenshotContent(shot: shot)
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 2) {
-                    kindBadge(hit)
-                    Text(shot.createdAt.formatted(.relative(presentation: .named)))
-                        .font(MM.Fonts.metadata)
-                        .foregroundStyle(MM.Colors.textTertiary)
-                }
-                .opacity(hoveredRowID == hit.id || copiedRowID == hit.id ? 0 : 1)
-
-            case .recording(let recording):
-                IconView(icon: .recordScreen, size: 16, color: MM.Colors.textSecondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(recording.title)
-                        .font(MM.Fonts.body)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                        .lineLimit(1)
-                    Text("\(recording.duration / 60):\(String(format: "%02d", recording.duration % 60)) · screen recording")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textSecondary)
-                }
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 2) {
-                    kindBadge(hit)
-                    Text(recording.createdAt.formatted(.relative(presentation: .named)))
-                        .font(MM.Fonts.metadata)
-                        .foregroundStyle(MM.Colors.textTertiary)
-                }
-                .opacity(hoveredRowID == hit.id || copiedRowID == hit.id ? 0 : 1)
-
-            case .dictation(let dictation):
-                IconView(icon: .voice, size: 16, color: MM.Colors.textSecondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(dictation.text.replacingOccurrences(of: "\n", with: "  "))
-                        .font(MM.Fonts.body)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                        .lineLimit(1)
-                    Text(copiedMeetingID == dictation.id ? "Copied" : "Dictation")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textSecondary)
-                }
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 2) {
-                    kindBadge(hit)
-                    Text(dictation.createdAt.formatted(.relative(presentation: .named)))
-                        .font(MM.Fonts.metadata)
-                        .foregroundStyle(MM.Colors.textTertiary)
-                }
-                .opacity(hoveredRowID == hit.id || copiedRowID == hit.id ? 0 : 1)
-
-            case .meeting(let meeting):
-                IconView(icon: .calendar, size: 16, color: MM.Colors.textSecondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(meeting.title)
-                        .font(MM.Fonts.body)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                        .lineLimit(1)
-                    Text(meeting.transcript.replacingOccurrences(of: "\n", with: "  "))
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 2) {
-                    kindBadge(hit)
-                    Text(meeting.startedAt.formatted(.relative(presentation: .named)))
-                        .font(MM.Fonts.metadata)
-                        .foregroundStyle(MM.Colors.textTertiary)
-                }
-                .opacity(hoveredRowID == hit.id || copiedRowID == hit.id ? 0 : 1)
-            }
-        }
-        .padding(.horizontal, MM.Layout.spacing)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
-                .fill(selected ? MM.Colors.surface : .clear)
-        )
-        .overlay(alignment: .trailing) {
-            if hoveredRowID == hit.id || copiedRowID == hit.id {
-                rowActions(hit)
-                    .padding(.trailing, 6)
-                    .transition(.opacity)
-            }
-        }
-    }
-
     // MARK: Action bar (only when not searching)
 
     private var actionBar: some View {
@@ -406,20 +160,10 @@ struct LauncherView: View {
                                 selectedAction = index
                                 NSCursor.pointingHand.set()
                             }
-                            // Container + window resize INSTANTLY (anchored);
-                            // then the rows ease into the opened space.
-                            recentHits = SearchHit.recentItems(for: action.id)
-                            rowsSettled = false
-                            Task { @MainActor in
-                                withAnimation(.easeOut(duration: 0.22)) { rowsSettled = true }
-                            }
                         } else {
                             if hoveredAction == action.id {
-                                // Hover owns selection; leaving clears it so
-                                // nothing looks highlighted at rest. (The
-                                // recents list is cleared by the CONTAINER's
-                                // hover exit, so it survives the cursor
-                                // moving down into it.)
+                                // Hover owns tile selection; leaving restores
+                                // Return to the selected search result.
                                 if selectedAction == index { selectedAction = nil }
                             }
                             NSCursor.arrow.set()
@@ -482,14 +226,12 @@ struct LauncherView: View {
     }
 
     private func moveResult(_ delta: Int) {
-        if searching || libraryMode != .search {
-            NotificationCenter.default.post(name: .captureLibraryCommand, object: delta > 0 ? "down" : "up")
-            return
-        }
+        selectedAction = nil
+        NotificationCenter.default.post(name: .captureLibraryCommand, object: delta > 0 ? "down" : "up")
     }
 
     private func execute() {
-        if searching || libraryMode != .search {
+        if searching || libraryMode != .search || selectedAction == nil {
             NotificationCenter.default.post(name: .captureLibraryCommand, object: "open")
             return
         }
@@ -500,28 +242,7 @@ struct LauncherView: View {
         action.run()
     }
 
-    private func open(_ hit: SearchHit) {
-        let rank = recentHits.firstIndex(where: { $0.id == hit.id }) ?? -1
-        SearchService.recordClick(query: query, hit: hit, rank: rank, resultCount: recentHits.count)
-        switch hit {
-        case .note(let note):
-            onDismiss()
-            onOpenNote(note)
-        case .screenshot(let shot):
-            onDismiss()
-            onOpenScreenshot(URL(fileURLWithPath: shot.path))
-        case .meeting(let meeting):
-            onDismiss()
-            MeetingDocumentController.shared.open(meetingID: meeting.id)
-        case .dictation(let dictation):
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(dictation.text, forType: .string)
-            copiedMeetingID = dictation.id
-        case .recording(let recording):
-            onDismiss()
-            NSWorkspace.shared.open(URL(fileURLWithPath: recording.path))
-        }
-    }
+
 }
 
 

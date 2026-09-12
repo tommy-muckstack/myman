@@ -332,15 +332,16 @@ private struct BrainChatView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    if messages.isEmpty {
-                        Text("Ask about your notes, meetings, screenshots, recordings, tasks, or people.")
-                            .font(MM.Fonts.body).foregroundStyle(MM.Colors.textSecondary).padding(.top, 4)
-                    }
                     ForEach(messages) { message in messageBubble(message) }
                     if isThinking { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Searching your Brain…").font(MM.Fonts.secondary) }.foregroundStyle(MM.Colors.textSecondary) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(MM.Layout.paddingLarge)
             }.frame(height: 310)
+                .overlay {
+                    if messages.isEmpty && !isThinking {
+                        UtilityEmptyState(icon: .chat, title: "Pick up a thought", message: "Ask about something you've captured.")
+                    }
+                }
 
             Divider().overlay(MM.Colors.border)
             VStack(spacing: 8) {

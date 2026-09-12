@@ -70,6 +70,11 @@ struct NoteDocumentView: View {
                     IconView(icon: .related).clickable(minSize: 28)
                 }.buttonStyle(.plain).help("Related captures").accessibilityLabel("Related captures")
                 Menu {
+                    if FontProjectStore.exists(note.id) {
+                        Button("Edit font…") { CaptureActions.perform { try FontWorkbenchController.openProject(noteID: note.id) } }
+                        Button("Open font in Font Book") { if let url = FontProjectStore.asset(note.id, "font.otf") { NSWorkspace.shared.open(url) } }
+                        Divider()
+                    }
                     Button("Copy text") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(MarkdownRich.plainText(body_), forType: .string)
@@ -94,7 +99,13 @@ struct NoteDocumentView: View {
             RichMarkdownEditor(markdown: Binding(get: { body_ }, set: { text in
                 body_ = text
                 autosave.submit { try store.updateDocument(note, body: text) }
-            }), session: editor, documentID: "note-" + note.id)
+            }), session: editor, showsEmptyPlaceholder: false, documentID: "note-" + note.id)
+            .overlay {
+                if body_.isEmpty {
+                    UtilityEmptyState(icon: .note, title: "Room for a thought", message: "Start typing, or drop something in.")
+                        .allowsHitTesting(false)
+                }
+            }
             if showRelated {
                 CaptureRelatedSection(itemID: "note-" + note.id).padding(MM.Layout.padding)
             }
