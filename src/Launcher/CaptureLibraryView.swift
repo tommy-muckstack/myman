@@ -88,7 +88,7 @@ struct CaptureLibraryView: View {
         self.onSaveQueryAsNote = onSaveQueryAsNote
         _model = StateObject(wrappedValue: model ?? CaptureLibraryModel())
     }
-    private var kind: String { get { controls.kind } nonmutating set { controls.kind = newValue } }
+    private var kind: String { get { controls.displayedKind } nonmutating set { controls.actionKind = nil; controls.kind = newValue } }
     private var period: String { get { controls.period } nonmutating set { controls.period = newValue } }
     private var themeID: String { get { controls.themeID } nonmutating set { controls.themeID = newValue } }
     private var pinned: Bool { get { controls.pinned } nonmutating set { controls.pinned = newValue } }
@@ -143,11 +143,13 @@ struct CaptureLibraryView: View {
                                 ForEach(Array(visibleThemes.prefix(3))) { theme in themeRow(theme) }
                             }
                             ForEach(model.results) { match in
-                                CaptureResultRow(match: match, selected: model.selectedID == match.id)
-                                    .id(match.id).clickable()
-                                    .onTapGesture { model.selectedID = match.id }
-                                    .onTapGesture(count: 2) { open(match) }
-                                    .contextMenu { itemMenu(match.item) }
+                                Button { open(match) } label: {
+                                    CaptureResultRow(match: match, selected: model.selectedID == match.id)
+                                        .clickable()
+                                }
+                                .buttonStyle(.plain)
+                                .id(match.id)
+                                .contextMenu { itemMenu(match.item) }
                             }
                             if model.hasMore { Button("Show more") { reload(more: true) }.buttonStyle(.plain).clickable().padding(MM.Layout.padding) }
                         }
