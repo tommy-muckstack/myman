@@ -61,6 +61,15 @@ final class LauncherPanelController {
         launcherPanel.onDismiss = { [weak self] in self?.hideSidePanels() }
         panel = launcherPanel
         launcherPanel.present()
+        if let screen = launcherPanel.screen {
+            let visible = screen.visibleFrame
+            let size = launcherPanel.frame.size
+            // Position the compact launcher by its top edge. Centering the
+            // expanded history used to push the search field to the screen top.
+            let top = visible.minY + visible.height * 0.72
+            launcherPanel.setFrameOrigin(NSPoint(x: visible.midX - size.width / 2,
+                y: max(visible.minY + 16, top - size.height)))
+        }
         showSidePanels()
     }
 
@@ -117,7 +126,8 @@ final class LauncherPanelController {
             guard size.height > 1 else { return }
             guard abs(panel.frame.height - size.height) > 0.5
                 || abs(panel.frame.width - size.width) > 0.5 else { return }
-            let top = panel.frame.maxY
+            let visible = panel.screen?.visibleFrame ?? panel.frame
+            let top = min(visible.maxY - 16, max(panel.frame.maxY, visible.minY + size.height + 16))
             // Instant: the window is the anchor. All motion lives in the rows.
             panel.setFrame(
                 NSRect(x: panel.frame.minX, y: top - size.height,

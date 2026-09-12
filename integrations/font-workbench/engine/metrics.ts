@@ -21,12 +21,50 @@ export function estimateMetrics(candidates: GlyphCandidate[]): {
   const perImage: Record<number, ImageMetrics> = {};
   const perCandidate: Record<string, ImageMetrics> = {};
   const xRatios: number[] = [], descRatios: number[] = [], ascRatios: number[] = [];
+  // Learn proportions from lines containing both cases before estimating
+  // lowercase-only lines. A fixed .72 ratio made body text disagree with titles.
+  const ratios: number[] = [], ascenderRatios: number[] = [];
   for (const line of lines.values()) {
+    const caps = line.filter(c => /^[AEFHIKLMNTVWXYZ147]$/.test(c.char!));
+    for (const cap of caps) {
+      const nearby = line.filter(c => Math.abs(c.bbox.y + c.bbox.h - cap.bbox.y - cap.bbox.h) <= Math.max(2, cap.bbox.h * .06));
+      const nearest = (pattern: RegExp, low: number, high: number) => nearby.filter(c => pattern.test(c.char!) && c.bbox.h / cap.bbox.h >= low && c.bbox.h / cap.bbox.h <= high)
+        .sort((a, b) => Math.abs(a.bbox.x - cap.bbox.x) - Math.abs(b.bbox.x - cap.bbox.x))[0]?.bbox.h ?? 0;
+      const x = nearest(/^[mnrvwxz]$/, .4, .95);
+      const asc = nearest(/^[bdhkl]$/, .85, 1.3);
+      if (x / cap.bbox.h >= .4 && x / cap.bbox.h <= .95) ratios.push(x / cap.bbox.h);
+      if (asc / cap.bbox.h >= .85 && asc / cap.bbox.h <= 1.3) ascenderRatios.push(asc / cap.bbox.h);
+    }
+  }
+  const learnedX = median(ratios) || .72, learnedAscender = median(ascenderRatios) || 1;
+  const runs: GlyphCandidate[][] = [];
+  for (const line of lines.values()) {
+    // Vision can put differently sized runs on the same line. Cluster actual
+    // resting letters by size and baseline, then attach punctuation/descenders
+    // to their nearest run instead of treating their height as a font size.
+    const groups: { samples: GlyphCandidate[]; sizes: number[]; bottoms: number[] }[] = [];
+    const unanchored: GlyphCandidate[] = [];
+    for (const c of line) {
+      const ratio = /^[A-IK-PR-Z0-9]$/.test(c.char!) ? 1 : /^[acemnorsuvwxz]$/.test(c.char!) ? learnedX : /^[bdhkl]$/.test(c.char!) ? learnedAscender : 0;
+      if (!ratio) { unanchored.push(c); continue; }
+      const size = c.bbox.h / ratio, bottom = c.bbox.y + c.bbox.h;
+      let group = groups.find(g => Math.abs(Math.log(size / median(g.sizes))) < .18 && Math.abs(bottom - median(g.bottoms)) <= Math.max(2, size * .12));
+      if (!group) { group = { samples: [], sizes: [], bottoms: [] }; groups.push(group); }
+      group.samples.push(c); group.sizes.push(size); group.bottoms.push(bottom);
+    }
+    for (const c of unanchored) {
+      const distance = (g: typeof groups[number]) => Math.min(...g.samples.map(other => Math.abs(c.bbox.x + c.bbox.w / 2 - other.bbox.x - other.bbox.w / 2)));
+      const nearest = [...groups].sort((a, b) => distance(a) - distance(b))[0];
+      if (nearest) nearest.samples.push(c);
+    }
+    runs.push(...(groups.length ? groups.map(g => g.samples) : [line]));
+  }
+  for (const line of runs) {
     const caps = line.filter(c => /^[A-Z0-9]$/.test(c.char!));
     const xLetters = line.filter(c => /^[acemnorsuvwxz]$/.test(c.char!));
     const ascenders = line.filter(c => /^[bdhkl]$/.test(c.char!));
     const flatCaps = caps.filter(c => /^[AEFHIKLMNTVWXYZ147]$/.test(c.char!));
-    const capHeightPx = median(flatCaps.map(c => c.bbox.h)) || median(caps.map(c => c.bbox.h)) || median(ascenders.map(c => c.bbox.h)) || median(xLetters.map(c => c.bbox.h)) / 0.72 || median(line.map(c => c.bbox.h));
+    const capHeightPx = median(flatCaps.map(c => c.bbox.h)) || median(caps.map(c => c.bbox.h)) || median(ascenders.map(c => c.bbox.h)) / learnedAscender || median(xLetters.map(c => c.bbox.h)) / learnedX || median(line.map(c => c.bbox.h));
     const resting = [...caps.filter(c => c.char !== "Q" && c.char !== "J"), ...xLetters, ...ascenders];
     const flatResting = resting.filter(c => /^[AEFHIKLMNTVWXYZ147hilkmnrx]$/.test(c.char!));
     const baselineY = median(flatResting.map(c => c.bbox.y + c.bbox.h)) || median(resting.map(c => c.bbox.y + c.bbox.h)) || median(line.map(c => c.baselineY ?? NaN).filter(Number.isFinite)) || median(line.map(c => c.bbox.y + c.bbox.h));

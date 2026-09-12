@@ -5,6 +5,45 @@ import SwiftUI
 @testable import MyMan
 
 final class CaptureLibraryTests: XCTestCase {
+    @MainActor func testOpeningThemeClearsPreviousFiltersAndShowsEveryContentType() async throws {
+        _ = NSApplication.shared
+        let queue = try database()
+        try note(queue, id: "themed", title: "Design notes", body: "Notes")
+        try note(queue, id: "unrelated", body: "Other work")
+        try await queue.write { db in
+            let date = Date(timeIntervalSince1970: 100)
+            try db.execute(sql: "INSERT INTO screenshot(id,path,createdAt) VALUES('s','/tmp/theme-test.png',?)", arguments: [date])
+            try db.execute(sql: "INSERT INTO meeting(id,title,startedAt) VALUES('m','Design review',?)", arguments: [date])
+            try db.execute(sql: "INSERT INTO recording(id,path,duration,createdAt) VALUES('r','/tmp/theme-test.mov',10,?)", arguments: [date])
+            try db.execute(sql: "INSERT INTO dictation(id,text,createdAt) VALUES('d','Design idea',?)", arguments: [date])
+            try db.execute(sql: "INSERT INTO captureTheme(id,title,signature) VALUES('design','Design review','design review')")
+            for id in ["note-themed", "shot-s", "meeting-m", "recording-r", "dictation-d"] {
+                try db.execute(sql: "INSERT INTO captureThemeMember(themeID,itemID) VALUES('design',?)", arguments: [id])
+            }
+        }
+        let controls = CaptureLibraryFilters()
+        controls.kind = "note"; controls.actionKind = "screenshot"
+        controls.period = "today"; controls.pinned = true
+        var mode = CaptureLibraryMode.themes
+        var query = "Design"
+        let model = CaptureLibraryModel(database: queue)
+        let host = NSHostingView(rootView: CaptureLibraryView(
+            query: Binding(get: { query }, set: { query = $0 }),
+            mode: Binding(get: { mode }, set: { mode = $0 }), controls: controls, model: model))
+        host.frame = NSRect(x: 0, y: 0, width: 620, height: 440)
+        host.layoutSubtreeIfNeeded()
+        defer { model.cancel() }
+        for _ in 0..<100 where model.themes.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(model.themes.map(\.id), ["design"])
+        NotificationCenter.default.post(name: .captureLibraryCommand, object: "open")
+        for _ in 0..<100 where model.results.count != 5 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(mode, .search); XCTAssertEqual(query, "")
+        XCTAssertEqual(controls.displayedKind, "all"); XCTAssertEqual(controls.period, "any")
+        XCTAssertFalse(controls.pinned); XCTAssertEqual(controls.themeID, "design")
+        XCTAssertEqual(Set(model.results.map(\.id)), Set(["note-themed", "shot-s", "meeting-m", "recording-r", "dictation-d"]))
+        withExtendedLifetime(host) {}
+    }
+
     private func database() throws -> DatabaseQueue {
         let queue = try DatabaseQueue()
         try Database.migrator.migrate(queue)

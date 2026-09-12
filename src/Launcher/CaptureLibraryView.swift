@@ -43,6 +43,24 @@ struct CaptureThumbnail: View {
     }
 }
 
+private struct CaptureRowHighlight: ViewModifier {
+    let selected: Bool
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
+                .fill(selected || hovered ? MM.Colors.surface : .clear))
+            .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
+                .strokeBorder(selected ? MM.Colors.border : hovered ? MM.Colors.border.opacity(0.5) : .clear))
+            .onHover { hovered = $0 }
+            .onDisappear { hovered = false }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+    }
+}
+
 struct CaptureResultRow: View {
     let match: CaptureMatch
     var selected = false
@@ -66,8 +84,7 @@ struct CaptureResultRow: View {
         }
         .padding(MM.Layout.spacing)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall).fill(selected ? MM.Colors.surface : .clear))
-        .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall).strokeBorder(selected ? MM.Colors.border : .clear))
+        .modifier(CaptureRowHighlight(selected: selected))
         .foregroundStyle(MM.Colors.textPrimary)
         .accessibilityElement(children: .combine)
     }
@@ -137,7 +154,7 @@ struct CaptureLibraryView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         if mode == .themes {
-                            ForEach(visibleThemes) { theme in themeRow(theme).id(theme.id).background(selectedThemeID == theme.id ? MM.Colors.surface : .clear) }
+                            ForEach(visibleThemes) { theme in themeRow(theme).id(theme.id) }
                         } else {
                             if !query.isEmpty, themeID.isEmpty {
                                 ForEach(Array(visibleThemes.prefix(3))) { theme in themeRow(theme) }
@@ -190,7 +207,7 @@ struct CaptureLibraryView: View {
         .onReceive(NotificationCenter.default.publisher(for: .captureLibraryCommand)) { event in
             if mode == .themes {
                 let index = visibleThemes.firstIndex { $0.id == selectedThemeID } ?? -1
-                if event.object as? String == "open", let theme = visibleThemes.first(where: { $0.id == selectedThemeID }) ?? visibleThemes.first { themeID = theme.id; query = ""; mode = .search }
+                if event.object as? String == "open", let theme = visibleThemes.first(where: { $0.id == selectedThemeID }) ?? visibleThemes.first { openTheme(theme.id) }
                 else if !visibleThemes.isEmpty {
                     let delta = event.object as? String == "up" ? -1 : 1
                     selectedThemeID = visibleThemes[min(max(0, index + delta), visibleThemes.count - 1)].id
@@ -227,10 +244,11 @@ struct CaptureLibraryView: View {
 
     private func reload(more: Bool = false) { model.reload(query: query, filter: filter, more: more) }
     private func open(_ match: CaptureMatch) { onDismiss(); CaptureActions.open(match.item, query: query) }
+    private func openTheme(_ id: String) { controls.showTheme(id); query = ""; mode = .search }
 
     private func themeRow(_ theme: CaptureTheme) -> some View {
         Button {
-            themeID = theme.id; query = ""; mode = .search
+            openTheme(theme.id)
         } label: {
             HStack(spacing: MM.Layout.spacing) {
                 IconView(icon: .themes, color: MM.Colors.accent).frame(width: 48)
@@ -245,7 +263,9 @@ struct CaptureLibraryView: View {
                 Spacer()
                 if theme.pinned { Image(systemName: "pin.fill").foregroundStyle(MM.Colors.accent) }
                 Text(theme.latest.formatted(.relative(presentation: .named))).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }.padding(MM.Layout.spacing).frame(maxWidth: .infinity, alignment: .leading).clickable()
+            }.padding(MM.Layout.spacing).frame(maxWidth: .infinity, alignment: .leading)
+                .modifier(CaptureRowHighlight(selected: selectedThemeID == theme.id))
+                .clickable()
         }.buttonStyle(.plain)
             .contextMenu {
                 Button("Rename…") { CaptureActions.prompt(title: "Rename theme", value: theme.title) { try ThemeStore.rename(theme.id, title: $0) } }

@@ -1,6 +1,7 @@
 import { BASIC_LATIN, type GlyphCandidate, type VectorGlyph, type FontMetrics } from './engine/types';
 import { inkBounds, normalizeRaster } from './engine/raster';
 import { estimateMetrics } from './engine/metrics';
+import { alignCaptured } from './engine/alignment';
 import { rankSamples } from './engine/samples';
 import { vectorizeCandidate } from './engine/vectorize';
 import { loadBaseFonts, rankBaseFonts, pickBaseFont } from './engine/basefont';
@@ -166,6 +167,7 @@ async function trace() {
       message(`Tracing ${char} · ${Object.keys(captured).length} captured characters`); await nextFrame();
     }
     if (!Object.keys(captured).length) throw new Error('No usable outlines. Check the labels or choose a clearer text crop.');
+    captured = alignCaptured(captured, metrics);
     try {
       const completed = await inferMissing(captured, metrics, (char, n, total) => message(`Constructing approximate ${char} · ${n} of ${total}`), () => run !== generation);
       inferred = completed.inferred; estimatedSpace = completed.space;
