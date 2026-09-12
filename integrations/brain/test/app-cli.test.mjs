@@ -65,3 +65,21 @@ test('retrieval aliases preserve time, kind, and descriptor filters',async()=>{
 test('every discoverable action is reachable through invoke and carries explicit consent metadata',async()=>{
  for(const action of catalog.actions){const p=await plan(['invoke',action.name,'{}']);assert.equal(p.name,action.name);assert.ok(Array.isArray(action.permissions));}
 });
+
+for(const [command,name,args] of [
+ ['record start --window-id 42 --max-duration 30 --mic off','recording.start',{window_id:'42',max_duration:30,microphone:false}],
+ ['record pause --session-id take','recording.pause',{session_id:'take'}],
+ ['record resume --session-id take','recording.resume',{session_id:'take'}],
+ ['record result --session-id take','recording.status',{session_id:'take'}],
+ ['record frames --id recording-fixture --times 0.1,2.5 --width 400','recording.frames',{id:'recording-fixture',times:[0.1,2.5],width:400}],
+ ['record export --id recording-fixture --start 1 --end 5 --max-bytes 1000000','recording.export',{id:'recording-fixture',start:1,end:5,max_bytes:1000000}],
+ ['capture targets --id shot-fixture --query Save','screenshot.targets',{id:'shot-fixture',query:'Save'}],
+]) test(command,async()=>{const p=await plan(command.split(' '));assert.equal(p.name,name);assert.deepEqual(p.args,args);assert.ok(ajv.validate(describe(name).inputSchema,p.args));});
+test('OCR-targeted preview preserves native target selectors and rejects side effects',async()=>{
+ const ops=JSON.stringify([{op:'circle',target_text:'$49'},{op:'callout',target_region:'ocr-fixture',number:2,text:'Review'}]);
+ const p=await plan(['annotate','--id',fixture,'--ops',ops,'--preview']);
+ assert.equal(p.args.preview,true);assert.equal(p.args.annotations[0].target_text,'$49');assert.ok(ajv.validate(describe(p.name).inputSchema,p.args));
+ for(const flags of [['--preview','--clipboard'],['--preview','--open-editor'],['--preview','--dry-run']])await assert.rejects(plan(['annotate','--id',fixture,...flags]));
+ await assert.rejects(plan(['record','result']));
+ assert.equal(exitCode('AMBIGUOUS_TARGET'),5);
+});

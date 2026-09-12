@@ -1,6 +1,6 @@
 # Cursor Marketplace and GrokBot preparation
 
-Status (September 12, 2026): root Cursor candidate **0.4.1** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or Hugo/GrokBot activation is claimed. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
+Status (September 12, 2026): root Cursor candidate **0.5.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or Hugo/GrokBot activation is claimed. The 0.5.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
 
 For each agent-package update, follow the [Cursor marketplace release policy](cursor-marketplace-release.md). Shipping MyMan does not update the marketplace package. Use the [My Man logo](https://raw.githubusercontent.com/tommy-muckstack/myman/main/assets/icon-256.png) in publisher/listing fields and check [submission status](marketplace-submission.md#submission-status) before preparing an update notification.
 
@@ -39,7 +39,7 @@ GrokBot package directory: `integrations/grok-bot`
 
 Local Mac MCP package directory: repository root
 
-License: Apache-2.0. GrokBot skill package and root Cursor candidate: 0.4.1. Companion runtime: 0.4.0 (packaging/instruction update; no app rebuild required).
+License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.5.0. New media actions require MyMan 1.1.61. See [media verification](verification/agent-media-2026-09-12.md); the matrix below records the earlier marketplace baseline.
 
 Cursor's documented submission flow is a public Git repository plus review through its publish form; it supports the Agent Plugins standard. That verifies the Cursor route, **not a GrokBot-specific submission API or a Mac-local MCP bridge**. [Cursor plugin reference](https://cursor.com/docs/reference/plugins), [submission form](https://cursor.com/marketplace/publish), [Agent Plugins schemas](https://agent-plugins.org/).
 

@@ -268,8 +268,9 @@ stdio. They do not read your actual Brain. The [implementation plan](../../docs/
 records the boundaries and release criteria. Automated tests do not establish
 Grok Bot account access or marketplace approval.
 
-The root marketplace candidate is plugin version **0.4.1**, using the unchanged
-0.4.0 companion shipped in MyMan 1.1.60. The [smoke results](../../docs/grok-bot-marketplace.md#verification-matrix)
+The root marketplace candidate and companion are version **0.5.0**. New media
+commands require MyMan 1.1.61; Brain retrieval remains compatible with existing
+exports. See [media workflows](../../docs/agent-cli.md#window-recording-pause-inspection-and-export). The [smoke results](../../docs/grok-bot-marketplace.md#verification-matrix)
 record live Mac retrieval and official MCP SDK checks; Cursor UI discovery and
 Hugo local execution remain explicitly unverified. [Listing copy](../../docs/marketplace-submission.md)
 is ready for the reviewer. The plugin is prepared for submission from this repository's root. After the

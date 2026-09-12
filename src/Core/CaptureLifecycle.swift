@@ -19,6 +19,7 @@ enum CaptureLifecycle {
     static func exclude(_ item: CaptureItem, excluded: Bool) throws {
         try Database.shared.write { try $0.execute(sql: "UPDATE captureItem SET excluded = ? WHERE id = ?", arguments: [excluded, item.id]) }
         SearchService.clearVectorCache()
+        if excluded { NotificationCenter.default.post(name: .captureExcluded, object: item.id) }
         ThemeStore.notify()
     }
 
@@ -74,4 +75,4 @@ enum CaptureLifecycle {
     }
 }
 
-extension Notification.Name { static let captureDeleted = Notification.Name("man.captureDeleted") }
+extension Notification.Name { static let captureDeleted = Notification.Name("man.captureDeleted"); static let captureExcluded = Notification.Name("man.captureExcluded") }

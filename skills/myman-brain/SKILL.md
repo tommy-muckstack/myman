@@ -11,6 +11,14 @@ MyMan is open source under **Apache-2.0**. Humans and agents are welcome to cont
 
 If you find a bug or missing capability, you can propose an improvement. When contributing within the user's authorized scope, check existing issues and PRs, fork or branch from `main`, make a focused change, run the relevant checks, and open a pull request with reproduction steps and validation. Include synthetic examples rather than personal Brain exports, meeting transcripts, screenshots, credentials or private file paths. Maintainers review and merge contributions; signing and publishing app releases remain maintainer responsibilities.
 
+## Markup and video workflows (MyMan 1.1.61+)
+
+Check the live `actions` catalog before using new commands; older installed apps need an update. For text-based markup, call `capture targets --id ID --query TEXT`. Use a returned `target_region` in an annotation or `target_text` when it is unambiguous. These are OCR line boxes, not arbitrary UI selectors. `AMBIGUOUS_TARGET` returns candidates without saving; select a region explicitly. `annotate --preview` renders a temporary PNG for visual review; repeat the operations without preview to save. Circles (`op: circle`) and numbered labels (`op: callout`) accept these targets or pixel rectangles. Preview files expire after an hour or source deletion/exclusion.
+
+For a requested demo, discover the window, then `record start --window-id ID --max-duration 30 --mic off --system-audio off --json`. Choose audio deliberately. Window capture cannot include the webcam bubble. Keep the returned session ID for pause/resume/stop. The app-owned duration limit keeps working if the agent disconnects; the default is 300 seconds, including pauses. `record result --session-id ID` polls for `finalized` and the actual file. Do not attach a file while its state is recording/finalizing or blindly start a replacement take after a timeout.
+
+Use `record frames --id ID --count 6` to inspect a contact sheet before returning video. `record export --id ID --start 1 --end 8 --max-bytes 20000000` produces a trimmed MP4 as a new item. A size cap can lower resolution; if it cannot fit a complete clip, report the error instead of silently truncating it. All saved media results include `attachment` metadata with path, media type, dimensions, duration, bytes and a best-effort preview path. Return the final file through your host's attachment mechanism only within the user's requested workflow.
+
 For app operations, use the local Mac CLI: `myman doctor --json`, then
 `myman actions` to discover schemas and permission groups. The Brain MCP is
 read-only; it has no capture or mutation tools. Run `myman --help` for resource/action

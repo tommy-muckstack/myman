@@ -4,9 +4,10 @@ import Darwin
 struct AgentError: Error, LocalizedError {
     let code: String
     let message: String
-    init(_ code: String, _ message: String) { self.code = code; self.message = message }
+    let details: [String: Any]
+    init(_ code: String, _ message: String, details: [String: Any] = [:]) { self.code = code; self.message = message; self.details = details }
     var errorDescription: String? { message }
-    var json: [String: Any] { ["code": code, "message": message] }
+    var json: [String: Any] { ["code": code, "message": message].merging(details) { original, _ in original } }
 }
 
 /// Same-login local IPC. One bounded JSON request per connection; no TCP port,

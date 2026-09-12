@@ -58,11 +58,12 @@ final class EditorModel: ObservableObject {
     @Published var backdrop: BackdropStyle = .none
     @Published var customBackdropColor: NSColor {
         didSet {
-            guard let color = customBackdropColor.usingColorSpace(.sRGB) else { return }
+            guard persistPreferences, let color = customBackdropColor.usingColorSpace(.sRGB) else { return }
             preferences.set([Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent)], forKey: "screenshotCustomBackdropRGB")
         }
     }
     private let preferences: UserDefaults
+    private let persistPreferences: Bool
     var backdropColors: [NSColor]? {
         backdrop == .custom ? [customBackdropColor, customBackdropColor] : backdrop.colors
     }
@@ -100,10 +101,11 @@ final class EditorModel: ObservableObject {
         backdrop == .none ? cornerRadius : max(cornerRadius, 12)
     }
 
-    init(image: NSImage, fileURL: URL, preferences: UserDefaults = .standard) {
+    init(image: NSImage, fileURL: URL, preferences: UserDefaults = .standard, persistPreferences: Bool = true) {
         self.image = image
         self.fileURL = fileURL
         self.preferences = preferences
+        self.persistPreferences = persistPreferences
         if let rgb = preferences.array(forKey: "screenshotCustomBackdropRGB") as? [Double], rgb.count == 3,
            rgb.allSatisfy({ $0.isFinite && (0...1).contains($0) }) {
             customBackdropColor = NSColor(srgbRed: rgb[0], green: rgb[1], blue: rgb[2], alpha: 1)
