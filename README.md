@@ -150,3 +150,7 @@ The meeting-capture architecture (CoreAudio process taps, diarization approach, 
 ## License
 
 [Apache-2.0](LICENSE) © MuckStack, LLC
+
+## Open source contributions
+
+MyMan is **Apache-2.0 open source**. Humans and agents, including GrokBot, are welcome to propose fixes and improvements through the [public repository](https://github.com/tommy-muckstack/myman). See the [contribution guide](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) for setup, checks and the pull request process.

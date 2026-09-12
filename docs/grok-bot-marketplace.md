@@ -37,7 +37,7 @@ GrokBot package directory: `integrations/grok-bot`
 
 Local Mac MCP package directory: repository root
 
-License: Apache-2.0. GrokBot skill package and companion version: 0.4.0. Root Cursor candidate: 0.4.1 (packaging/instruction update; no app rebuild required).
+License: Apache-2.0. GrokBot skill package and root Cursor candidate: 0.4.1. Companion runtime: 0.4.0 (packaging/instruction update; no app rebuild required).
 
 Cursor's documented submission flow is a public Git repository plus review through its publish form; it supports the Agent Plugins standard. That verifies the Cursor route, **not a GrokBot-specific submission API or a Mac-local MCP bridge**. [Cursor plugin reference](https://cursor.com/docs/reference/plugins), [submission form](https://cursor.com/marketplace/publish), [Agent Plugins schemas](https://agent-plugins.org/).
 

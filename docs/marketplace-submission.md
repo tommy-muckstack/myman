@@ -14,6 +14,8 @@ Search local MyMan meetings, notes, tasks, dictation and screenshot OCR with sou
 
 MyMan Brain connects your agent to the information you intentionally capture with [My Man](https://muckstack.com/download/myman): meetings, notes, tasks, dictation, screenshots and recordings.
 
+MyMan is **Apache-2.0 open source**. Humans and agents, including GrokBot, are welcome to contribute fixes and improvements through the [public repository](https://github.com/tommy-muckstack/myman). See the [contribution guide](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) for the pull request process.
+
 Find evidence by people, time periods, keywords and saved Themes. Read meeting transcripts with source paths and line numbers. Find screenshots from a meeting and explicitly retrieve thumbnails or originals when the task is about what something looked like.
 
 The plugin includes a read-only local MCP server and an agent skill. The skill also explains how to use MyMan's separate Mac CLI for requested screenshot capture, markup, recording and note workflows. Those actions require the running app, explicit Settings → Agents grants and applicable macOS permissions; installing the plugin does not enable capture.

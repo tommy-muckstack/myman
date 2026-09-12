@@ -282,3 +282,7 @@ and Grok Bot availability depend on marketplace review and supported components.
 References: [Agent Plugins](https://agent-plugins.org/plugin-authors/mcp-servers),
 [Cursor plugins](https://cursor.com/docs/plugins),
 [Grok Bot local execution](https://cursor.com/docs/grok-bot/work).
+
+## Open source contributions
+
+MyMan is **Apache-2.0 open source**. Humans and agents, including GrokBot, are welcome to propose fixes and improvements through the [public repository](https://github.com/tommy-muckstack/myman). See the [contribution guide](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) for setup, checks and the pull request process.
