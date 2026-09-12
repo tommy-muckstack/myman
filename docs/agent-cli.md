@@ -1,6 +1,6 @@
 # MyMan CLI for agents
 
-The next app version adds a resource/action interface over the native action bridge introduced in 1.1.59. `myman actions` is the complete machine-readable catalog: names, argument schemas, effects, and required permission groups. `myman actions screenshot.edit` describes one operation. Every catalog action remains available as `myman invoke action.name '{"arguments":"here"}'`.
+MyMan 1.1.61 adds OCR-targeted markup, rendered previews, and video workflows to the resource/action interface introduced in 1.1.60. These additions require the updated app; check the live action catalog before using them. `myman actions` is the complete machine-readable catalog: names, argument schemas, effects, and required permission groups. `myman actions screenshot.edit` describes one operation. Every catalog action remains available as `myman invoke action.name '{"arguments":"here"}'`.
 
 ## Installation and discovery
 
@@ -35,7 +35,7 @@ Settings → Agents has **Allow local app commands**, plus four separate, defaul
 
 Combined capture/markup requires both grants. The native bridge checks grants; neither JSON nor URL arguments can enable them. App settings mutation schemas exclude these grant keys. A menu-bar dot indicates that agent screenshot or recording access is enabled. Normal recording controls remain visible. No permanent “silent forever” grant is enabled by default; grants apply to this Mac login until the human turns them off. Session tokens are not implemented. Same-login processes are the trust boundary, not individual agents.
 
-Stop/cancel commands remain available after revocation and still require the current session ID. Diagnostics remain available when commands are disabled. Delete (`item.delete`, `task.delete`, `history.clear`) requires library consent **and** `--confirm`. Changing a grant does not undo previously completed actions. Exported files remain readable independently of action settings.
+Stop/cancel and screen-recording pause commands remain available after revocation and still require the current session ID. Diagnostics remain available when commands are disabled. Delete (`item.delete`, `task.delete`, `history.clear`) requires library consent **and** `--confirm`. Changing a grant does not undo previously completed actions. Exported files remain readable independently of action settings.
 
 | macOS permission | Needed for |
 | --- | --- |
@@ -93,6 +93,20 @@ Successful capture shape (dimensions and paths vary):
 
 The file and ID are ready when returned. `brain_path` is the intended source-relative export path; OCR/export publication may still be pending. Poll retrieval instead of pretending the Brain snapshot is already updated.
 
+## Select text and preview markup
+
+```sh
+myman capture targets --id shot-ID --query "Save" --json
+myman annotate --id shot-ID --ops '[{"op":"circle","target_text":"$49","color":"#FF3B30"}]' --preview --json
+myman annotate --id shot-ID --ops '[{"op":"callout","target_region":"ocr-RETURNED-ID","number":1,"text":"Review pricing"}]' --preview --json
+```
+
+`capture targets` returns OCR **line** rectangles in original image pixels (top-left), stable IDs, and a total. Queries are case-insensitive substring matches, not semantic descriptions. `target_text` or `target_region` replaces `rect` (or an arrow's `to`). A targeted arrow can omit `from` for automatic placement. Several matches produce `AMBIGUOUS_TARGET` with candidates; no edit is saved. Select a returned region ID to resolve the ambiguity. Missing/stale targets produce `TARGET_NOT_FOUND`. Recheck targets if the underlying image changes. The result is line-level; it does not claim character-accurate word boxes or arbitrary UI element recognition.
+
+`circle` draws an ellipse; `callout` draws a target box and numbered label. Labels use a nearby in-bounds position with minimal overlap with prior labels; preview busy images before committing. Explicit pixel rectangles remain supported. `preview` renders the full output to a temporary PNG; `dry-run` only validates. Neither writes a library item, changes backdrop preferences, or alters the clipboard. They cannot be combined or used with clipboard/open-editor flags. To save, repeat the same operation against the same source ID without `--preview`.
+
+Temporary previews, thumbnails, contact sheets and frames expire after one hour, on app restart, or when an item is deleted/hidden. The cache is capped at 256 files. Treat their paths as short-lived and regenerate them when needed. Saved captures remain in the normal library. `screenshot.ocr` retains the legacy `box` (Vision normalized/bottom-left) and additionally returns the same `id` and pixel `rect` as `capture targets`.
+
 ## Recordings, meetings, and dictation
 
 ```sh
@@ -114,9 +128,38 @@ myman meeting config get --json
 myman meeting config set --auto-record-meetings off --json
 ```
 
-Retain the start result's session ID. Stop/cancel never silently picks another recording. There is no separate Zoom participant: MyMan records a call already running on this Mac. Meetings stop into processing, then Brain retrieval supplies the transcript/summary as it becomes available. Screen recordings require macOS 15+, return a `.mov` path/duration and `transcript_status: pending`; microphone defaults off, system audio on, webcam off. Webcam means the existing floating camera bubble. Cancel discards instead of restarting the picker. Dictation retains its existing paste/clipboard behavior and returns text plus its saved dictation ID when available.
+Retain the start result's session ID. Stop/cancel never silently picks another recording. Repeating stop with a retained finalized session ID returns that same saved item. There is no separate Zoom participant: MyMan records a call already running on this Mac. Meetings stop into processing, then Brain retrieval supplies the transcript/summary as it becomes available. Screen recordings require macOS 15+, return a `.mov` path/duration and `transcript_status: pending`; microphone defaults off, system audio on, webcam off. Webcam means the existing floating camera bubble. Cancel discards instead of restarting the picker. Dictation retains its existing paste/clipboard behavior and returns text plus its saved dictation ID when available.
 
 Legacy bare `meeting`, `dictation`, and `record` retain their existing UI toggles. Bare `screenshot` opens the normal picker. They return `interactive: true, dispatched: ...`; they do not claim a completed capture. `--wait` completion and structured geometry belong to agent commands.
+
+## Window recording, pause, inspection and export
+
+```sh
+myman windows list --json
+myman record start --window-id RETURNED-ID --max-duration 30 --mic off --system-audio off --json
+myman record pause --session-id RETURNED-SESSION-ID --json
+myman record resume --session-id RETURNED-SESSION-ID --json
+myman record status --session-id RETURNED-SESSION-ID --json
+myman record stop --session-id RETURNED-SESSION-ID --json
+# After an automatic stop or a disconnected client:
+myman record result --session-id RETURNED-SESSION-ID --json
+
+myman record frames --id recording-ID --times 0.5,2,5 --width 400 --json
+myman record frames --id recording-ID --count 6 --json
+myman record export --id recording-ID --start 1 --end 8 --max-bytes 20000000 --json
+```
+
+Window capture uses a ScreenCaptureKit window filter. It cannot be combined with display/region/coordinates or a webcam bubble: a floating camera window is not part of the selected window. Full display and region recording retain their existing camera support. Window ID can become invalid if its app closes/replaces the window; discover it again instead of substituting the full display.
+
+Agent recordings default to a **300-second wall-clock limit**, including pauses; `--max-duration` accepts 1–3600 seconds. MyMan owns the timer, so the limit remains active if the agent disconnects. Normal human recordings retain their existing behavior. The stream acknowledges recording output before start succeeds; stop waits for output finalization, narration merge and library insertion. Timing can exceed the requested limit slightly due to capture/encoding shutdown latency.
+
+Named status/result returns `recording`, `pausing`, `paused`, `starting`, `finalizing`, `finalized`, `cancelled`, or `failed`. Pause/resume keeps one session ID and joins completed segments without paused time. `record result` is a poll, not a blocking wait; poll until `finalized` before attaching the file. Up to 32 terminal results are retained in memory for this app launch. Restarting the app or deleting/hiding content expires those results; retrieve an existing saved item from the library instead of starting a new take. A failed finalization includes `recovery_paths` when partial media survives, and is never labeled finalized.
+
+Frames accepts up to 12 timestamps in seconds, strictly before the file's end, or `--count` for evenly spaced samples. It returns each requested/actual timestamp and PNG metadata, plus a labeled contact sheet. Width defaults to 400 pixels (160–1280); frame aspect ratio is preserved. Inspect these images using the agent host's image viewer.
+
+Export preserves the source and creates a new library recording with a `.mp4` attachment. Bounds are seconds inside the original video. With a size cap, it tries full quality, then 720p and 480p; output dimensions disclose the resulting resolution. If the complete clip still cannot fit, `SIZE_LIMIT_EXCEEDED` returns no truncated video. Increase the cap or shorten the range. A trimmed export has no generated transcript; use the original recording's evidence for analysis.
+
+Saved screenshots, finalized recordings and MP4 exports include an `attachment` object: `path`, `mime_type`, `width`, `height`, `duration` (null for an image), `file_size`, and `preview_path`. Preview generation is best-effort and does not prevent returning a successfully saved original; check for null/unavailable previews. `preview_expires_at` identifies temporary thumbnails. Attach the final file through the requesting host, not a MyMan upload endpoint.
 
 ## Notes, library, tasks, themes, and fonts
 

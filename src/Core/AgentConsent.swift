@@ -5,7 +5,7 @@ import Foundation
 enum AgentConsent {
     static let keys = ["capture": "agentCaptureEnabled", "markup": "agentMarkupEnabled",
                        "recording": "agentRecordingEnabled", "library": "agentLibraryEnabled"]
-    static let cleanup: Set<String> = ["recording.stop", "recording.cancel", "meeting.stop", "meeting.discard", "dictation.stop", "dictation.cancel"]
+    static let cleanup: Set<String> = ["recording.stop", "recording.cancel", "recording.pause", "meeting.stop", "meeting.discard", "dictation.stop", "dictation.cancel"]
     @MainActor static func requirements(_ action: String) -> [String] {
         (AgentActions.catalog["actions"] as? [[String: Any]])?.first(where: { $0["name"] as? String == action })?["permissions"] as? [String] ?? ["library"]
     }
@@ -13,7 +13,7 @@ enum AgentConsent {
         // A revoked grant must never prevent stopping a session; its ID is
         // still checked by the controller before stopping or discarding it.
         if cleanup.contains(action) { return }
-        let diagnostic = ["app.status", "app.doctor", "settings.read", "screens.list"].contains(action)
+        let diagnostic = ["app.status", "app.doctor", "settings.read", "screens.list", "recording.status"].contains(action)
         if !diagnostic {
             guard defaults.object(forKey: "agentActionsEnabled") as? Bool ?? true else { throw AgentError("AGENT_DISABLED", "Local app actions are disabled in Settings → Agents.") }
             for group in requirements(action) {

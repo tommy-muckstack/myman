@@ -24,11 +24,15 @@ final class AgentActions {
     private var inFlight = 0
     private var audioCommand = false
     private var deletionObserver: NSObjectProtocol?
+    private var exclusionObserver: NSObjectProtocol?
     private var contentRevision = 0
     let launchID = UUID().uuidString
     init(capture: CaptureController, meetings: MeetingController, voice: VoiceController) {
         self.capture = capture; self.meetings = meetings; self.voice = voice
         deletionObserver = NotificationCenter.default.addObserver(forName: .captureDeleted, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.purgeContentResults() }
+        }
+        exclusionObserver = NotificationCenter.default.addObserver(forName: .captureExcluded, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.purgeContentResults() }
         }
     }
@@ -70,7 +74,7 @@ final class AgentActions {
                 do {
                     try AgentConsent.validate(action, args: args)
                     let result = try await execute(action, args)
-                    guard revision == contentRevision || ["item.delete", "history.clear"].contains(action) else { throw AgentError("CONTENT_CHANGED", "Captured content was deleted while this job ran. Inspect existing items; do not replay the action automatically.") }
+                    guard revision == contentRevision || ["item.delete", "item.exclude", "history.clear"].contains(action) else { AgentMediaStore.shared.purge(); throw AgentError("CONTENT_CHANGED", "Captured content was deleted while this job ran. Inspect existing items; do not replay the action automatically.") }
                     jobs[id] = ["id": id, "action": action, "state": "succeeded", "result": result]
                 }
                 catch { jobs[id] = ["id": id, "action": action, "state": "failed", "error": Self.error(error)] }
@@ -78,9 +82,10 @@ final class AgentActions {
             return ["ok": true, "launch_id": launchID, "job": jobs[id]!]
         } catch { return ["ok": false, "launch_id": launchID, "error": Self.error(error)] }
     }
-    deinit { if let deletionObserver { NotificationCenter.default.removeObserver(deletionObserver) } }
+    deinit { if let exclusionObserver { NotificationCenter.default.removeObserver(exclusionObserver) }; if let deletionObserver { NotificationCenter.default.removeObserver(deletionObserver) } }
     private func purgeContentResults() {
         contentRevision += 1
+        ScreenRecorder.shared.clearCompletedAgentSessions()
         // A copied image or related-items result can refer indirectly to a
         // deleted capture. Expire all completed results rather than retain it.
         for id in order where jobs[id]?["state"] as? String != "running" {
@@ -149,7 +154,7 @@ final class AgentActions {
         switch voice.phase { case .idle, .done: break; default: throw AgentError("BUSY", "Dictation is active.") }
     }
     func execute(_ action: String, _ args: [String: Any]) async throws -> Any {
-        let isAudio = ["recording.", "dictation."].contains(where: action.hasPrefix) || ["meeting.start", "meeting.stop", "meeting.discard"].contains(action)
+        let isAudio = (action.hasPrefix("recording.") && !["recording.status", "recording.frames", "recording.export"].contains(action)) || action.hasPrefix("dictation.") || ["meeting.start", "meeting.stop", "meeting.discard"].contains(action)
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
         defer { if isAudio { audioCommand = false } }
         switch action {
@@ -161,7 +166,7 @@ final class AgentActions {
             return content.windows.map { ["id": String($0.windowID), "app": $0.owningApplication?.applicationName ?? "", "title": $0.title ?? "", "frame": [$0.frame.minX, $0.frame.minY, $0.frame.width, $0.frame.height], "coordinates": "quartz-global-top-left"] as [String: Any] }
         case "app.status":
             return ["launch_id": launchID, "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
-                    "screen_recording": ["active": ScreenRecorder.shared.isRecording, "busy": ScreenRecorder.shared.isBusy, "session_id": ScreenRecorder.shared.agentSessionID as Any? ?? NSNull()],
+                    "screen_recording": try ScreenRecorder.shared.statusForAgent(),
                     "meeting": ["session_id": meetings.activeCaptureMeetingID as Any? ?? NSNull(), "phase": String(describing: meetings.phase), "processing": meetings.isTranscribing],
                     "dictation": ["phase": voicePhase, "session_id": voice.agentSessionID as Any? ?? NSNull()],
                     "permissions": ["screen_recording": CGPreflightScreenCaptureAccess(), "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized],
@@ -171,8 +176,8 @@ final class AgentActions {
         case "screenshot.capture", "screenshot.capture_markup":
             let date = Date(), meetingID = capture.meetingIDProvider()
             let (image, region, scale, windowID) = try await capturedImage(args)
-            let output = action == "screenshot.capture_markup" ? try annotationModel(image: image, path: "", args: args).renderFinal() : image
-            var result = try capture.saveAgentImage(output, capturedAt: date, meetingID: meetingID, clipboard: args["clipboard"] as? Bool ?? false)
+            let output = action == "screenshot.capture_markup" ? try await Self.annotationModel(image: image, path: "", args: args).renderFinal() : image
+            var result = try saveImage(output, capturedAt: date, meetingID: meetingID, clipboard: args["clipboard"] as? Bool ?? false)
             result["scale"] = scale
             result["window_id"] = windowID
             if let region {
@@ -184,17 +189,24 @@ final class AgentActions {
             return result
         case "screenshot.edit":
             let (source, image) = try shot(args)
-            let model = try annotationModel(image: image, path: source.sourcePath, args: args)
+            let model = try await Self.annotationModel(image: image, path: source.sourcePath, args: args)
+            guard CaptureLifecycle.exists(kind: "screenshot", id: source.sourceID), CaptureIndex.item(source.id)?.excluded == source.excluded else { throw AgentError("CONTENT_CHANGED", "Source was deleted or hidden during OCR; nothing was saved.") }
             let count = (args["annotations"] as? [Any])?.count ?? 0
+            if args["dry_run"] as? Bool == true && args["preview"] as? Bool == true { throw AgentError("INVALID_ARGUMENTS", "Choose dry-run or preview.") }
+            if args["preview"] as? Bool == true {
+                guard args["clipboard"] as? Bool != true, args["open_editor"] as? Bool != true else { throw AgentError("INVALID_ARGUMENTS", "Preview cannot copy or open an editor.") }
+                let artifact = try AgentMediaStore.shared.image(model.renderFinal())
+                return ["preview": true, "source_id": source.id, "annotation_count": count, "attachment": artifact, "path": artifact["path"]!] as [String: Any]
+            }
             if args["dry_run"] as? Bool == true { return ["valid": true, "source_id": source.id, "annotation_count": count] as [String: Any] }
-            var result = try capture.saveAgentImage(model.renderFinal(), clipboard: args["clipboard"] as? Bool ?? false)
+            var result = try saveImage(model.renderFinal(), clipboard: args["clipboard"] as? Bool ?? false)
             result["source_id"] = source.id; result["annotation_count"] = count
             if args["open_editor"] as? Bool == true { capture.openInEditor(fileURL: URL(fileURLWithPath: result["path"] as! String)) }
             return result
         case "screenshot.import":
             let path = args["path"] as! String
             guard path.hasPrefix("/") else { throw AgentError("INVALID_ARGUMENTS", "Use an absolute image path.") }
-            return try capture.saveAgentImage(AgentImages.load(URL(fileURLWithPath: path)))
+            return try saveImage(AgentImages.load(URL(fileURLWithPath: path)))
         case "screenshot.image":
             let (_, image) = try shot(args); let png = try AgentImages.png(image)
             guard png.count <= 8 * 1024 * 1024 else { throw AgentError("TOO_LARGE", "Image exceeds 8 MiB; use the returned local path.") }
@@ -203,10 +215,16 @@ final class AgentActions {
             let (source, image) = try shot(args); let model = EditorModel(image: image, fileURL: URL(fileURLWithPath: source.sourcePath))
             model.removeBackground(); try await wait(120) { !model.isRemovingBackground }
             guard model.backgroundRemoved else { throw AgentError("NO_FOREGROUND", "No foreground object could be separated.") }
-            return try capture.saveAgentImage(model.renderFinal(), clipboard: args["clipboard"] as? Bool ?? false)
+            return try saveImage(model.renderFinal(), clipboard: args["clipboard"] as? Bool ?? false)
+        case "screenshot.targets":
+            let (source, image) = try shot(args)
+            let regions = AgentMarkup.regions(await ImageAnalysis.textObservations(image), size: AgentImages.size(image))
+            let matches = (args["query"] as? String).map { AgentMarkup.matches(regions, text: $0) } ?? regions
+            return ["source_id": source.id, "coordinates": "image-pixels-top-left", "regions": matches.prefix(200).map(\.json), "total": matches.count, "truncated": matches.count > 200] as [String: Any]
         case "screenshot.ocr":
             let (_, image) = try shot(args); let analysis = await ImageAnalysis.analyze(image)
-            return ["text": analysis.text, "regions": analysis.observations.map { ["text": $0.text, "box": [$0.box.minX, $0.box.minY, $0.box.width, $0.box.height]] }] as [String: Any]
+            let regions = AgentMarkup.regions(analysis.observations, size: AgentImages.size(image))
+            return ["text": analysis.text, "coordinates": "image-pixels-top-left", "regions": zip(regions, analysis.observations).map { region, line in region.json.merging(["box": [line.box.minX, line.box.minY, line.box.width, line.box.height], "box_coordinates": "vision-normalized-bottom-left"]) { a, _ in a } }] as [String: Any]
         case "clipboard.read":
             if args["format"] as? String == "text" { return ["text": NSPasteboard.general.string(forType: .string) as Any? ?? NSNull(), "change_count": NSPasteboard.general.changeCount] }
             guard let image = NSImage(pasteboard: .general) else { throw AgentError("NOT_FOUND", "Clipboard has no image.") }
@@ -226,19 +244,57 @@ final class AgentActions {
             try audioIdle()
             guard #available(macOS 15.0, *) else { throw AgentError("UNSUPPORTED", "Screen recording requires macOS 15 or later.") }
             let recorder = ScreenRecorder.shared
-            try await recorder.startForAgent(region: desktopRegion(args), microphone: args["microphone"] as? Bool ?? false, systemAudio: args["system_audio"] as? Bool ?? true, webcam: args["webcam"] as? Bool ?? false)
-            try await wait { recorder.isRecording || !recorder.isBusy }
-            guard let id = recorder.agentSessionID, recorder.isRecording else { throw AgentError("CAPTURE_FAILED", "Screen recording did not start.") }
-            return ["session_id": id, "state": "recording"]
+            let windowID = args["window_id"] as? String
+            guard windowID == nil || (args["display"] == nil && args["region"] == nil && args["coordinates"] == nil) else { throw AgentError("INVALID_ARGUMENTS", "Choose window-id or display/region.") }
+            try await recorder.startForAgent(region: windowID == nil ? desktopRegion(args) : nil, windowID: windowID, maximumDuration: args["max_duration"] as? Double ?? 300, microphone: args["microphone"] as? Bool ?? false, systemAudio: args["system_audio"] as? Bool ?? true, webcam: args["webcam"] as? Bool ?? false)
+            guard let id = recorder.agentSessionID else { throw AgentError("CAPTURE_FAILED", "Screen recording did not start.") }
+            while !recorder.isRecording && recorder.isBusy { try await Task.sleep(for: .milliseconds(100)) }
+            let status = try await recordingStatus(id)
+            guard status["state"] as? String != "failed" else { throw AgentError("CAPTURE_FAILED", "Screen recording did not start.", details: ["session": status]) }
+            return status
+        case "recording.status":
+            return try await recordingStatus(args["session_id"] as? String)
+        case "recording.pause", "recording.resume":
+            guard #available(macOS 15.0, *) else { throw AgentError("UNSUPPORTED", "Screen recording requires macOS 15 or later.") }
+            let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
+            if action == "recording.pause" { try await recorder.pauseForAgent() } else { try await recorder.resumeForAgent() }
+            return try recorder.statusForAgent(sessionID: args["session_id"] as? String)
+        case "recording.frames":
+            let source = try item(args)
+            guard source.kind == "recording" else { throw AgentError("INVALID_ARGUMENTS", "Expected a recording ID.") }
+            var result = try await AgentVideo.frames(URL(fileURLWithPath: source.sourcePath), args: args)
+            result["source_id"] = source.id
+            return result
+        case "recording.export":
+            let source = try item(args)
+            guard source.kind == "recording" else { throw AgentError("INVALID_ARGUMENTS", "Expected a recording ID.") }
+            let url = SettingsStore.shared.screenshotFolderURL.appendingPathComponent("Clip-\(UUID().uuidString).mp4")
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            do {
+                try await AgentVideo.export(URL(fileURLWithPath: source.sourcePath), to: url, start: args["start"] as? Double ?? 0, end: args["end"] as? Double, maxBytes: (args["max_bytes"] as? Double).map(Int.init))
+                guard CaptureIndex.item(source.id) != nil else { throw AgentError("CONTENT_CHANGED", "Source was deleted during export.") }
+                let attachment = try await AgentVideo.attachment(url)
+                guard CaptureIndex.item(source.id)?.excluded == source.excluded else { throw AgentError("CONTENT_CHANGED", "Source was deleted or hidden during export.") }
+                let record = ScreenRecording(id: UUID().uuidString, path: url.path, duration: Int(ceil(attachment["duration"] as? Double ?? 0)), createdAt: Date())
+                try await Database.shared.write { try record.insert($0) }
+                Brain.syncRecording(id: record.id, filePath: record.path, duration: record.duration, transcript: "", createdAt: record.createdAt)
+                return ["id": "recording-" + record.id, "kind": "recording", "state": "finalized", "source_id": source.id, "path": record.path, "attachment": attachment, "transcript_status": "not_generated"] as [String: Any]
+            } catch { try? FileManager.default.removeItem(at: url); throw error }
         case "recording.cancel":
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
             try await recorder.cancelForAgent(); return ["cancelled": true]
         case "recording.stop":
-            let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
-            let path = recorder.outputURL?.path; recorder.stop()
-            try await wait(180) { !recorder.isBusy }
-            guard let record = recorder.lastSavedRecord, record.path == path else { throw AgentError("SAVE_FAILED", "Recording could not be saved.") }
-            return ["id": "recording-" + record.id, "path": record.path, "duration": record.duration, "transcript_status": "pending", "brain_path": "recordings/\(Brain.day(record.createdAt))-\(record.id.prefix(8)).md"] as [String: Any]
+            let recorder = ScreenRecorder.shared
+            let id = args["session_id"] as! String
+            if id == recorder.agentSessionID {
+                recorder.stop()
+                try await wait(180) { !recorder.isBusy || recorder.sessionError != nil }
+            }
+            let result = try await recordingStatus(id)
+            guard result["state"] as? String == "finalized" else {
+                throw AgentError("SAVE_FAILED", "Recording is not finalized; inspect record status for this session.", details: ["session": result])
+            }
+            return result
         case "recording.microphone":
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
             let enabled = args["enabled"] as! Bool
@@ -355,11 +411,17 @@ final class AgentActions {
         default: throw AgentError("UNKNOWN_ACTION", "Action not implemented.")
         }
     }
-    private func annotationModel(image: NSImage, path: String, args: [String: Any]) throws -> EditorModel {
+    static func annotationModel(image: NSImage, path: String, args: [String: Any]) async throws -> EditorModel {
             let size = AgentImages.size(image); image.size = size
-            let model = EditorModel(image: image, fileURL: URL(fileURLWithPath: path))
+            let model = EditorModel(image: image, fileURL: URL(fileURLWithPath: path), persistPreferences: args["preview"] as? Bool != true && args["dry_run"] as? Bool != true)
+            let annotations = args["annotations"] as? [[String: Any]] ?? []
+            let needsOCR = annotations.contains { $0["target_text"] != nil || $0["target_region"] != nil }
+            let regions = needsOCR ? AgentMarkup.regions(await ImageAnalysis.textObservations(image), size: size) : []
+            var occupied: [CGRect] = []
+            var calloutNumber = 0
             if let color = args["color"] as? String { model.annotationColor = AgentImages.color(color) }
-            for annotation in args["annotations"] as? [[String: Any]] ?? [] {
+            for input in annotations {
+                let annotation = try AgentMarkup.resolve(input, regions: regions, size: size)
                 let id = UUID(), type = annotation["type"] as! String
                 if let color = annotation["color"] as? String { model.annotationColors[id] = AgentImages.color(color) }
                 if let font = annotation["font_size"] as? Double { model.annotationFontSizes[id] = font }
@@ -376,6 +438,19 @@ final class AgentActions {
                     case "image":
                         guard let path = annotation["path"] as? String, path.hasPrefix("/") else { throw AgentError("INVALID_ARGUMENTS", "Overlay requires an absolute image path.") }
                         model.overlayImages[id] = try AgentImages.load(URL(fileURLWithPath: path)); model.add(.image(id: id, rect: rect))
+                    case "circle":
+                        model.overlayImages[id] = try AgentMarkup.circle(size: rect.size, color: model.annotationColors[id] ?? model.annotationColor)
+                        model.add(.image(id: id, rect: rect))
+                    case "callout":
+                        calloutNumber += 1
+                        let number = annotation["number"] as? Double ?? Double(calloutNumber)
+                        guard number.rounded() == number else { throw AgentError("INVALID_ARGUMENTS", "Callout numbers must be integers.") }
+                        let label = String(Int(number)) + ((annotation["text"] as? String).map { ". " + $0 } ?? "")
+                        let badge = try AgentMarkup.badge(label, fontSize: model.annotationFontSizes[id] ?? min(32, model.annotationFontSize), color: model.annotationColors[id] ?? model.annotationColor)
+                        let labelRect = try AgentMarkup.labelRect(size: AgentImages.size(badge), target: rect, canvas: size, occupied: occupied)
+                        occupied.append(labelRect)
+                        model.add(.box(id: id, rect: rect))
+                        let labelID = UUID(); model.overlayImages[labelID] = badge; model.add(.image(id: labelID, rect: labelRect))
                     case "box": model.add(.box(id: id, rect: rect))
                     case "highlight": model.add(.highlight(id: id, rect: rect))
                     case "pixelate": model.add(.pixelate(id: id, rect: rect))
@@ -389,6 +464,19 @@ final class AgentActions {
             if let color = args["background_color"] as? String { model.customBackdropColor = AgentImages.color(color); model.backdrop = .custom }
             model.cornerRadius = args["corner_radius"] as? Double ?? 0
             return model
+    }
+    private func recordingStatus(_ id: String?) async throws -> [String: Any] {
+        var result = try ScreenRecorder.shared.statusForAgent(sessionID: id)
+        if result["state"] as? String == "finalized", let path = result["path"] as? String {
+            result["kind"] = "recording"
+            result["attachment"] = try await AgentVideo.attachment(URL(fileURLWithPath: path))
+        }
+        return result
+    }
+    private func saveImage(_ image: NSImage, capturedAt: Date = Date(), meetingID: String? = nil, clipboard: Bool = false) throws -> [String: Any] {
+        var result = try capture.saveAgentImage(image, capturedAt: capturedAt, meetingID: meetingID, clipboard: clipboard)
+        result["attachment"] = AgentMediaStore.imageAttachment(image, path: result["path"] as! String)
+        return result
     }
     private var voicePhase: String { switch voice.phase { case .idle: return "idle"; case .recording: return "recording"; case .preparing: return "preparing"; case .transcribing: return "transcribing"; case .done: return "done" } }
     static func date(_ date: Date) -> String { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f.string(from: date) }

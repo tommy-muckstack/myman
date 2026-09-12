@@ -8,7 +8,7 @@ import { execute } from './tools.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
 const strings = ['enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
-const booleans = ['help','json','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','confirm','text-only','image','captured-only','clear-due','unique','pinned-only'];
+const booleans = ['help','json','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only'];
 const options = Object.fromEntries([...strings.map(key=>[key,{type:'string'}]),...booleans.map(key=>[key,{type:'boolean'}]),...['tag','exclude-tag','participant'].map(key=>[key,{type:'string',multiple:true}])]);
 for(const action of catalog.actions)for(const [key,schema]of Object.entries(action.inputSchema.properties)){
   const flag=key.replaceAll('_','-');if(!options[flag])options[flag]={type:schema.type==='boolean'?'boolean':'string'};
@@ -19,8 +19,8 @@ const pairs = {
   'note create':'note.create','note append':'note.append','note update':'note.update','note open':'item.open',
   'meeting start':'meeting.start','meeting stop':'meeting.stop','meeting cancel':'meeting.discard','meeting rename':'meeting.rename','meeting notes':'meeting.notes',
   'dictation start':'dictation.start','dictation stop':'dictation.stop','dictation cancel':'dictation.cancel',
-  'record start':'recording.start','record stop':'recording.stop','record cancel':'recording.cancel','record microphone':'recording.microphone',
-  'editor open':'item.open','editor save':'screenshot.edit','capture import':'screenshot.import','capture ocr':'screenshot.ocr','capture image':'screenshot.image','capture copy':'clipboard.write','capture remove-background':'screenshot.remove_background',
+  'record status':'recording.status','record result':'recording.status','record pause':'recording.pause','record resume':'recording.resume','record frames':'recording.frames','record export':'recording.export','record start':'recording.start','record stop':'recording.stop','record cancel':'recording.cancel','record microphone':'recording.microphone',
+  'editor open':'item.open','editor save':'screenshot.edit','capture import':'screenshot.import','capture targets':'screenshot.targets','capture ocr':'screenshot.ocr','capture image':'screenshot.image','capture copy':'clipboard.write','capture remove-background':'screenshot.remove_background',
   'clipboard read':'clipboard.read','clipboard write':'clipboard.write',
   'library read':'item.read','library open':'item.open','library related':'item.related','library rename':'item.rename','library pin':'item.pin','library unpin':'item.pin','library hide':'item.exclude','library unhide':'item.exclude','library delete':'item.delete',
   'theme rename':'theme.rename','theme pin':'theme.pin','theme unpin':'theme.pin','theme dismiss':'theme.dismiss','theme merge':'theme.merge','theme add':'theme.assign','theme remove':'theme.assign',
@@ -33,17 +33,21 @@ export const help = `My Man — local tools for humans and agents (Node 22+)
 Usage: myman <resource> <action> [flags] --json
 
 screenshot --mode agent --display main --region x,y,w,h --wait --json
-annotate --id ID --ops-file ops.json [--dry-run] [--clipboard] --json
-record start|status|stop|cancel  meeting start|status|stop|cancel|rename|notes
+annotate --id ID --ops-file ops.json [--preview|--dry-run] [--clipboard] --json
+record start|status|result|pause|resume|stop|cancel|frames|export  meeting start|status|stop|cancel|rename|notes
 dictation start|status|stop|cancel  (stop/cancel require --session-id from start)
 note create|append|update|open --body TEXT|--body-file FILE|- [--title TITLE]
 library search|recent|read|open|related|rename|pin|unpin|hide|unhide|delete
 theme list|rename|pin|unpin|dismiss|merge|add|remove  task list|add|update|complete|reopen|delete
-capture import|ocr|image|copy|remove-background  editor open|save
+capture import|targets|ocr|image|copy|remove-background  editor open|save
 font create|open|file  clipboard read|write  settings get|set  history clear
 screens list  windows list  doctor  latest --kind screenshots
 capture-markup --mode agent --region x,y,w,h --ops-file ops.json
 
+Media: record start --window-id ID --max-duration 30; record result --session-id ID
+record frames --id ID --times 0,2,5; record export --id ID --start 1 --end 10 --max-bytes 20000000
+Markup: capture targets --id ID --query TEXT; ops accept target_text or target_region.
+Ambiguous targets return candidates without saving. Preview paths expire after an hour.
 Discovery: actions [action.name] (complete JSON schemas); invoke <action.name> [JSON]
 Jobs: --no-wait returns a job ID; job UUID polls it. --request-id UUID deduplicates retries.
 Deletion: enable library access in Settings → Agents AND pass --confirm.
@@ -92,7 +96,7 @@ export async function plan(argv) {
   }
   const pair=p.slice(0,2).join(' ');
   let name=pairs[pair], args={}, consumed=2;
-  if(['meeting status','record status','dictation status'].includes(pair)){allowed(v,[]);if(p.length!==2)fail('Unexpected arguments.');return {type:'action',name:'app.status',args:{},control,select:p[0]==='record'?'screen_recording':p[0]};}
+  if(['meeting status','dictation status'].includes(pair)){allowed(v,[]);if(p.length!==2)fail('Unexpected arguments.');return {type:'action',name:'app.status',args:{},control,select:p[0]==='record'?'screen_recording':p[0]};}
   if(['screenshot','capture-markup'].includes(p[0])){if(v.mode!=='agent')fail('Geometry capture requires --mode agent.');name=p[0]==='screenshot'?'screenshot.capture':'screenshot.capture_markup';consumed=1;}
   if(p[0]==='annotate'){name='screenshot.edit';consumed=1;}
   if(name){
@@ -102,7 +106,7 @@ export async function plan(argv) {
     allowed(v,[...Object.keys(schema.properties).map(k=>k.replaceAll('_','-')),...special]);
     for(const [key,val] of Object.entries(v)) {
       const target=key.replaceAll('-','_');if(!Object.hasOwn(schema.properties,target))continue;
-      args[target]=schema.properties[target].type==='boolean'&&typeof val==='string'?onOff(val):schema.properties[target].type==='number'?number(val):schema.properties[target].type==='array'?(target==='region'||target==='crop'?String(val).split(',').map(number):json(val)):val;
+      args[target]=schema.properties[target].type==='boolean'&&typeof val==='string'?onOff(val):schema.properties[target].type==='number'?number(val):schema.properties[target].type==='array'?(target==='region'||target==='crop'||target==='times'?String(val).split(',').map(number):json(val)):val;
     }
     if(v.region)args.region=v.region.split(',').map(number);
     if(v['body-file']!==undefined || v.file!==undefined){if(v.body!==undefined || (v['body-file']!==undefined&&v.file!==undefined))fail('Choose one body input.');if(!Object.hasOwn(schema.properties,'body'))fail('Body input is not supported.');args.body=await input(v['body-file']??v.file);}
@@ -129,7 +133,9 @@ export async function plan(argv) {
     if(v.image && v['text-only'])fail('Choose text-only or image.');
     if(v.image && pair==='capture copy')args.format='image';
     if(pair==='settings set'){if(!v.key || v.value===undefined)fail('settings set requires --key and --value JSON.');args={[v.key]:json(v.value)};}
-    if(name==='screenshot.edit'&&args.dry_run&&(args.clipboard||args.open_editor))fail('dry-run cannot copy or open an editor.');
+    if(name==='screenshot.edit'&&(args.dry_run||args.preview)&&(args.clipboard||args.open_editor))fail('dry-run/preview cannot copy or open an editor.');
+    if(args.preview&&args.dry_run)fail('Choose preview or dry-run.');
+    if(pair==='record result'&&!args.session_id)fail('record result requires --session-id.');
     return {type:'action',name,args,control};
   }
   let command=p[0], raw={}, aliases=['notes','recordings','dictations','themes'];
@@ -147,7 +153,7 @@ export function exitCode(code){
   if(/PERMISSION/.test(code))return 2;
   if(/CANCELLED|CANCELED/.test(code))return 3;
   if(['DISABLED','AGENT_DISABLED'].includes(code))return 4;
-  if(/INVALID|UNKNOWN|CONFIRMATION_REQUIRED|ID_CONFLICT|SESSION_MISMATCH|EDIT_CONFLICT/.test(code))return 5;
+  if(/INVALID|UNKNOWN|CONFIRMATION_REQUIRED|ID_CONFLICT|SESSION_MISMATCH|EDIT_CONFLICT|AMBIGUOUS_TARGET|TARGET_NOT_FOUND/.test(code))return 5;
   if(/TIMEOUT/.test(code))return 7;
   return 6;
 }
