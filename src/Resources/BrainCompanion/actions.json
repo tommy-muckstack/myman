@@ -1,5 +1,5 @@
 {
-  "version": "0.8.0",
+  "version": "0.9.0",
   "actions": [
     {
       "name": "app.status",
@@ -25,7 +25,8 @@
             "enum": [
               "search",
               "note",
-              "settings"
+              "settings",
+              "briefs"
             ]
           }
         },
@@ -2778,6 +2779,424 @@
       "destructive": false,
       "permissions": [
         "recording"
+      ]
+    },
+    {
+      "name": "workflow.templates",
+      "description": "Two reusable recorded-brief recipes with prompts, acceptance criteria and required actions. Public Bot links must be created in the host.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "brief.create",
+      "description": "Save a recorded brief, desired outcome and acceptance criteria. First source ID must be a recording. Sources are revisioned references; this does not dispatch agents.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "outcome": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "recipe": {
+            "type": "string",
+            "enum": [
+              "bug-fix",
+              "launch-kit"
+            ]
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "minItems": 1,
+            "maxItems": 12
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "minItems": 1,
+            "maxItems": 20
+          },
+          "frame_times": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0
+            },
+            "minItems": 0,
+            "maxItems": 6
+          }
+        },
+        "required": [
+          "title",
+          "outcome",
+          "recipe",
+          "criteria",
+          "source_ids"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.list",
+      "description": "List briefs owned by or assigned to this named agent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.read",
+      "description": "Read a brief and its source freshness. include_context extracts timestamped frames and untimed transcript text from the recording; never infer transcript word timing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "include_context": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.handoff",
+      "description": "Assign distinct worker and reviewer identities to a draft or returned brief. The host dispatches the work; this action only persists the assignment.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "number",
+            "minimum": 1
+          },
+          "worker": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "reviewer": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision",
+          "worker",
+          "reviewer"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.refresh",
+      "description": "Owner refreshes source revisions and resets the brief to draft, discarding previous submission/review metadata.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.submit",
+      "description": "Assigned worker submits new saved results including at least one screenshot or recording as visual evidence.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "number",
+            "minimum": 1
+          },
+          "output_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "minItems": 1,
+            "maxItems": 20
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision",
+          "output_ids",
+          "summary"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.review",
+      "description": "Assigned independent reviewer checks every zero-based criterion once. Passing checks require submitted evidence IDs. Any failed check returns the brief for changes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "number",
+            "minimum": 1
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "criterion": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 11
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "evidenceIDs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  "minItems": 0,
+                  "maxItems": 20
+                },
+                "note": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "criterion",
+                "passed",
+                "evidenceIDs",
+                "note"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 12
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision",
+          "checks"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.delete",
+      "description": "Owner deletes brief metadata; source and result files remain. Requires confirm.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "number",
+            "minimum": 1
+          },
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision",
+          "confirm"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": true,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.export",
+      "description": "Owner prepares a local, self-contained HTML result page after independent review. Requires explicit public copy, selected result IDs and confirm. Does not publish. Temporary attachment expires in one hour.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "number",
+            "minimum": 1
+          },
+          "public_title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "public_summary": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "output_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "minItems": 1,
+            "maxItems": 4
+          },
+          "bot_url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision",
+          "public_title",
+          "public_summary",
+          "output_ids",
+          "confirm"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "brief.open",
+      "description": "Open a brief available to this agent in the My Man workspace.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
       ]
     }
   ]

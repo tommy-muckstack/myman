@@ -9,6 +9,7 @@ const result = await build({ absWorkingDir: directory, entryPoints: ['cli.mjs', 
   banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" } });
 result.outputFiles.push({ path: path.join(output, 'actions.json'), contents: await readFile(path.join(directory, 'actions.json')) });
 // The separately installed GrokBot package must carry its own workflow recipes.
+result.outputFiles.push({ path: path.resolve(directory, '../grok-bot/skills/myman/references/visual-brief-workflows.md'), contents: await readFile(path.resolve(directory, '../../docs/visual-brief-workflows.md')) });
 result.outputFiles.push({ path: path.resolve(directory, '../grok-bot/skills/myman/references/agent-workflows.md'), contents: await readFile(path.resolve(directory, '../../docs/agent-workflows.md')) });
 const packages = new Set(Object.keys(result.metafile.inputs).filter(p => p.includes('node_modules/')).map(p => {
   const parts = p.split('node_modules/').at(-1).split('/');

@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { catalog, describe, discover, invoke, request } from './actions.mjs';
+import { checkWorkflow } from './workflows.mjs';
 import { Brain, BrainError } from './brain.mjs';
 import { execute } from './tools.mjs';
 
@@ -16,6 +17,17 @@ for(const action of catalog.actions)for(const [key,schema]of Object.entries(acti
 const common = ['machine','json','root','wait','wait-ready','no-wait','request-id','wait-timeout','mode'];
 const legacy = {open:'open',launcher:'open',screenshot:'screenshot',note:'note',dictation:'dictation',meeting:'meeting','cancel-meeting':'cancel-meeting',record:'record',settings:'settings'};
 const pairs = {
+  'workflow templates':'workflow.templates',
+  'brief create':'brief.create','brief open':'brief.open',
+  'brief list':'brief.list',
+  'brief read':'brief.read',
+  'brief handoff':'brief.handoff',
+  'brief refresh':'brief.refresh',
+  'brief submit':'brief.submit',
+  'brief review':'brief.review',
+  'brief delete':'brief.delete',
+  'brief export':'brief.export',
+
   'machine current':'machine.current','agent whoami':'agent.whoami','agent list':'agent.list','resource version':'resource.version',
   'bundle create':'bundle.create','bundle list':'bundle.list','bundle read':'bundle.read','bundle update':'bundle.update','bundle delete':'bundle.delete',
   'handoff create':'handoff.create','handoff list':'handoff.list','handoff read':'handoff.read','handoff update':'handoff.update',
@@ -47,7 +59,9 @@ library search|recent|read|open|related|rename|pin|unpin|hide|unhide|delete
 theme list|rename|pin|unpin|dismiss|merge|add|remove  task list|add|update|complete|reopen|delete
 capture import|compare|targets|ocr|image|copy|remove-background  editor open|save
 font match|create|preview|quality|open|file  clipboard read|write  settings get|set  history clear
-screens list  windows list  doctor  latest --kind screenshots
+screens list  windows list  doctor  workflow check|templates  latest --kind screenshots
+brief create|list|read|open|handoff|refresh|submit|review|delete|export
+brief read --id ID --include-context returns timestamped frames and untimed transcript text.
 capture-markup --mode agent --region x,y,w,h --ops-file ops.json
 
 Collaboration: agent whoami|list; machine current; --machine ID verifies the selected Mac.
@@ -111,6 +125,7 @@ export async function plan(argv) {
   if(p[0]==='invoke') {allowed(v,[]);if(p.length<2||p.length>3)fail('Use invoke action.name [JSON].');return {type:'action',name:p[1],args:p[2]?json(p[2]):{},control,raw:true};}
   if(p.length===1 && legacy[p[0]] && (!v.mode || v.mode==='interactive') && !Object.keys(v).some(k=>!['json','mode'].includes(k)))return {type:'interactive',host:legacy[p[0]]};
   if(v.mode==='interactive')fail('Use the legacy single command for interactive UI, or --mode agent.');
+  if(p[0]==='workflow'&&p[1]==='check'){allowed(v,[]);if(p.length!==2)fail('Use workflow check.');return {type:'workflow-check',control};}
   if(p[0]==='doctor'){allowed(v,[]);if(p.length!==1)fail('Use doctor.');return {type:'doctor',root:v.root,control};}
   if(p[0]==='meeting'&&p[1]==='config'){
     if(p.length!==3||!['get','set'].includes(p[2]))fail('Use meeting config get|set.');
@@ -197,6 +212,7 @@ export async function run(argv, deps={}){
   const transport=payload=>(deps.request??request)({...payload,...(machine?{machine_id:machine}:{})});
   const call=deps.invoke??((name,args,control)=>invoke(name,args,{...control,transport}));
   if(task.type==='help')return {help};
+  if(task.type==='workflow-check')return checkWorkflow({transport,machine:machine??process.env.MYMAN_MACHINE_ID});
   if(task.type==='discovery')return discover(task.name,{transport,offline:task.offline});
   if(task.type==='jobs')return transport({method:'jobs'});
   if(task.type==='value')return task.value;

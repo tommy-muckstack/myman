@@ -24,6 +24,7 @@ struct AgentSettingsView: View {
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             Text("Agent setup: myman doctor --json\nCommand reference: myman --help")
                 .font(MM.Fonts.metadata).textSelection(.enabled)
+            Button("Recorded briefs and workflow templates…") { AgentBriefWindow.shared.open() }.clickable()
             AgentIdentitySettings()
         }.font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary).padding(MM.Layout.paddingLarge) }
     }

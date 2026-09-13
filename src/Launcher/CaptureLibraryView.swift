@@ -44,7 +44,6 @@ struct CaptureThumbnail: View {
 }
 
 private struct CaptureRowHighlight: ViewModifier {
-    let selected: Bool
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -52,9 +51,9 @@ private struct CaptureRowHighlight: ViewModifier {
         content
             .contentShape(Rectangle())
             .background(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
-                .fill(selected || hovered ? MM.Colors.surface : .clear))
+                .fill(hovered ? MM.Colors.surface : .clear))
             .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
-                .strokeBorder(selected ? MM.Colors.border : hovered ? MM.Colors.border.opacity(0.5) : .clear))
+                .strokeBorder(hovered ? MM.Colors.border.opacity(0.5) : .clear))
             .onHover { hovered = $0 }
             .onDisappear { hovered = false }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
@@ -84,9 +83,10 @@ struct CaptureResultRow: View {
         }
         .padding(MM.Layout.spacing)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .modifier(CaptureRowHighlight(selected: selected))
+        .modifier(CaptureRowHighlight())
         .foregroundStyle(MM.Colors.textPrimary)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
 
@@ -264,7 +264,8 @@ struct CaptureLibraryView: View {
                 if theme.pinned { Image(systemName: "pin.fill").foregroundStyle(MM.Colors.accent) }
                 Text(theme.latest.formatted(.relative(presentation: .named))).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }.padding(MM.Layout.spacing).frame(maxWidth: .infinity, alignment: .leading)
-                .modifier(CaptureRowHighlight(selected: selectedThemeID == theme.id))
+                .modifier(CaptureRowHighlight())
+                .accessibilityAddTraits(selectedThemeID == theme.id ? [.isSelected] : [])
                 .clickable()
         }.buttonStyle(.plain)
             .contextMenu {
@@ -276,6 +277,7 @@ struct CaptureLibraryView: View {
     }
     @ViewBuilder private func itemMenu(_ item: CaptureItem) -> some View {
         Button("Open original") { CaptureActions.open(item, query: query) }
+        if item.kind == "recording" { Button("Make agent brief…") { AgentBriefWindow.shared.open(recording: item) } }
         Button("Preview & related") { CaptureDetailController.shared.open(item, query: query) }
         Button("Copy") { CaptureActions.copy(item) }
         Button(item.kind == "screenshot" ? "Copy detected text" : "Copy text") { CaptureActions.copy(item, textOnly: true) }

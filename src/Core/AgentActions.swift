@@ -31,10 +31,10 @@ final class AgentActions {
     init(capture: CaptureController, meetings: MeetingController, voice: VoiceController) {
         self.capture = capture; self.meetings = meetings; self.voice = voice
         deletionObserver = NotificationCenter.default.addObserver(forName: .captureDeleted, object: nil, queue: .main) { [weak self] notification in
-            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String) }
+            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String); AgentBriefs.shared.purge(itemID: notification.object as? String) }
         }
         exclusionObserver = NotificationCenter.default.addObserver(forName: .captureExcluded, object: nil, queue: .main) { [weak self] notification in
-            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String) }
+            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String); AgentBriefs.shared.purge(itemID: notification.object as? String) }
         }
     }
     static var catalog: [String: Any] {
@@ -222,6 +222,7 @@ final class AgentActions {
     }
     private func executeCoordinated(_ action: String, _ args: [String: Any]) async throws -> Any {
         try AgentIdentity.shared.validate(AgentContext.principal, action: action)
+        if action.hasPrefix("brief.") { return try await AgentBriefs.shared.execute(action, args) }
         if ["agent.", "bundle.", "handoff.", "collaboration.", "lease."].contains(where: action.hasPrefix) || action == "session.transfer" {
             return try AgentCollaboration.shared.execute(action, args)
         }
@@ -262,6 +263,7 @@ final class AgentActions {
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
         defer { if isAudio { audioCommand = false } }
         switch action {
+        case "workflow.templates": return ["templates": AgentWorkflowTemplates.catalog, "host_sharing_verified": false]
         case "app.doctor":
             return ["permissions": ["screen_recording": CGPreflightScreenCaptureAccess(), "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, "camera": AVCaptureDevice.authorizationStatus(for: .video) == .authorized, "accessibility": AXIsProcessTrusted(), "calendar": EKEventStore.authorizationStatus(for: .event) == .fullAccess, "input_monitoring": "not_required"], "agents": AgentConsent.status(), "brain_root": Brain.root.path, "brain_available": FileManager.default.fileExists(atPath: Brain.root.appendingPathComponent("catalog.json").path), "screen_recording_supported": ScreenRecorder.isSupported, "pointer_control": "not_supported"] as [String: Any]
         case "windows.list":

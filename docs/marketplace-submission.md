@@ -1,6 +1,8 @@
+> September 13, 2026: **0.9.0 candidate prepared** for recorded briefs, worker/reviewer evidence checks and local share pages. My Man 1.1.65 is published; it does not contain these new brief actions. The initial marketplace application remains recorded as pending. No update email, new form, public Bot template link or live GrokBot acceptance is claimed.
+
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.8.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.9.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -51,7 +53,7 @@ See [smoke results and remaining client checks](grok-bot-marketplace.md#verifica
 
 New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.8.0 marketplace update is prepared, not submitted or approved.
 
-## Candidate 0.8.0
+## Previous candidate 0.8.0
 
 Adds a separate local app MCP server, screenshot differences, word-level OCR targets, timed video overlays/zoom/redaction, readiness waiting, and font-quality reports. New actions require an app build advertising them in live discovery; MyMan 1.1.65 includes them. See [verification](verification/agent-v07-2026-09-12.md). This candidate is packaged with MyMan 1.1.65, but is not submitted to or approved by the marketplace. The original publisher application remains awaiting review; no update email or duplicate form was sent.
 
@@ -59,4 +61,10 @@ Adds a separate local app MCP server, screenshot differences, word-level OCR tar
 
 Adds human-managed named credentials, explicit Mac verification, shared bundles of source references, guarded edits, session transfer, temporary resource reservations and pull-based handoffs/events. Each agent retains its own job ownership. There is no remote listener, automatic dispatch or message sending. Credentials scope bridge actions and do not sandbox same-login filesystem access. See [workflows and limitations](multi-agent-workflows.md). Local multi-client verification does not establish GrokBot host activation or cross-Mac delivery. This candidate is packaged with MyMan 1.1.65, but is not submitted to or approved by the marketplace; the initial Cursor application remains awaiting review. The next marketplace step is an authorized update email to marketplace-publishing@cursor.com with org @muckstack, repo https://github.com/tommy-muckstack/myman and version 0.8.0. No email or form was sent.
 
-[Current 0.8.0 verification](verification/multi-agent-and-transparency-2026-09-12.md): 88 companion tests; native suite 177 tests with six existing skips; two live MCP clients and packaged CLI; Intel/Apple Silicon builds.
+[Previous 0.8.0 verification](verification/multi-agent-and-transparency-2026-09-12.md): 88 companion tests; native suite 177 tests with six existing skips; two live MCP clients and packaged CLI; Intel/Apple Silicon builds.
+
+## Recorded brief candidate 0.9.0
+
+Adds a native brief workspace; revisioned recording references; explicit worker/reviewer assignments; per-criterion evidence review; timestamped frame extraction with explicitly untimed transcripts; local share pages containing user-selected result media and separately authored public copy; two reusable workflow prompts; and live connection/setup checks. Requires an app advertising `brief.*` and `workflow.templates`; plugin installation alone does not supply native actions. See [workflow guide](visual-brief-workflows.md).
+
+Cursor marketplace update ready: **myman-brain 0.9.0**. Repo: https://github.com/tommy-muckstack/myman. While the initial @muckstack application is pending, the next step is an authorized update email to marketplace-publishing@cursor.com with this version and repository, rather than a duplicate application. No email has been sent.

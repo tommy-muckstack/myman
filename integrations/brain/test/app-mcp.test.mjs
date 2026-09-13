@@ -37,7 +37,7 @@ test(`app MCP discovers strict action tools, preserves permission errors and req
   await client.connect(new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL(entry,import.meta.url))],env:{...process.env,MYMAN_AGENT_SOCKET:socket},stderr:'pipe'}));
   t.after(()=>client.close());
   const {tools}=await client.listTools();
-  assert.equal(tools.length,catalog.actions.length+2);
+  assert.equal(tools.length,catalog.actions.length+3);
   assert.ok(tools.some(x=>x.name==='myman_app_screenshot_compare'));
   assert.equal(tools.find(x=>x.name==='myman_app_item_delete').annotations.destructiveHint,true);
   assert.equal(tools.find(x=>x.name==='myman_app_note_create').annotations.readOnlyHint,false);

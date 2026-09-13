@@ -145,6 +145,7 @@ struct CaptureDetailView: View {
                     Text("\(item.kind.capitalized) · \(item.capturedAt.formatted(date: .abbreviated, time: .shortened))").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                 }
                 Spacer()
+                if item.kind == "recording" { Button("Make agent brief") { AgentBriefWindow.shared.open(recording: item) }.clickable() }
                 if item.kind != "dictation" { Button("Open original") { CaptureActions.open(item) }.clickable() }
                 Button(item.kind == "screenshot" ? "Copy all text" : "Copy text") { CaptureActions.copy(item, textOnly: true) }.clickable()
             }
