@@ -1,6 +1,6 @@
 # Agent CLI parity
 
-Working baseline: 1.1.59 (71). The supplied Hugo feedback inspected an older checkout: the released app already has 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
+Working baseline: 1.1.59 (71). The supplied GrokBot feedback inspected an older checkout: the released app already has 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
 
 ## Implementation plan
 

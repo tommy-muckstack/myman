@@ -99,10 +99,14 @@ Adjust times and rectangles to the returned video dimensions/duration. Edit time
 
 Font quality includes an actual-font specimen, per-letter evidence and `capture_next`. Capture those letters at a larger size in the same typeface and weight when the user wants a better reconstruction. A supported sample is evidence, not a guarantee of a perfect font.
 
-## Hugo end-to-end acceptance recipe (requires host access)
+## GrokBot end-to-end acceptance recipe (requires host access)
 
-On the registered Mac, run live discovery and confirm these actions exist. Use a dedicated synthetic test window, with no private content. Ask Hugo:
+On the registered Mac, run live discovery and confirm these actions exist. Use a dedicated synthetic test window, with no private content. Ask GrokBot:
 
 > Use MyMan on my Mac to capture the test window, locate one word, create a markup preview and save it after inspection. Compare the original and marked-up screenshot. Record a five-second demo of that window with microphone and system audio off, wait for its finalized result, export it with a title and caption, inspect its frames, and return the final image and video as attachments. Report any unsupported tool or permission rather than switching to my full display or replaying work.
 
-Verify tool discovery, the selected Mac, actual attachment delivery, and cleanup of the synthetic test artifacts. Local CLI/MCP tests cannot prove these host behaviors. No Hugo execution tool is available in the current development environment, so this recipe remains unverified until run in Hugo.
+Verify tool discovery, the selected Mac, actual attachment delivery, and cleanup of the synthetic test artifacts. Local CLI/MCP tests cannot prove these host behaviors. No GrokBot execution tool is available in the current development environment, so this recipe remains unverified until run in GrokBot.
+
+## Multiple agents
+
+See [four collaborative workflows and executable recipes](multi-agent-workflows.md). Use neutral role names or names explicitly supplied by the user. Companion 0.8.0 adds credential-bound identities, source bundles, guarded edits, recording ownership, temporary leases and explicit handoffs. Hosts schedule their own work and target the intended Mac; MyMan never launches other agents or sends messages.

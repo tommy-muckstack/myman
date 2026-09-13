@@ -1,12 +1,12 @@
 # Cursor Marketplace and GrokBot preparation
 
-Status (September 12, 2026): root Cursor candidate **0.7.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or Hugo/GrokBot activation is claimed. The 0.7.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
+Status (September 12, 2026): root Cursor candidate **0.8.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or GrokBot activation is claimed. The 0.8.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
 
 For each agent-package update, follow the [Cursor marketplace release policy](cursor-marketplace-release.md). Shipping MyMan does not update the marketplace package. Use the [My Man logo](https://raw.githubusercontent.com/tommy-muckstack/myman/main/assets/icon-256.png) in publisher/listing fields and check [submission status](marketplace-submission.md#submission-status) before preparing an update notification.
 
 ## Two packages, distinct execution locations
 
-- Repository root `plugin.json`, `mcp.json`, `skills/myman-brain/`: portable Agent Plugin for a client running on the Mac. MCP is retrieval-only and points at the committed standalone server, so installation needs Node.js 22+ but no npm install.
+- Repository root `plugin.json`, `mcp.json`, `skills/myman-brain/`: portable Agent Plugin for a client running on the Mac. MCP includes separate read-only retrieval and permission-controlled app-action servers in committed standalone bundles, so installation needs Node.js 22+ but no npm install.
 - `integrations/grok-bot/`: a skill-only Agent Plugin for GrokBot. It deliberately has no MCP server to start on the cloud computer. Its skill runs the installed MyMan CLI through approved local-computer execution on the registered Mac.
 
 Cursor explicitly accepts the portable root Agent Plugins manifest, so `.cursor-plugin/plugin.json` is unnecessary for this single-plugin submission. Keeping one manifest avoids divergent metadata and MCP variable conventions. [Cursor supported formats and submission checklist](https://cursor.com/docs/reference/plugins).
@@ -19,7 +19,7 @@ Both manifests are checked against the official Agent Plugins 1.0.0 schemas. No 
 2. Install Node.js 22+ on the same Mac. Run `/Applications/My Man.app/Contents/Resources/myman doctor --json` (quote the app path).
 3. For optional app operations only, in MyMan Settings → Agents enable only the capture/markup/recording/library capabilities needed. Grant OS Screen Recording/Microphone/Camera/Accessibility/Calendar permissions only as required by the workflow.
 4. Enable the desired local-computer execution policy in GrokBot on that Mac; approve the requested commands. Install/load the skill package through the host's supported plugin flow.
-5. Ask Hugo to select that registered Mac and run doctor, then retrieve a small known fixture or requested meeting. A cloud-shell success cannot substitute for this check.
+5. Ask GrokBot to select that registered Mac and run doctor, then retrieve a small known fixture or requested meeting. A cloud-shell success cannot substitute for this check.
 
 GrokBot documents local execution under Settings → General → Agent, with per-command approval as the default. Marketplace and installed plugin controls are documented separately. These are host features, not permissions MyMan can grant. [GrokBot settings](https://docs.x.ai/grok-bot/settings-and-notifications), [local execution security](https://docs.x.ai/grok-bot/approvals-security-and-privacy).
 
@@ -39,7 +39,7 @@ GrokBot package directory: `integrations/grok-bot`
 
 Local Mac MCP package directory: repository root
 
-License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.7.0. New media actions require MyMan 1.1.61. See [media verification](verification/agent-media-2026-09-12.md); the matrix below records the earlier marketplace baseline.
+License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.8.0. New media actions require MyMan 1.1.61. See [media verification](verification/agent-media-2026-09-12.md); the matrix below records the earlier marketplace baseline.
 
 Cursor's documented submission flow is a public Git repository plus review through its publish form; it supports the Agent Plugins standard. That verifies the Cursor route, **not a GrokBot-specific submission API or a Mac-local MCP bridge**. [Cursor plugin reference](https://cursor.com/docs/reference/plugins), [submission form](https://cursor.com/marketplace/publish), [Agent Plugins schemas](https://agent-plugins.org/).
 
@@ -64,7 +64,7 @@ Executed September 12, 2026 on the development Mac. Only counts and validation o
 | Missing Brain failure | Pass: fixture test reports `BRAIN_NOT_FOUND`; skill tells cloud-only clients to report unavailable Mac access instead of copying Brain data |
 | Cursor local link | Pass: candidate linked at `~/.cursor/plugins/local/myman-brain`; no existing link overwritten |
 | Cursor Customize discovery / skill invocation | **Not verified**: link creation is not client activation. Cursor 3.4.20 is present; no authenticated IDE agent invocation was performed. Reload Cursor and run the reviewer prompt in the listing |
-| Hugo local Shell status / recent with Mac machineId | **Not run**: no Hugo execution tool is available in this session; requires Hugo selecting the registered Mac |
+| GrokBot local Shell status / recent with Mac machineId | **Not run**: no GrokBot execution tool is available in this session; requires GrokBot selecting the registered Mac |
 | Actual Grok local-execution refusal / Mac offline | **Not run in Grok**: documented stop/report instructions and missing-root tests are not a live host-policy test |
 | Submission | **Awaiting review**: Tommy reports initial publisher application confirmation on September 12, 2026; this supersedes the earlier agent browser login blocker. Prepared package updates still require a separate notify/submit step |
 | GrokBot listing / cloud-to-Mac stdio bridge | Not verified / not claimed; use Mac-local CLI execution |
@@ -79,16 +79,22 @@ npm test --prefix integrations/brain
 npm run check-bundle --prefix integrations/brain
 ```
 
-For Hugo, select the registered Mac and run `node "$HOME/MyManBrain/tools/cli.mjs" status`, then `node "$HOME/MyManBrain/tools/cli.mjs" recent '{"kind":"meetings","limit":3}'`. The file argument resolves to an absolute path on that Mac. If execution is unavailable, stop and report the limitation. A cloud empty-folder result does not answer a question about the user's Brain. The source checkout equivalent is `node /absolute/path/to/myman/integrations/brain/cli.mjs status` after the development install.
+For GrokBot, select the registered Mac and run `node "$HOME/MyManBrain/tools/cli.mjs" status`, then `node "$HOME/MyManBrain/tools/cli.mjs" recent '{"kind":"meetings","limit":3}'`. The file argument resolves to an absolute path on that Mac. If execution is unavailable, stop and report the limitation. A cloud empty-folder result does not answer a question about the user's Brain. The source checkout equivalent is `node /absolute/path/to/myman/integrations/brain/cli.mjs status` after the development install.
 
 `node_modules/` is ignored. Fixture tests create synthetic temporary exports; no personal Brain content or live smoke payloads are committed. The marketplace change touches documentation, plugin metadata, skill instructions and MCP packaging tests only.
 
 See [CLI reference](agent-cli.md), [parity matrix](agent-cli-parity.md), and [test evidence](verification/agent-cli-2026-09-12.md). Remaining host checks require the actual client/account; they are not reasons to upload private Brain data or enable an unrestricted network service.
 
-New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.7.0 marketplace update is prepared, not submitted or approved.
+New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.8.0 marketplace update is prepared, not submitted or approved.
 
-## Candidate 0.7.0 update
+## Candidate 0.8.0 update
 
-The root package now includes `myman-app`, a separate local action MCP server. The GrokBot package remains skill-only and uses approved execution on the registered Mac. New screenshot comparison, word-targeting, video finishing, readiness and font-quality commands require live app support (not public 1.1.64). [New verification](verification/agent-v07-2026-09-12.md) supersedes the historical counts above. Hugo invocation and attachment delivery remain unverified because no Hugo execution tool is available in this environment.
+The root package now includes `myman-app`, a separate local action MCP server. The GrokBot package remains skill-only and uses approved execution on the registered Mac. New screenshot comparison, word-targeting, video finishing, readiness and font-quality commands require live app support (not public 1.1.64). [New verification](verification/agent-v07-2026-09-12.md) supersedes the historical counts above. GrokBot invocation and attachment delivery remain unverified because no GrokBot execution tool is available in this environment.
 
-Cursor update ready after publication: `myman-brain 0.7.0`, organization `@muckstack`, repository `https://github.com/tommy-muckstack/myman`. While the initial application is pending, send an authorized update to `marketplace-publishing@cursor.com`; do not file a duplicate application. No email/form is sent by this change.
+Cursor update ready after publication: `myman-brain 0.8.0`, organization `@muckstack`, repository `https://github.com/tommy-muckstack/myman`. While the initial application is pending, send an authorized update to `marketplace-publishing@cursor.com`; do not file a duplicate application. No email/form is sent by this change.
+
+### Multi-agent additions in candidate 0.8.0
+
+Adds human-managed named credentials, explicit Mac verification, shared bundles of source references, guarded edits, session transfer, temporary resource reservations and pull-based handoffs/events. Each agent retains its own job ownership. There is no remote listener, automatic dispatch or message sending. Credentials scope bridge actions and do not sandbox same-login filesystem access. See [workflows and limitations](multi-agent-workflows.md). Local multi-client verification does not establish GrokBot host activation or cross-Mac delivery. This candidate is prepared, not published/submitted/approved; the initial Cursor application remains awaiting review. After publication, the next step is an authorized update email to marketplace-publishing@cursor.com with org @muckstack, repo https://github.com/tommy-muckstack/myman and version 0.8.0. No email or form was sent.
+
+[Current 0.8.0 verification](verification/multi-agent-and-transparency-2026-09-12.md): 88 companion tests; native suite 177 tests with six existing skips; two live MCP clients and packaged CLI; Intel/Apple Silicon builds.

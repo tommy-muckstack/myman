@@ -175,7 +175,10 @@ struct EditorView: View {
             .buttonStyle(.plain)
             .foregroundStyle(model.backgroundRemoved ? MM.Colors.textTertiary : MM.Colors.textSecondary)
             .disabled(model.isRemovingBackground || model.backgroundRemoved)
-            .help("Cut out — remove the background behind the subject")
+            .help("Remove background — make the surrounding area transparent")
+            .alert("Background unchanged", isPresented: Binding(get: { model.backgroundRemovalError != nil }, set: { if !$0 { model.backgroundRemovalError = nil } })) {
+                Button("OK") { model.backgroundRemovalError = nil }.clickable()
+            } message: { Text(model.backgroundRemovalError ?? "") }
 
             Button {
                 addPhoto()

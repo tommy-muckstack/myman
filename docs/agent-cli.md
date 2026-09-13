@@ -222,3 +222,7 @@ Requires a MyMan build advertising these actions; public 1.1.64 does not contain
 The root plugin config starts two stdio servers: existing `myman-brain` and new `myman-app`. Manual configuration may start `node /absolute/path/MyManBrain/tools/app-server.mjs`. Each advertised action becomes `myman_app_` plus its dotted name converted to underscores, with a strict schema generated from the shared catalog. `myman_app_capabilities` checks live support and grants; bundled tool availability alone is not proof the running app supports it.
 
 `_request_id` is an optional UUID for deduplication; retain it for mutations. `_wait_timeout` defaults to 25 seconds; a pending result contains `job_id` for `myman_app_job`. Native `app.wait` can continue while the MCP request returns pending. The app enforces the same grants, deletion confirmation, socket ownership, and resource lifecycle as CLI calls. No shell/pointer tool or permission-grant tool is introduced. Image pixels are returned only by explicit image/clipboard-image commands; other tools return attachment paths.
+
+## Multi-agent collaboration (0.8.0)
+
+The new `agent`, `machine`, `resource`, `bundle`, `handoff`, `lease`, `session transfer` and `collaboration events` commands use the same catalog and app MCP server. See [setup, four example workflows, permissions, revision guards, ownership and lifecycle](multi-agent-workflows.md). These commands require the updated app; public 1.1.64 does not provide them. Agent names are user-chosen, never product defaults.

@@ -34,6 +34,6 @@ The deletion harness initially expected a zero exit for a redacted job receipt; 
 - Native search uses the user's existing semantic preference and available local embeddings. Exact matches rank above meaning-based matches. It is bounded to 1,000 candidates and reports partial results; Brain MCP/export search stays lexical.
 - Receipts retain up to seven days, 256 terminal jobs and 32 sessions, outside Brain. Inline results over 64 KiB are omitted with artifact references where available. Expiry/eviction ends deduplication; agents must not replay unknown work automatically.
 - A crash between saving an artifact and persisting its completion can leave an interrupted receipt. That state requires inspection of existing captures. Recovery does not resume recording or run background tasks.
-- Local attachment files and preview rendering were verified. Sending attachments through Hugo/Cursor, live host skill activation and marketplace approval were not simulated or claimed.
+- Local attachment files and preview rendering were verified. Sending attachments through GrokBot/Cursor, live host skill activation and marketplace approval were not simulated or claimed.
 
 Universal release build: `swift build -c release --arch arm64 --arch x86_64` passed for both architectures. The initial explicit scratch-path attempt failed to resolve cached AmplitudeCore; the normal release build path succeeded.

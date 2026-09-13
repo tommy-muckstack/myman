@@ -1,6 +1,6 @@
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.7.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.8.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -28,7 +28,7 @@ Requires MyMan on macOS and Node.js 22+ on that Mac. New text-targeted markup, w
 
 The Brain MCP makes no network requests and never modifies MyMan's database. Brain sync is one-way from the app. Your agent/model provider can receive the excerpts and images it retrieves for your request. There is no hosted Brain, automatic upload, silent capture or cloud sync supplied by this plugin.
 
-For Grok Bot, local-computer execution must target the Mac containing MyMan and its Brain. Installing a plugin on Grok's cloud computer does not give it access to the Mac's files. Live Hugo invocation and marketplace installation have not yet been verified.
+For Grok Bot, local-computer execution must target the Mac containing MyMan and its Brain. Installing a plugin on Grok's cloud computer does not give it access to the Mac's files. Live GrokBot invocation and marketplace installation have not yet been verified.
 
 ## Reviewer setup
 
@@ -43,14 +43,20 @@ Keywords: myman, meetings, notes, macos, local, memory, transcripts, screenshots
 
 ## Submission status
 
-**September 12, 2026 — initial publisher application submitted; awaiting review.** Tommy reports confirmation for MuckStack, LLC (`muckstack`) and this repository via the [publish form](https://cursor.com/marketplace/publish). This supersedes the earlier agent session's login blocker. No listing, approval or live Hugo/GrokBot activation is claimed.
+**September 12, 2026 — initial publisher application submitted; awaiting review.** Tommy reports confirmation for MuckStack, LLC (`muckstack`) and this repository via the [publish form](https://cursor.com/marketplace/publish). This supersedes the earlier agent session's login blocker. No listing, approval or live GrokBot activation is claimed.
 
 The first application used the GitHub organization avatar. Tommy chose to wait for review; use the My Man logo above in the next authorized update. A newly prepared candidate is not automatically submitted or accepted. While this application is pending, surface an update email to `marketplace-publishing@cursor.com` with `@muckstack`, the repository and candidate version rather than filing a duplicate application. No update email or second form submission is sent by this policy change.
 
 See [smoke results and remaining client checks](grok-bot-marketplace.md#verification-matrix).
 
-New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.7.0 marketplace update is prepared, not submitted or approved.
+New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.8.0 marketplace update is prepared, not submitted or approved.
 
-## Candidate 0.7.0
+## Candidate 0.8.0
 
 Adds a separate local app MCP server, screenshot differences, word-level OCR targets, timed video overlays/zoom/redaction, readiness waiting, and font-quality reports. New actions require an app build advertising them in live discovery; public 1.1.64 predates them. See [verification](verification/agent-v07-2026-09-12.md). This candidate is prepared locally, not submitted or approved. The original publisher application remains awaiting review; no update email or duplicate form was sent.
+
+### Multi-agent additions in candidate 0.8.0
+
+Adds human-managed named credentials, explicit Mac verification, shared bundles of source references, guarded edits, session transfer, temporary resource reservations and pull-based handoffs/events. Each agent retains its own job ownership. There is no remote listener, automatic dispatch or message sending. Credentials scope bridge actions and do not sandbox same-login filesystem access. See [workflows and limitations](multi-agent-workflows.md). Local multi-client verification does not establish GrokBot host activation or cross-Mac delivery. This candidate is prepared, not published/submitted/approved; the initial Cursor application remains awaiting review. After publication, the next step is an authorized update email to marketplace-publishing@cursor.com with org @muckstack, repo https://github.com/tommy-muckstack/myman and version 0.8.0. No email or form was sent.
+
+[Current 0.8.0 verification](verification/multi-agent-and-transparency-2026-09-12.md): 88 companion tests; native suite 177 tests with six existing skips; two live MCP clients and packaged CLI; Intel/Apple Silicon builds.

@@ -53,6 +53,6 @@ if(status.permissions.screen_recording){
  const exported=await run('recording.export',{id:finished.id,start:0,end,edits:[{type:'title',start:0,end:1,text:'MyMan walkthrough'},{type:'step',start:1,end:2,number:1,text:'Inspect the sample'},{type:'caption',start:2,end:3,text:'Captured locally'},{type:'zoom',start:3,end,rect:zoom},{type:'redact',start:0,end,rect:[0,0,50,50]}]});owned.push(exported.id);
  const frames=await run('recording.frames',{id:exported.id,count:8,width:400});await copyFile(frames.contact_sheet.path,root+'/video-frames.png');await copyFile(exported.path,root+'/finished.mp4');assert.ok((await stat(exported.path)).size>1000);video='passed';
 }
-await writeFile(root+'/v07-report.json',JSON.stringify({passed:true,video,mcp:'passed',actions:results.map(x=>x.action),hugo:'not_available'},null,2));
+await writeFile(root+'/v07-report.json',JSON.stringify({passed:true,video,mcp:'passed',actions:results.map(x=>x.action),host:'not_available'},null,2));
 for(const id of owned)await run('item.delete',{id,confirm:true});
 console.log(JSON.stringify({passed:true,video,mcp:'passed',report:root+'/v07-report.json'}));

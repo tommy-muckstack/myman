@@ -108,23 +108,25 @@ enum ThemeStore {
         }
     }
 
-    static func rename(_ id: String, title: String, database: DatabaseQueue = Database.shared) throws {
+    static func rename(_ id: String, title: String, expectedVersion: String? = nil, database: DatabaseQueue = Database.shared) throws {
         let title = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100))
         guard !title.isEmpty else { return }
-        try database.write { try $0.execute(sql: "UPDATE captureTheme SET title = ?, renamed = 1 WHERE id = ?", arguments: [title, id]) }
+        try database.write { try AgentVersions.check("theme", id: id, expected: expectedVersion, db: $0); try $0.execute(sql: "UPDATE captureTheme SET title = ?, renamed = 1 WHERE id = ?", arguments: [title, id]) }
         notify()
     }
-    static func pin(_ id: String, pinned: Bool, database: DatabaseQueue = Database.shared) throws {
-        try database.write { try $0.execute(sql: "UPDATE captureTheme SET pinned = ? WHERE id = ?", arguments: [pinned, id]) }; notify()
+    static func pin(_ id: String, pinned: Bool, expectedVersion: String? = nil, database: DatabaseQueue = Database.shared) throws {
+        try database.write { try AgentVersions.check("theme", id: id, expected: expectedVersion, db: $0); try $0.execute(sql: "UPDATE captureTheme SET pinned = ? WHERE id = ?", arguments: [pinned, id]) }; notify()
     }
-    static func dismiss(_ id: String, database: DatabaseQueue = Database.shared) throws {
+    static func dismiss(_ id: String, expectedVersion: String? = nil, database: DatabaseQueue = Database.shared) throws {
         try database.write { db in
+            try AgentVersions.check("theme", id: id, expected: expectedVersion, db: db)
             try db.execute(sql: "UPDATE captureTheme SET dismissed = 1 WHERE id = ?", arguments: [id])
             try db.execute(sql: "DELETE FROM captureRelation WHERE kind = 'same_theme'")
         }; notify()
     }
-    static func assign(_ itemID: String, to themeID: String, remove: Bool = false, database: DatabaseQueue = Database.shared) throws {
+    static func assign(_ itemID: String, to themeID: String, remove: Bool = false, expectedVersion: String? = nil, database: DatabaseQueue = Database.shared) throws {
         try database.write { db in
+            try AgentVersions.check("theme", id: themeID, expected: expectedVersion, db: db)
             try db.execute(sql: """
                 INSERT INTO captureThemeMember(themeID,itemID,manual,blocked) SELECT ?,id,1,? FROM captureItem WHERE id = ? AND excluded = 0
                 ON CONFLICT(themeID,itemID) DO UPDATE SET manual = 1, blocked = excluded.blocked
@@ -132,9 +134,11 @@ enum ThemeStore {
             try db.execute(sql: "DELETE FROM captureRelation WHERE kind = 'same_theme'")
         }; notify()
     }
-    static func merge(_ source: String, into target: String, database: DatabaseQueue = Database.shared) throws {
+    static func merge(_ source: String, into target: String, expectedVersion: String? = nil, targetVersion: String? = nil, database: DatabaseQueue = Database.shared) throws {
         guard source != target else { return }
         try database.write { db in
+            try AgentVersions.check("theme", id: source, expected: expectedVersion, db: db)
+            try AgentVersions.check("theme", id: target, expected: targetVersion, db: db)
             try db.execute(sql: """
                 INSERT INTO captureThemeMember(themeID,itemID,manual,blocked)
                 SELECT ?,itemID,1,blocked FROM captureThemeMember WHERE themeID = ?
