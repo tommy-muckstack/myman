@@ -159,3 +159,7 @@ MyMan is **Apache-2.0 open source**. Humans and agents, including GrokBot, are w
 ### Working with multiple agents
 
 MyMan can coordinate named agents through human-issued credentials, shared source bundles, revision guards, recording ownership and explicit handoffs. [Four example workflows and setup](docs/multi-agent-workflows.md). The agent host selects the Mac and schedules work; MyMan remains a deliberately invoked utility. These additions are in the 0.8.0 candidate and require the corresponding updated app.
+
+### Recorded briefs and visual proof
+
+The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.

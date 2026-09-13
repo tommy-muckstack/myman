@@ -6,7 +6,9 @@ import SwiftUI
     /// not replace the user's explicit content filter when search starts.
     @Published var actionKind: String?
     @Published var isBrowsing = false
-    var displayedKind: String { actionKind ?? kind }
+    // A capture shortcut must not silently narrow an open theme. Explicit
+    // content filters remain available through the filter menu.
+    var displayedKind: String { themeID.isEmpty ? (actionKind ?? kind) : kind }
     @Published var period = "any"
     @Published var themeID = ""
     @Published var pinned = false

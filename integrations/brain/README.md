@@ -295,3 +295,7 @@ New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/
 The separate `app-server.mjs` exposes permission-controlled native actions over local MCP. The original `server.mjs` remains read-only retrieval. See the [CLI and MCP reference](../../docs/agent-cli.md#companion-070-media-and-readiness) and [complete recipes](../../docs/agent-workflows.md) for screenshot comparisons, word targets, video edits, waits and font quality. New actions require live app support, not just this package version.
 
 Companion 0.8.0 adds [multi-agent workflows](../../docs/multi-agent-workflows.md), with user-chosen agent names and human-issued credentials. Hosts own remote execution and task scheduling.
+
+## Recorded brief workflows (0.9.0)
+
+Use `workflow check`, `workflow templates`, and `brief create|list|read|open|handoff|refresh|submit|review|export|delete`. The native app must advertise these actions. [Executable recipes and lifecycle](../../docs/visual-brief-workflows.md). The app MCP adds `myman_app_workflow_check` plus generated tools for the new catalog actions; the Brain server remains read-only.

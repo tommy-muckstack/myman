@@ -1,6 +1,8 @@
+> September 13, 2026: **0.9.0 candidate prepared** for recorded briefs, worker/reviewer evidence checks and local share pages. My Man 1.1.65 is published; it does not contain these new brief actions. The initial marketplace application remains recorded as pending. No update email, new form, public Bot template link or live GrokBot acceptance is claimed.
+
 # Cursor Marketplace and GrokBot preparation
 
-Status (September 12, 2026): root Cursor candidate **0.8.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or GrokBot activation is claimed. The 0.8.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
+Status (September 13, 2026): root Cursor candidate **0.9.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or GrokBot activation is claimed. The 0.9.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
 
 For each agent-package update, follow the [Cursor marketplace release policy](cursor-marketplace-release.md). Shipping MyMan does not update the marketplace package. Use the [My Man logo](https://raw.githubusercontent.com/tommy-muckstack/myman/main/assets/icon-256.png) in publisher/listing fields and check [submission status](marketplace-submission.md#submission-status) before preparing an update notification.
 
@@ -39,7 +41,7 @@ GrokBot package directory: `integrations/grok-bot`
 
 Local Mac MCP package directory: repository root
 
-License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.8.0. New media actions require MyMan 1.1.61. See [media verification](verification/agent-media-2026-09-12.md); the matrix below records the earlier marketplace baseline.
+License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.9.0. Recorded briefs require MyMan 1.1.66 or an app advertising the brief actions. See [current verification](verification/recorded-briefs-2026-09-13.md); the matrix below records the earlier marketplace baseline.
 
 Cursor's documented submission flow is a public Git repository plus review through its publish form; it supports the Agent Plugins standard. That verifies the Cursor route, **not a GrokBot-specific submission API or a Mac-local MCP bridge**. [Cursor plugin reference](https://cursor.com/docs/reference/plugins), [submission form](https://cursor.com/marketplace/publish), [Agent Plugins schemas](https://agent-plugins.org/).
 
@@ -98,3 +100,9 @@ Cursor update ready after publication: `myman-brain 0.8.0`, organization `@mucks
 Adds human-managed named credentials, explicit Mac verification, shared bundles of source references, guarded edits, session transfer, temporary resource reservations and pull-based handoffs/events. Each agent retains its own job ownership. There is no remote listener, automatic dispatch or message sending. Credentials scope bridge actions and do not sandbox same-login filesystem access. See [workflows and limitations](multi-agent-workflows.md). Local multi-client verification does not establish GrokBot host activation or cross-Mac delivery. This candidate is packaged with MyMan 1.1.65, but is not submitted to or approved by the marketplace; the initial Cursor application remains awaiting review. The next marketplace step is an authorized update email to marketplace-publishing@cursor.com with org @muckstack, repo https://github.com/tommy-muckstack/myman and version 0.8.0. No email or form was sent.
 
 [Current 0.8.0 verification](verification/multi-agent-and-transparency-2026-09-12.md): 88 companion tests; native suite 177 tests with six existing skips; two live MCP clients and packaged CLI; Intel/Apple Silicon builds.
+
+## Recorded brief candidate 0.9.0
+
+Adds a native brief workspace; revisioned recording references; explicit worker/reviewer assignments; per-criterion evidence review; timestamped frame extraction with explicitly untimed transcripts; local share pages containing user-selected result media and separately authored public copy; two reusable workflow prompts; and live connection/setup checks. Requires an app advertising `brief.*` and `workflow.templates`; plugin installation alone does not supply native actions. See [workflow guide](visual-brief-workflows.md).
+
+Cursor marketplace update ready: **myman-brain 0.9.0**. Repo: https://github.com/tommy-muckstack/myman. While the initial @muckstack application is pending, the next step is an authorized update email to marketplace-publishing@cursor.com with this version and repository, rather than a duplicate application. No email has been sent.

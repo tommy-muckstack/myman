@@ -45,6 +45,16 @@ import AppKit
         return ["path": url.path, "mime_type": "image/png", "width": AgentImages.size(image).width, "height": AgentImages.size(image).height,
                 "file_size": data.count, "duration": NSNull(), "preview_path": url.path, "expires_at": AgentActions.date(Date().addingTimeInterval(3600))]
     }
+    func document(_ data: Data) throws -> [String: Any] {
+        expire()
+        guard data.count <= 32 * 1024 * 1024 else { throw AgentError("TOO_LARGE", "Share page exceeds 32 MiB. Choose fewer images or a shorter video export.") }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard try FileManager.default.contentsOfDirectory(atPath: root.path).count < 256 else { throw AgentError("PREVIEW_LIMIT", "Let older previews expire before exporting more.") }
+        let url = root.appendingPathComponent("brief-share-" + UUID().uuidString + ".html")
+        try data.write(to: url, options: .withoutOverwriting)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return ["path": url.path, "mime_type": "text/html", "file_size": data.count, "expires_at": AgentActions.date(Date().addingTimeInterval(3600))]
+    }
     static func canvas(size: CGSize, draw: (CGContext) -> Void) throws -> NSImage {
         let width = Int(ceil(size.width)), height = Int(ceil(size.height))
         guard width > 0, height > 0, width <= 16000, height <= 16000, width * height <= 32_000_000,

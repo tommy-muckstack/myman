@@ -62,7 +62,7 @@ import GRDB
             capture.meetingIDProvider = { meetings.activeCaptureMeetingID }
             let launcher = LauncherPanelController(actions: { [] }, openNote: { NoteDocumentController.shared.open($0) }, openScreenshot: { capture.openInEditor(fileURL: $0) }, saveQueryAsNote: { _ in }, openChat: {})
             actions.openSurface = { surface in
-                switch surface { case "settings": SettingsController.shared.show(); case "note": NoteDocumentController.shared.open(Note(body: "Verification draft")); default: launcher.open() }
+                switch surface { case "settings": SettingsController.shared.show(); case "note": NoteDocumentController.shared.open(Note(body: "Verification draft")); case "briefs": AgentBriefWindow.shared.open(); default: launcher.open() }
             }
             self.actions = actions
             let bridge = AgentBridge { actions.receive($0) }; try bridge.start(); self.bridge = bridge
@@ -82,6 +82,14 @@ import GRDB
                 settings.makeKeyAndOrderFront(nil); agentSettingsWindow = settings
             }
             let ready: [String: Any] = ["root": root.path, "fixture": url.path, "region": [100,100,900,600], "socket": AgentBridge.path, "theme_a": themeA, "theme_b": themeB, "meeting_id": "meeting-" + meetingID]
+            if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_BRIEFS"] == "enabled" {
+                let movie = root.appendingPathComponent("brief-source.mov")
+                if FileManager.default.fileExists(atPath: movie.path) {
+                    let recording = ScreenRecording(id: "brief-fixture", path: movie.path, duration: 4, createdAt: Date(), transcript: "The checkout button should confirm the order once. Show the successful confirmation and check repeated clicks.")
+                    try Database.shared.write { try recording.insert($0) }
+                }
+                AgentBriefWindow.shared.open()
+            }
             try JSONSerialization.data(withJSONObject: ready).write(to: root.appendingPathComponent("ready.json"))
         } catch { NSLog("Verification failed: \(error)"); NSApp.terminate(nil) }
     }
