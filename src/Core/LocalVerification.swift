@@ -36,6 +36,7 @@ import GRDB
             _ = Database.shared
             Brain.bootstrap()
             BrainAgentExportObserver.shared.start()
+            CaptureEnrichment.shared.start()
             let themeA = UUID().uuidString, themeB = UUID().uuidString
             let meetingID = UUID().uuidString
             try Database.shared.write { db in

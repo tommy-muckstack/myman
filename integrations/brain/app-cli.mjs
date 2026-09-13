@@ -20,12 +20,12 @@ const pairs = {
   'meeting start':'meeting.start','meeting stop':'meeting.stop','meeting cancel':'meeting.discard','meeting rename':'meeting.rename','meeting notes':'meeting.notes',
   'dictation start':'dictation.start','dictation stop':'dictation.stop','dictation cancel':'dictation.cancel',
   'record status':'recording.status','record result':'recording.status','record pause':'recording.pause','record resume':'recording.resume','record frames':'recording.frames','record export':'recording.export','record start':'recording.start','record stop':'recording.stop','record cancel':'recording.cancel','record microphone':'recording.microphone',
-  'editor open':'item.open','editor save':'screenshot.edit','capture import':'screenshot.import','capture targets':'screenshot.targets','capture ocr':'screenshot.ocr','capture image':'screenshot.image','capture copy':'clipboard.write','capture remove-background':'screenshot.remove_background',
+  'editor open':'item.open','editor save':'screenshot.edit','capture import':'screenshot.import','capture compare':'screenshot.compare','capture targets':'screenshot.targets','capture ocr':'screenshot.ocr','capture image':'screenshot.image','capture copy':'clipboard.write','capture remove-background':'screenshot.remove_background',
   'clipboard read':'clipboard.read','clipboard write':'clipboard.write',
   'library read':'item.read','library open':'item.open','library related':'item.related','library rename':'item.rename','library pin':'item.pin','library unpin':'item.pin','library hide':'item.exclude','library unhide':'item.exclude','library delete':'item.delete',
   'theme rename':'theme.rename','theme pin':'theme.pin','theme unpin':'theme.pin','theme dismiss':'theme.dismiss','theme merge':'theme.merge','theme add':'theme.assign','theme remove':'theme.assign',
   'task add':'task.create','task create':'task.create','task update':'task.update','task complete':'task.update','task reopen':'task.update','task delete':'task.delete',
-  'font create':'font.create','font open':'font.open','font file':'font.file','font match':'font.match','font preview':'font.preview',
+  'font create':'font.create','font open':'font.open','font file':'font.file','font quality':'font.quality','font match':'font.match','font preview':'font.preview',
   'note attach':'note.attach','library search':'capture.search',
   'settings get':'settings.read','settings set':'settings.update','history clear':'history.clear',
   'screens list':'screens.list','windows list':'windows.list',
@@ -41,11 +41,15 @@ note create|append|update|open --body TEXT|--body-file FILE|- [--title TITLE]
 note attach --id NOTE-ID --source-id SHOT-ID|--path FILE [--alt TEXT]
 library search|recent|read|open|related|rename|pin|unpin|hide|unhide|delete
 theme list|rename|pin|unpin|dismiss|merge|add|remove  task list|add|update|complete|reopen|delete
-capture import|targets|ocr|image|copy|remove-background  editor open|save
-font match|create|preview|open|file  clipboard read|write  settings get|set  history clear
+capture import|compare|targets|ocr|image|copy|remove-background  editor open|save
+font match|create|preview|quality|open|file  clipboard read|write  settings get|set  history clear
 screens list  windows list  doctor  latest --kind screenshots
 capture-markup --mode agent --region x,y,w,h --ops-file ops.json
 
+Wait: wait --id ID --stage ocr|indexed|transcript|notes|file|export --timeout 120
+Or wait --job-id UUID / --session-id ID. No action is started or replayed.
+Compare: capture compare --before-id ID --after-id ID [--ignore-rects JSON]
+Video: record export --id ID --edits JSON (caption/step/title/zoom/redact).
 Media: record start --window-id ID --max-duration 30; record result --session-id ID
 record frames --id ID --times 0,2,5; record export --id ID --start 1 --end 10 --max-bytes 20000000
 Markup: capture targets --id ID --query TEXT; ops accept target_text or target_region.
@@ -90,6 +94,7 @@ export async function plan(argv) {
   if(waitMs<0 || waitMs>600000)fail('Wait timeout must be 0–600 seconds.');
   const control={id:v['request-id'],wait:!v['no-wait'],waitMs};
   if(p[0]==='actions'){allowed(v,['offline']);if(p.length>2)fail('Use actions [name].');return {type:'discovery',name:p[1],offline:!!v.offline};}
+  if(p[0]==='wait'){allowed(v,['id','job-id','session-id','stage','timeout']);if(p.length!==1)fail('Use wait with a resource ID.');const args={};for(const k of ['id','job-id','session-id','stage','timeout'])if(v[k]!==undefined)args[k.replaceAll('-','_')]=k==='timeout'?number(v[k]):v[k];return {type:'action',name:'app.wait',args,control};}
   if(p[0]==='jobs'){allowed(v,[]);if(p.length!==1)fail('Use jobs.');return {type:'jobs'};}
   if(p[0]==='job'){allowed(v,[]);if(p.length!==2)fail('Use job UUID.');return {type:'job',id:p[1]};}
   if(p[0]==='invoke') {allowed(v,[]);if(p.length<2||p.length>3)fail('Use invoke action.name [JSON].');return {type:'action',name:p[1],args:p[2]?json(p[2]):{},control,raw:true};}

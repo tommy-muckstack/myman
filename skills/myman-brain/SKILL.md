@@ -174,8 +174,14 @@ local image viewer instead of dumping base64 into the conversation.
 Brain sync is **one-way from MyMan**. The `myman_brain_*` retrieval tools are read-only, and editing
 `tasks.md` or a note export does not update the app's database. Do not use file
 edits as a workaround for app mutations. Legacy task exports may omit older tasks; catalog-backed task exports include
-all non-archived tasks, including notes and completed history. The separate local app CLI can start recordings and invoke capture commands when the user explicitly requests them; these are not MCP tools.
+all non-archived tasks, including notes and completed history. The separate local app CLI can start recordings and invoke capture commands when the user explicitly requests them; the separate local app MCP server can invoke the same permission-controlled actions.
 
 The companion makes no network requests. Using a hosted model such as Grok
 shares returned excerpts and explicitly requested images with that provider. Retrieve only the material needed
 for the user's request; keep this distinct from MyMan's on-device AI.
+
+## Companion 0.7.0 workflows
+
+Discover support on the running app before invoking new actions. The new commands are `capture compare`, `capture targets --granularity word`, `record export --edits`, `wait`, and `font quality`. Read the workflow recipes for examples. Word IDs target individual prices or labels; ambiguous text must be resolved explicitly. Comparison ignores specified rectangles but does not safely redact them. Video redact is opaque over explicit times/regions, not audio redaction. Inspect final exported frames. Font quality is heuristic and suggests what to capture next; do not call a generated font an exact identity.
+
+Local MCP hosts may use the separate `myman-app` server. Call `myman_app_capabilities` first; each action maps to `myman_app_<action_with_underscores>`. It uses the same app grants as CLI. Retain `_request_id` and pending `job_id`; inspect `myman_app_job` instead of retrying a mutation. The ten `myman_brain_*` tools remain read-only. GrokBot still needs approved execution on the registered Mac; do not assume a cloud host can start a Mac-local MCP server.

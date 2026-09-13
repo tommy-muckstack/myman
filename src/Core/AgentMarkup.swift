@@ -9,7 +9,13 @@ enum AgentMarkup {
         let id: String
         let text: String
         let rect: CGRect
-        var json: [String: Any] { ["id": id, "text": text, "rect": [rect.minX, rect.minY, rect.width, rect.height].map(Double.init), "granularity": "line"] }
+        var granularity = "line"
+        var json: [String: Any] { ["id": id, "text": text, "rect": [rect.minX, rect.minY, rect.width, rect.height].map(Double.init), "granularity": granularity] }
+    }
+    static func words(_ observations: [ImageAnalysis.TextObservation], size: CGSize) -> [Region] {
+        regions(observations.flatMap { $0.words ?? [] }, size: size).map {
+            Region(id: "word-" + $0.id, text: $0.text, rect: $0.rect, granularity: "word")
+        }
     }
     static func regions(_ observations: [ImageAnalysis.TextObservation], size: CGSize) -> [Region] {
         observations.prefix(2000).map { line in
@@ -29,7 +35,11 @@ enum AgentMarkup {
         }
         let candidates: [Region]
         if let id = annotation["target_region"] as? String { candidates = regions.filter { $0.id == id } }
-        else { candidates = matches(regions, text: annotation["target_text"] as! String) }
+        else {
+            let text = annotation["target_text"] as! String
+            let exactWords = regions.filter { $0.granularity == "word" && $0.text.compare(text, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+            candidates = exactWords.isEmpty ? matches(regions.filter { $0.granularity == "line" }, text: text) : exactWords
+        }
         guard candidates.count == 1 else {
             throw AgentError(candidates.isEmpty ? "TARGET_NOT_FOUND" : "AMBIGUOUS_TARGET",
                              "Select a region ID from capture targets; nothing was changed.",

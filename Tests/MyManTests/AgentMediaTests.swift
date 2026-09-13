@@ -107,6 +107,34 @@ final class AgentMediaTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: tooSmall.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
     }
+    @MainActor func testFinishedVideoExportKeepsSourceAndUsesOriginalTimeline() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("man-finished-video-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("source.mov"), target = folder.appendingPathComponent("finished.mp4")
+        try await fixtureVideo(source)
+        let original = try Data(contentsOf: source)
+        let edits: [[String: Any]] = [
+            ["type":"redact","start":0.3,"end":0.8,"rect":[0.0,0.0,100.0,100.0]],
+            ["type":"caption","start":0.3,"end":0.7,"text":"A clear explanation"],
+            ["type":"step","start":0.8,"end":1.1,"number":1.0,"text":"Save changes"],
+            ["type":"title","start":1.4,"end":1.7,"text":"Finished"]]
+        try await AgentVideo.export(source, to: target, start: 0.3, end: 1.7, edits: edits)
+        let attachment = try await AgentVideo.attachment(target, preview: false)
+        XCTAssertEqual(attachment["duration"] as! Double, 1.4, accuracy: 0.12)
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: target)); generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let (cg, _) = try await generator.image(at: CMTime(seconds: 0.1, preferredTimescale: 600))
+        let bitmap = NSBitmapImageRep(cgImage: cg)
+        let pixel = try XCTUnwrap(bitmap.colorAt(x: 20, y: 20)?.usingColorSpace(.sRGB))
+        XCTAssertLessThan(pixel.redComponent, 0.08, "Redaction covers the original .4-second frame even after trim")
+        let (title, _) = try await generator.image(at: CMTime(seconds: 1.2, preferredTimescale: 600))
+        let titlePixel = try XCTUnwrap(NSBitmapImageRep(cgImage: title).colorAt(x: 5, y: 5)?.usingColorSpace(.sRGB))
+        XCTAssertLessThan(titlePixel.blueComponent, 0.08, "Title card covers the original blue frame")
+        XCTAssertEqual(try Data(contentsOf: source), original)
+        try original.write(to: URL(fileURLWithPath: "/private/tmp/man-v07-video-source.mov"))
+        try Data(contentsOf: target).write(to: URL(fileURLWithPath: "/private/tmp/man-v07-video-finished.mp4"))
+    }
     @MainActor private func fixtureVideo(_ url: URL) async throws {
         let writer = try AVAssetWriter(url: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 200])

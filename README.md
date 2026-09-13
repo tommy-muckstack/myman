@@ -114,8 +114,7 @@ npm ci --ignore-scripts --prefix integrations/brain
 node integrations/brain/cli.mjs status
 ```
 
-The Brain MCP is read-only and makes no network calls itself. The skill also
-documents optional app CLI actions, protected by Settings → Agents grants. A hosted agent such
+The `myman-brain` MCP server remains read-only. The separate `myman-app` MCP server exposes the same local app actions as the CLI, protected by Settings → Agents grants. Both run locally without a cloud relay. A hosted agent such
 as Grok receives the excerpts and images you ask it to retrieve; this optional integration
 is separate from MyMan's on-device AI. The root Agent Plugin is the Cursor
 Marketplace candidate; Node 22+ is enough for its committed MCP bundle.

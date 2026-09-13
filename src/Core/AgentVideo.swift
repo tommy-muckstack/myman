@@ -77,9 +77,19 @@ import AVFoundation
         }
         return ["frames": results, "contact_sheet": try store.image(sheet, prefix: "contact-sheet"), "duration": duration]
     }
-    static func export(_ url: URL, to destination: URL, start: Double = 0, end: Double? = nil, maxBytes: Int? = nil) async throws {
+    static func export(_ url: URL, to destination: URL, start: Double = 0, end: Double? = nil, maxBytes: Int? = nil, edits: [[String: Any]] = []) async throws {
         let asset = AVURLAsset(url: url), duration = try await asset.load(.duration).seconds
         let selected = try range(start: start, end: end, duration: duration)
+        var composition: AVVideoComposition?
+        if !edits.isEmpty {
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw AgentError("INVALID_VIDEO", "Missing video track.") }
+            let natural = try await track.load(.naturalSize), transform = try await track.load(.preferredTransform)
+            let bounds = CGRect(origin: .zero, size: natural).applying(transform)
+            let prepared = try AgentVideoEdits.prepare(edits, size: CGSize(width: abs(bounds.width), height: abs(bounds.height)), duration: duration)
+            composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
+                request.finish(with: AgentVideoEdits.render(request.sourceImage, time: request.compositionTime.seconds, edits: prepared), context: nil)
+            })
+        }
         // Try full quality first. A cap permits reducing resolution, but never
         // truncating duration via AVAssetExportSession.fileLengthLimit.
         let presets = maxBytes == nil ? [AVAssetExportPresetHighestQuality] : [AVAssetExportPresetHighestQuality, AVAssetExportPreset1280x720, AVAssetExportPreset640x480]
@@ -87,6 +97,7 @@ import AVFoundation
             guard let exporter = AVAssetExportSession(asset: asset, presetName: preset), exporter.supportedFileTypes.contains(.mp4) else { continue }
             exporter.outputURL = destination; exporter.outputFileType = .mp4
             exporter.timeRange = selected; exporter.shouldOptimizeForNetworkUse = true
+            exporter.videoComposition = composition
             await exporter.export()
             guard exporter.status == .completed else {
                 try? FileManager.default.removeItem(at: destination)

@@ -73,3 +73,36 @@ Use the original IDs. `--request-id UUID` deduplicates a request while its recei
 Receipts live outside Brain in owner-only Application Support, for up to seven days, capped at 256 terminal jobs and 32 recording sessions. Inline results above 64 KiB are replaced with artifact references where available. Temporary preview paths are marked expired after restart; regenerate previews with `font preview`, `record frames` or `annotate --preview`. Deleting/excluding content redacts retained results and clears recording receipts. No automatic retries or background tasks are scheduled by recovery.
 
 When a result says `recovery_persisted: false`, it was returned in memory but could not be durably saved; retain its artifact ID/path in the host. Requests fail before execution when a start receipt cannot be saved. Old requests beyond retention cannot be deduplicated; never use expiry as a reason to replay unknown work.
+
+## Companion 0.7.0: comparison, word markup, video finishing and quality
+
+Use a running app that advertises the following commands. Public 1.1.64 predates them; installing the plugin alone does not update the app.
+
+```sh
+myman wait --id SHOT-ID --stage ocr --timeout 120 --json
+myman capture targets --id SHOT-ID --query '$49' --granularity word --json
+myman annotate --id SHOT-ID --ops '[{"op":"circle","target_region":"WORD-ID"}]' --preview --json
+myman capture compare --before-id BEFORE-ID --after-id AFTER-ID --ignore-rects '[[0,0,120,30]]' --json
+```
+
+Inspect the preview. The comparison returns a temporary image and changed OCR lines. It requires equal-size images and is not a functional test. Ignored areas are omitted from difference analysis, not securely removed from the image.
+
+```sh
+myman record export --id RECORDING-ID --start 0 --end 8 --edits '[{"type":"title","start":0,"end":1,"text":"Updated checkout"},{"type":"step","start":1,"end":3,"number":1,"text":"Choose your plan"},{"type":"caption","start":3,"end":5,"text":"Your selection is saved"},{"type":"zoom","start":5,"end":7,"rect":[100,100,400,300]},{"type":"redact","start":0,"end":8,"rect":[600,20,150,40]}]' --json
+myman record frames --id EXPORTED-ID --count 8 --json
+myman wait --session-id SESSION-ID --timeout 120 --json
+myman wait --job-id ORIGINAL-JOB-UUID --timeout 120 --json
+myman font quality --id FONT-NOTE-ID --text 'Your intended text 0123456789' --json
+```
+
+Adjust times and rectangles to the returned video dimensions/duration. Edit times always refer to the original recording, even after trimming. A title replaces the picture during its interval; it does not add time. Zoom is a fixed crop, not object tracking. Redaction covers only explicitly selected pixels/times and leaves audio unchanged. Inspect exported frames and attach only the final file requested by the user.
+
+Font quality includes an actual-font specimen, per-letter evidence and `capture_next`. Capture those letters at a larger size in the same typeface and weight when the user wants a better reconstruction. A supported sample is evidence, not a guarantee of a perfect font.
+
+## Hugo end-to-end acceptance recipe (requires host access)
+
+On the registered Mac, run live discovery and confirm these actions exist. Use a dedicated synthetic test window, with no private content. Ask Hugo:
+
+> Use MyMan on my Mac to capture the test window, locate one word, create a markup preview and save it after inspection. Compare the original and marked-up screenshot. Record a five-second demo of that window with microphone and system audio off, wait for its finalized result, export it with a title and caption, inspect its frames, and return the final image and video as attachments. Report any unsupported tool or permission rather than switching to my full display or replaying work.
+
+Verify tool discovery, the selected Mac, actual attachment delivery, and cleanup of the synthetic test artifacts. Local CLI/MCP tests cannot prove these host behaviors. No Hugo execution tool is available in the current development environment, so this recipe remains unverified until run in Hugo.

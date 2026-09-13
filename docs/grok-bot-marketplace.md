@@ -1,6 +1,6 @@
 # Cursor Marketplace and GrokBot preparation
 
-Status (September 12, 2026): root Cursor candidate **0.6.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or Hugo/GrokBot activation is claimed. The 0.6.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
+Status (September 12, 2026): root Cursor candidate **0.7.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or Hugo/GrokBot activation is claimed. The 0.7.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
 
 For each agent-package update, follow the [Cursor marketplace release policy](cursor-marketplace-release.md). Shipping MyMan does not update the marketplace package. Use the [My Man logo](https://raw.githubusercontent.com/tommy-muckstack/myman/main/assets/icon-256.png) in publisher/listing fields and check [submission status](marketplace-submission.md#submission-status) before preparing an update notification.
 
@@ -25,7 +25,7 @@ GrokBot documents local execution under Settings → General → Agent, with per
 
 ## Submission materials
 
-For the root **myman-brain** Cursor candidate, use the [paste-ready listing and reviewer instructions](marketplace-submission.md). It describes the shipped CLI separately from read-only Brain MCP. The following listing describes the separate GrokBot skill package.
+For the root **myman-brain** Cursor candidate, use the [paste-ready listing and reviewer instructions](marketplace-submission.md). It distinguishes read-only Brain MCP, local app-action MCP, and the GrokBot Mac CLI route. The following listing describes the separate GrokBot skill package.
 
 Name: **MyMan**
 
@@ -39,7 +39,7 @@ GrokBot package directory: `integrations/grok-bot`
 
 Local Mac MCP package directory: repository root
 
-License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.6.0. New media actions require MyMan 1.1.61. See [media verification](verification/agent-media-2026-09-12.md); the matrix below records the earlier marketplace baseline.
+License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.7.0. New media actions require MyMan 1.1.61. See [media verification](verification/agent-media-2026-09-12.md); the matrix below records the earlier marketplace baseline.
 
 Cursor's documented submission flow is a public Git repository plus review through its publish form; it supports the Agent Plugins standard. That verifies the Cursor route, **not a GrokBot-specific submission API or a Mac-local MCP bridge**. [Cursor plugin reference](https://cursor.com/docs/reference/plugins), [submission form](https://cursor.com/marketplace/publish), [Agent Plugins schemas](https://agent-plugins.org/).
 
@@ -85,4 +85,10 @@ For Hugo, select the registered Mac and run `node "$HOME/MyManBrain/tools/cli.mj
 
 See [CLI reference](agent-cli.md), [parity matrix](agent-cli-parity.md), and [test evidence](verification/agent-cli-2026-09-12.md). Remaining host checks require the actual client/account; they are not reasons to upload private Brain data or enable an unrestricted network service.
 
-New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.6.0 marketplace update is prepared, not submitted or approved.
+New workflow commands require MyMan 1.1.62: live action discovery, native fuzzy/semantic search, owned note-image attachments, font match/specimen results, and bounded job recovery. See [workflow recipes](agent-workflows.md). Font candidates are limited style comparisons, not verified original identities. The 0.7.0 marketplace update is prepared, not submitted or approved.
+
+## Candidate 0.7.0 update
+
+The root package now includes `myman-app`, a separate local action MCP server. The GrokBot package remains skill-only and uses approved execution on the registered Mac. New screenshot comparison, word-targeting, video finishing, readiness and font-quality commands require live app support (not public 1.1.64). [New verification](verification/agent-v07-2026-09-12.md) supersedes the historical counts above. Hugo invocation and attachment delivery remain unverified because no Hugo execution tool is available in this environment.
+
+Cursor update ready after publication: `myman-brain 0.7.0`, organization `@muckstack`, repository `https://github.com/tommy-muckstack/myman`. While the initial application is pending, send an authorized update to `marketplace-publishing@cursor.com`; do not file a duplicate application. No email/form is sent by this change.

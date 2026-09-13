@@ -2,6 +2,36 @@ import AppKit
 import CoreText
 
 @MainActor enum AgentFonts {
+    /// Evidence quality is deliberately heuristic, never an identification or
+    /// a probability that a reconstructed letter matches the original font.
+    static func quality(project: [String: Any], text: String) -> [String: Any] {
+        let provenance = project["provenance"] as? [[String: Any]] ?? []
+        let samples = (project["state"] as? [String: Any])?["samples"] as? [[String: Any]] ?? []
+        let wanted = Set(text.filter { !$0.isWhitespace }.map(String.init)).sorted()
+        var reports: [[String: Any]] = []
+        var recapture: [String] = []
+        for char in wanted {
+            let source = provenance.first { $0["char"] as? String == char }?["source"] as? String ?? "missing"
+            let candidates = samples.filter { $0["char"] as? String == char }
+            func evidence(_ sample: [String: Any]) -> (Double, Double) {
+                let height = (sample["bbox"] as? [String: Double])?["h"] ?? 0
+                let confidence = sample["confidence"] as? Double ?? 0
+                return (height, confidence)
+            }
+            let best = candidates.max { a, b in let x = evidence(a), y = evidence(b); return min(x.0, 80) * x.1 < min(y.0, 80) * y.1 }
+            let (height, confidence) = best.map(evidence) ?? (0, 0)
+            let supported = source == "traced" && height >= 24 && confidence >= 80
+            let status = source == "missing" ? "missing" : source != "traced" ? "approximate" : supported ? "supported" : "weak_sample"
+            if !supported { recapture.append(char) }
+            reports.append(["char": char, "source": source, "status": status, "sample_count": candidates.count,
+                            "best_sample_height_px": height, "ocr_confidence": confidence,
+                            "reason": source == "missing" ? "No exported glyph" : source != "traced" ? "Not directly traced from a screenshot" : supported ? "Larger recognized sample available; inspect the specimen" : "Small or uncertain recognized sample"])
+        }
+        return ["assessment": recapture.isEmpty ? "supported_samples" : "more_samples_recommended", "heuristic": true,
+                "characters": reports, "capture_next": recapture,
+                "suggested_sample_text": (["HEIM", "mnrx", "bdhkl", "gpqy"] + recapture).joined(separator: " "),
+                "guidance": "Capture the suggested letters in one typeface and weight at a larger size, ideally with at least 32 pixels of actual letter height. Include capitals, lowercase and descenders together. OCR confidence describes recognition, not outline accuracy. Inspect the actual-font specimen before sharing."]
+    }
     static func specimen(data: Data, text: String) throws -> [String: Any] {
         try FontProjectStore.validate(data)
         guard let descriptors = CTFontManagerCreateFontDescriptorsFromData(data as CFData) as? [CTFontDescriptor], let descriptor = descriptors.first else { throw AgentError("INVALID_FONT", "Cannot read font descriptors.") }
@@ -47,7 +77,7 @@ import CoreText
         } catch { attachment["preview_status"] = "unavailable" }
         return ["id":"note-" + noteID, "path":url.path, "attachment":attachment, "coverage":counts, "characters":characters,
                 "provenance":provenance, "matches":project["matches"] ?? [], "approximate":(counts["inferred"] ?? 0) > 0 || (counts["base"] ?? 0) > 0,
-                "missing_from_specimen":missing, "exact_identity_verified":false, "specimen_text":sample,
+                "missing_from_specimen":missing, "exact_identity_verified":false, "specimen_text":sample, "quality": quality(project: project, text: sample),
                 "limitations":"Generated from screenshot shapes. Missing specimen characters may appear as replacement glyphs; inferred letters are approximations."]
     }
 }

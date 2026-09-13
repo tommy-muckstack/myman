@@ -173,6 +173,36 @@ final class AgentActions {
         guard meetings.phase == .idle, !meetings.isStarting, !voice.starting, !ScreenRecorder.shared.isBusy else { throw AgentError("BUSY", "Another capture is active.") }
         switch voice.phase { case .idle, .done: break; default: throw AgentError("BUSY", "Dictation is active.") }
     }
+    private func awaitReady(_ args: [String: Any]) async throws -> [String: Any] {
+        guard ["id", "job_id", "session_id"].filter({ args[$0] != nil }).count == 1 else { throw AgentError("INVALID_ARGUMENTS", "Select exactly one item id, job_id, or session_id.") }
+        guard args["id"] != nil || args["stage"] == nil else { throw AgentError("INVALID_ARGUMENTS", "stage applies only to item IDs.") }
+        let deadline = Date().addingTimeInterval(args["timeout"] as? Double ?? 120)
+        while true {
+            try Task.checkCancellation()
+            try AgentConsent.validate("app.wait", args: args)
+            let status: [String: Any]
+            if let id = args["job_id"] as? String {
+                guard let job = jobs[id] ?? journal.job(id) else { throw AgentError("JOB_NOT_FOUND", "Unknown or expired job; do not repeat its action.") }
+                guard job["action"] as? String != "app.wait" else { throw AgentError("INVALID_ARGUMENTS", "Wait on the original operation, not another waiter.") }
+                try AgentConsent.validate(job["action"] as? String ?? "item.read", args: ["confirm": true])
+                let state = job["state"] as? String ?? "unknown"
+                if ["failed", "interrupted"].contains(state) { throw AgentError("WAIT_FAILED", "The original job did not complete.", details: ["job": job]) }
+                status = ["job_id": id, "state": state, "ready": state == "succeeded", "job": job]
+            } else if let id = args["session_id"] as? String {
+                var value = try await recordingStatus(id)
+                let state = value["state"] as? String ?? "unknown"
+                if ["failed", "cancelled", "interrupted"].contains(state) { throw AgentError("WAIT_FAILED", "Recording did not finalize.", details: ["session": value]) }
+                value["ready"] = state == "finalized"; status = value
+            } else {
+                try AgentConsent.validate("item.read", args: args)
+                let id = args["id"] as! String, stage = args["stage"] as? String ?? "indexed"
+                status = try await Task.detached(priority: .utility) { try AgentReadiness.item(id, stage: stage) }.value
+            }
+            if status["ready"] as? Bool == true { return status }
+            guard Date() < deadline else { throw AgentError("PROCESSING_TIMEOUT", "The requested result is not ready. No work was started or retried.", details: ["readiness": status]) }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+    }
     func execute(_ action: String, _ args: [String: Any]) async throws -> Any {
         let isAudio = (action.hasPrefix("recording.") && !["recording.status", "recording.frames", "recording.export"].contains(action)) || action.hasPrefix("dictation.") || ["meeting.start", "meeting.stop", "meeting.discard"].contains(action)
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
@@ -236,9 +266,30 @@ final class AgentActions {
             model.removeBackground(); try await wait(120) { !model.isRemovingBackground }
             guard model.backgroundRemoved else { throw AgentError("NO_FOREGROUND", "No foreground object could be separated.") }
             return try saveImage(model.renderFinal(), clipboard: args["clipboard"] as? Bool ?? false)
+        case "app.wait": return try await awaitReady(args)
+        case "screenshot.compare":
+            let (before, a) = try shot(["id": args["before_id"]!])
+            let (after, b) = try shot(["id": args["after_id"]!])
+            guard !before.excluded, !after.excluded else { throw AgentError("NOT_FOUND", "A comparison source is excluded.") }
+            guard let acg = a.cgImage(forProposedRect: nil, context: nil, hints: nil), let bcg = b.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw AgentError("INVALID_IMAGE", "Cannot decode comparison images.") }
+            let ignored = try (args["ignore_rects"] as? [[Double]] ?? []).map { try AgentImages.rect($0) }
+            let threshold = Int(args["threshold"] as? Double ?? 20)
+            let difference = try await Task.detached(priority: .userInitiated) { try AgentComparison.difference(acg, bcg, ignored: ignored, threshold: threshold) }.value
+            async let aLines = ImageAnalysis.textObservations(a)
+            async let bLines = ImageAnalysis.textObservations(b)
+            let changedText = await AgentComparison.changedText(before: aLines, after: bLines, size: AgentImages.size(a), ignored: ignored)
+            guard CaptureIndex.item(before.id)?.revision == before.revision, CaptureIndex.item(after.id)?.revision == after.revision,
+                  CaptureIndex.item(before.id)?.excluded == false, CaptureIndex.item(after.id)?.excluded == false else { throw AgentError("CONTENT_CHANGED", "A source changed during comparison. Select the current images again.") }
+            let image = try AgentComparison.render(before: a, after: b, difference: difference, ignored: ignored)
+            return ["before_id": before.id, "after_id": after.id, "coordinates": "image-pixels-top-left", "changed_pixels": difference.changed,
+                    "compared_pixels": difference.compared, "change_ratio": difference.compared == 0 ? 0 : Double(difference.changed) / Double(difference.compared),
+                    "threshold": threshold, "regions": difference.regions.prefix(200).map { [$0.minX, $0.minY, $0.width, $0.height] },
+                    "total_regions": difference.regions.count, "truncated": difference.regions.count > 200, "changed_text": changedText,
+                    "attachment": try AgentMediaStore.shared.image(image, prefix: "comparison"), "temporary": true] as [String: Any]
         case "screenshot.targets":
             let (source, image) = try shot(args)
-            let regions = AgentMarkup.regions(await ImageAnalysis.textObservations(image), size: AgentImages.size(image))
+            let observations = await ImageAnalysis.textObservations(image)
+            let regions = args["granularity"] as? String == "word" ? AgentMarkup.words(observations, size: AgentImages.size(image)) : AgentMarkup.regions(observations, size: AgentImages.size(image))
             let matches = (args["query"] as? String).map { AgentMarkup.matches(regions, text: $0) } ?? regions
             return ["source_id": source.id, "coordinates": "image-pixels-top-left", "regions": matches.prefix(200).map(\.json), "total": matches.count, "truncated": matches.count > 200] as [String: Any]
         case "screenshot.ocr":
@@ -291,14 +342,14 @@ final class AgentActions {
             let url = SettingsStore.shared.screenshotFolderURL.appendingPathComponent("Clip-\(UUID().uuidString).mp4")
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             do {
-                try await AgentVideo.export(URL(fileURLWithPath: source.sourcePath), to: url, start: args["start"] as? Double ?? 0, end: args["end"] as? Double, maxBytes: (args["max_bytes"] as? Double).map(Int.init))
+                try await AgentVideo.export(URL(fileURLWithPath: source.sourcePath), to: url, start: args["start"] as? Double ?? 0, end: args["end"] as? Double, maxBytes: (args["max_bytes"] as? Double).map(Int.init), edits: args["edits"] as? [[String: Any]] ?? [])
                 guard CaptureIndex.item(source.id) != nil else { throw AgentError("CONTENT_CHANGED", "Source was deleted during export.") }
                 let attachment = try await AgentVideo.attachment(url)
                 guard CaptureIndex.item(source.id)?.excluded == source.excluded else { throw AgentError("CONTENT_CHANGED", "Source was deleted or hidden during export.") }
                 let record = ScreenRecording(id: UUID().uuidString, path: url.path, duration: Int(ceil(attachment["duration"] as? Double ?? 0)), createdAt: Date())
                 try await Database.shared.write { try record.insert($0) }
                 Brain.syncRecording(id: record.id, filePath: record.path, duration: record.duration, transcript: "", createdAt: record.createdAt)
-                return ["id": "recording-" + record.id, "kind": "recording", "state": "finalized", "source_id": source.id, "path": record.path, "attachment": attachment, "transcript_status": "not_generated"] as [String: Any]
+                return ["id": "recording-" + record.id, "kind": "recording", "state": "finalized", "source_id": source.id, "path": record.path, "attachment": attachment, "transcript_status": "not_generated", "edits_applied": (args["edits"] as? [Any])?.count ?? 0, "edit_time_origin": "source"] as [String: Any]
             } catch { try? FileManager.default.removeItem(at: url); throw error }
         case "recording.cancel":
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
@@ -425,7 +476,7 @@ final class AgentActions {
             if let values = args["region"] as? [Double] { let region = try AgentImages.rect(values); guard CGRect(origin: .zero, size: image.size).contains(region), region.width > 10, region.height > 10 else { throw AgentError("INVALID_ARGUMENTS", "Select a text region within the screenshot.") }; model.applyCrop(region) }
             if action == "font.match" { return try await FontWorkbenchController.matchForAgent(image: model.image, title: source.title, sourceID: source.id) }
             return try await FontWorkbenchController.generateForAgent(image: model.image, title: source.title, sourceID: source.id, name: args["name"] as! String, capturedOnly: args["captured_only"] as? Bool ?? false)
-        case "font.file", "font.preview":
+        case "font.file", "font.preview", "font.quality":
             let source = try item(args); guard source.kind == "note", FontProjectStore.exists(source.sourceID) else { throw AgentError("NOT_FOUND", "Saved font not found.") }
             return try AgentFonts.file(noteID: source.sourceID, text: args["text"] as? String)
         case "font.open":
@@ -442,7 +493,8 @@ final class AgentActions {
             let model = EditorModel(image: image, fileURL: URL(fileURLWithPath: path), persistPreferences: args["preview"] as? Bool != true && args["dry_run"] as? Bool != true)
             let annotations = args["annotations"] as? [[String: Any]] ?? []
             let needsOCR = annotations.contains { $0["target_text"] != nil || $0["target_region"] != nil }
-            let regions = needsOCR ? AgentMarkup.regions(await ImageAnalysis.textObservations(image), size: size) : []
+            let observations = needsOCR ? await ImageAnalysis.textObservations(image) : []
+            let regions = AgentMarkup.regions(observations, size: size) + AgentMarkup.words(observations, size: size)
             var occupied: [CGRect] = []
             var calloutNumber = 0
             if let color = args["color"] as? String { model.annotationColor = AgentImages.color(color) }

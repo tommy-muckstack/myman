@@ -1,5 +1,5 @@
 {
-  "version": "0.6.0",
+  "version": "0.7.0",
   "actions": [
     {
       "name": "app.status",
@@ -1226,7 +1226,7 @@
     },
     {
       "name": "font.file",
-      "description": "Get a saved font\u2019s validated OpenType file with attachment metadata, specimen preview, coverage and provenance. Does not install it.",
+      "description": "Get a saved font’s validated OpenType file with attachment metadata, specimen preview, coverage and provenance. Does not install it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1603,7 +1603,7 @@
     },
     {
       "name": "screenshot.targets",
-      "description": "Find selectable OCR lines. Returns stable region IDs and image-pixel top-left rectangles; query matches text case-insensitively.",
+      "description": "Find selectable OCR lines. Returns stable region IDs and image-pixel top-left rectangles; query matches text case-insensitively. Use granularity=word for Vision word geometry; word IDs can be passed to markup. Default line preserves existing behavior.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1616,6 +1616,13 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 500
+          },
+          "granularity": {
+            "type": "string",
+            "enum": [
+              "line",
+              "word"
+            ]
           }
         },
         "required": [
@@ -1675,7 +1682,7 @@
     },
     {
       "name": "recording.status",
-      "description": "Current or named session: starting/recording/paused/finalizing/finalized/cancelled/failed. Finalized sessions include the saved item and attachment. Results retained for the last 32 sessions in this app launch.",
+      "description": "Current or named session: starting/recording/paused/finalizing/finalized/cancelled/failed. Finalized sessions include the saved item and attachment. Up to 32 receipts persist for seven days across restarts.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1735,7 +1742,7 @@
     },
     {
       "name": "recording.export",
-      "description": "Export a trimmed MP4 as a new library recording, preserving the source. Optional max_bytes rejects an export that cannot fit at supported quality; never returns a truncated video.",
+      "description": "Export a trimmed MP4 as a new library recording, preserving the source. Optional max_bytes rejects an export that cannot fit at supported quality; never returns a truncated video. Optional timed edits: captions, numbered steps, title cards, zoom, opaque redaction. Times are relative to the SOURCE video; zoom/redaction rects use oriented source pixels top-left. Edits do not change duration. Overlapping zooms are rejected.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1758,6 +1765,61 @@
             "type": "number",
             "minimum": 1024,
             "maximum": 1073741824
+          },
+          "edits": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "caption",
+                    "step",
+                    "title",
+                    "zoom",
+                    "redact"
+                  ]
+                },
+                "start": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 3600
+                },
+                "end": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 3600
+                },
+                "rect": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 16000
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "number": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 99
+                }
+              },
+              "required": [
+                "type",
+                "start",
+                "end"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
@@ -1844,7 +1906,7 @@
     },
     {
       "name": "note.attach",
-      "description": "Copy an image into a note\u2019s owned assets and append its Markdown image. Supply source_id (screenshot) or an absolute local path. Source deletion does not break the note. Optional revision guard; returns the note revision and image attachment.",
+      "description": "Copy an image into a note’s owned assets and append its Markdown image. Supply source_id (screenshot) or an absolute local path. Source deletion does not break the note. Optional revision guard; returns the note revision and image attachment.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1920,7 +1982,7 @@
     },
     {
       "name": "font.preview",
-      "description": "Render a specimen from a saved font\u2019s actual OpenType bytes. Returns coverage, provenance, approximate-character warnings and a temporary preview. Does not install the font.",
+      "description": "Render a specimen from a saved font’s actual OpenType bytes. Returns coverage, provenance, approximate-character warnings and a temporary preview. Does not install the font.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1943,6 +2005,127 @@
       "readOnly": true,
       "destructive": false,
       "permissions": []
+    },
+    {
+      "name": "screenshot.compare",
+      "description": "Compare two saved screenshots without changing either. Returns a temporary side-by-side difference image, pixel change ratio, regions and changed OCR text. Equal pixel dimensions required; ignore_rects use original-image top-left pixels.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "before_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "after_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "ignore_rects": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 16000
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "maxItems": 50
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "required": [
+          "before_id",
+          "after_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "app.wait",
+      "description": "Wait for one existing item stage, job, or recording session. Never starts or retries work. Returns only when ready; timeout/failure includes the last observed state. Permission is checked for the selected resource throughout.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "file",
+              "ocr",
+              "indexed",
+              "transcript",
+              "notes",
+              "export"
+            ]
+          },
+          "timeout": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 600
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "font.quality",
+      "description": "Assess saved font evidence for intended text: traced/inferred/missing letters, weak pixel samples, and suggested letters to capture next. Heuristic evidence quality, not certainty of font identity. Includes an actual-font specimen.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
     }
   ]
 }

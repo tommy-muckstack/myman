@@ -7,6 +7,8 @@ enum BrainAgentExport {
     struct ThemeRef: Codable, Equatable { var id: String; var title: String }
     struct MeetingRef: Codable { var id: String; var path: String; var association: String }
     struct Entry: Codable {
+        var item_id: String? = nil
+        var revision: Int? = nil
         var path: String
         var kind: String
         var title: String
@@ -120,6 +122,7 @@ enum BrainAgentExport {
             let timezone = context.flatMap { TimeZone(identifier: $0.timezone) } ?? TimeZone.current
             let local = ISO8601DateFormatter(); local.timeZone = timezone; local.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             var entry = Entry(path: path, kind: folder, title: item.title, timestamp: iso(item.capturedAt), themes: itemThemes[item.id] ?? [], pinned: item.pinned, image_path: item.kind == "screenshot" ? item.sourcePath : nil)
+            entry.item_id = item.id; entry.revision = item.revision
             entry.captured_local = local.string(from: item.capturedAt); entry.timezone = timezone.identifier
             entry.timezone_source = context?.timezone.isEmpty == false ? "capture" : "export_mac"
             if item.kind == "meeting" { entry.screenshots = meetingScreenshots[item.sourceID] ?? [] }
