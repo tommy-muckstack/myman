@@ -41,6 +41,15 @@ final class CaptureLibraryTests: XCTestCase {
         XCTAssertEqual(controls.displayedKind, "all"); XCTAssertEqual(controls.period, "any")
         XCTAssertFalse(controls.pinned); XCTAssertEqual(controls.themeID, "design")
         XCTAssertEqual(Set(model.results.map(\.id)), Set(["note-themed", "shot-s", "meeting-m", "recording-r", "dictation-d"]))
+        // Moving over the screenshot shortcut while reading a theme must not
+        // hide the theme's notes, dictation, meetings or recordings.
+        controls.actionKind = "screenshot"
+        XCTAssertEqual(controls.displayedKind, "all")
+        let themed = try CaptureIndex.history(filter: CaptureFilter(kind: controls.displayedKind, themeID: controls.themeID), database: queue)
+        XCTAssertEqual(Set(themed.map(\.kind)), Set(["note", "screenshot", "meeting", "recording", "dictation"]))
+        // A deliberate filter-menu choice can still narrow a theme.
+        controls.kind = "note"
+        XCTAssertEqual(controls.displayedKind, "note")
         withExtendedLifetime(host) {}
     }
 

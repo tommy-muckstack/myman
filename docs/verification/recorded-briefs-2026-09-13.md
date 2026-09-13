@@ -11,6 +11,8 @@ Candidate: My Man **1.1.66 (78)**; companion/root/GrokBot plugin **0.9.0**. Nati
 
 The launcher result and theme rows now show their background and border only while hovered. Keyboard actions and accessibility selection remain available; the default first result no longer looks persistently selected.
 
+Theme browsing also ignores capture-shortcut hover filters so a theme continues showing its notes, dictation, screenshots, meetings and recordings. Explicit filter-menu choices still work. All 15 capture-library tests pass, including a mixed-content theme and the shortcut-hover regression.
+
 ## Product and data boundaries
 
 Briefs retain source IDs/revisions and explicitly authored instructions, not duplicate source transcripts/videos. A worker submits saved output IDs with at least one visual. A different assigned reviewer must cover every criterion; passing checks cite submitted evidence. The reviewed state records that reviewer's judgment and is not an automated correctness guarantee. Refresh resets assignments and prior proof metadata. Deleting/excluding a referenced source or result invalidates the brief.
