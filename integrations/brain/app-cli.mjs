@@ -7,25 +7,29 @@ import { Brain, BrainError } from './brain.mjs';
 import { execute } from './tools.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
-const strings = ['enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
+const strings = ['machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
 const booleans = ['help','json','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only'];
 const options = Object.fromEntries([...strings.map(key=>[key,{type:'string'}]),...booleans.map(key=>[key,{type:'boolean'}]),...['tag','exclude-tag','participant'].map(key=>[key,{type:'string',multiple:true}])]);
 for(const action of catalog.actions)for(const [key,schema]of Object.entries(action.inputSchema.properties)){
   const flag=key.replaceAll('_','-');if(!options[flag])options[flag]={type:schema.type==='boolean'?'boolean':'string'};
 }
-const common = ['json','root','wait','wait-ready','no-wait','request-id','wait-timeout','mode'];
+const common = ['machine','json','root','wait','wait-ready','no-wait','request-id','wait-timeout','mode'];
 const legacy = {open:'open',launcher:'open',screenshot:'screenshot',note:'note',dictation:'dictation',meeting:'meeting','cancel-meeting':'cancel-meeting',record:'record',settings:'settings'};
 const pairs = {
+  'machine current':'machine.current','agent whoami':'agent.whoami','agent list':'agent.list','resource version':'resource.version',
+  'bundle create':'bundle.create','bundle list':'bundle.list','bundle read':'bundle.read','bundle update':'bundle.update','bundle delete':'bundle.delete',
+  'handoff create':'handoff.create','handoff list':'handoff.list','handoff read':'handoff.read','handoff update':'handoff.update',
+  'collaboration events':'collaboration.events','lease acquire':'lease.acquire','lease release':'lease.release','session transfer':'session.transfer',
   'note create':'note.create','note append':'note.append','note update':'note.update','note open':'item.open',
   'meeting start':'meeting.start','meeting stop':'meeting.stop','meeting cancel':'meeting.discard','meeting rename':'meeting.rename','meeting notes':'meeting.notes',
   'dictation start':'dictation.start','dictation stop':'dictation.stop','dictation cancel':'dictation.cancel',
   'record status':'recording.status','record result':'recording.status','record pause':'recording.pause','record resume':'recording.resume','record frames':'recording.frames','record export':'recording.export','record start':'recording.start','record stop':'recording.stop','record cancel':'recording.cancel','record microphone':'recording.microphone',
-  'editor open':'item.open','editor save':'screenshot.edit','capture import':'screenshot.import','capture targets':'screenshot.targets','capture ocr':'screenshot.ocr','capture image':'screenshot.image','capture copy':'clipboard.write','capture remove-background':'screenshot.remove_background',
+  'editor open':'item.open','editor save':'screenshot.edit','capture import':'screenshot.import','capture compare':'screenshot.compare','capture targets':'screenshot.targets','capture ocr':'screenshot.ocr','capture image':'screenshot.image','capture copy':'clipboard.write','capture remove-background':'screenshot.remove_background',
   'clipboard read':'clipboard.read','clipboard write':'clipboard.write',
   'library read':'item.read','library open':'item.open','library related':'item.related','library rename':'item.rename','library pin':'item.pin','library unpin':'item.pin','library hide':'item.exclude','library unhide':'item.exclude','library delete':'item.delete',
   'theme rename':'theme.rename','theme pin':'theme.pin','theme unpin':'theme.pin','theme dismiss':'theme.dismiss','theme merge':'theme.merge','theme add':'theme.assign','theme remove':'theme.assign',
   'task add':'task.create','task create':'task.create','task update':'task.update','task complete':'task.update','task reopen':'task.update','task delete':'task.delete',
-  'font create':'font.create','font open':'font.open','font file':'font.file','font match':'font.match','font preview':'font.preview',
+  'font create':'font.create','font open':'font.open','font file':'font.file','font quality':'font.quality','font match':'font.match','font preview':'font.preview',
   'note attach':'note.attach','library search':'capture.search',
   'settings get':'settings.read','settings set':'settings.update','history clear':'history.clear',
   'screens list':'screens.list','windows list':'windows.list',
@@ -41,11 +45,22 @@ note create|append|update|open --body TEXT|--body-file FILE|- [--title TITLE]
 note attach --id NOTE-ID --source-id SHOT-ID|--path FILE [--alt TEXT]
 library search|recent|read|open|related|rename|pin|unpin|hide|unhide|delete
 theme list|rename|pin|unpin|dismiss|merge|add|remove  task list|add|update|complete|reopen|delete
-capture import|targets|ocr|image|copy|remove-background  editor open|save
-font match|create|preview|open|file  clipboard read|write  settings get|set  history clear
+capture import|compare|targets|ocr|image|copy|remove-background  editor open|save
+font match|create|preview|quality|open|file  clipboard read|write  settings get|set  history clear
 screens list  windows list  doctor  latest --kind screenshots
 capture-markup --mode agent --region x,y,w,h --ops-file ops.json
 
+Collaboration: agent whoami|list; machine current; --machine ID verifies the selected Mac.
+Set MYMAN_AGENT_TOKEN and MYMAN_MACHINE_ID in the host environment; never put tokens in prompts.
+bundle create|list|read|update|delete; handoff create|list|read|update; collaboration events
+lease acquire|release; session transfer; resource version --kind task|theme|item --id ID
+Bundles share references and revisions, handoffs never launch agents or send messages.
+Named agents need revision guards on in-place edits. Recording sessions belong to their creator.
+
+Wait: wait --id ID --stage ocr|indexed|transcript|notes|file|export --timeout 120
+Or wait --job-id UUID / --session-id ID. No action is started or replayed.
+Compare: capture compare --before-id ID --after-id ID [--ignore-rects JSON]
+Video: record export --id ID --edits JSON (caption/step/title/zoom/redact).
 Media: record start --window-id ID --max-duration 30; record result --session-id ID
 record frames --id ID --times 0,2,5; record export --id ID --start 1 --end 10 --max-bytes 20000000
 Markup: capture targets --id ID --query TEXT; ops accept target_text or target_region.
@@ -90,6 +105,7 @@ export async function plan(argv) {
   if(waitMs<0 || waitMs>600000)fail('Wait timeout must be 0–600 seconds.');
   const control={id:v['request-id'],wait:!v['no-wait'],waitMs};
   if(p[0]==='actions'){allowed(v,['offline']);if(p.length>2)fail('Use actions [name].');return {type:'discovery',name:p[1],offline:!!v.offline};}
+  if(p[0]==='wait'){allowed(v,['id','job-id','session-id','stage','timeout']);if(p.length!==1)fail('Use wait with a resource ID.');const args={};for(const k of ['id','job-id','session-id','stage','timeout'])if(v[k]!==undefined)args[k.replaceAll('-','_')]=k==='timeout'?number(v[k]):v[k];return {type:'action',name:'app.wait',args,control};}
   if(p[0]==='jobs'){allowed(v,[]);if(p.length!==1)fail('Use jobs.');return {type:'jobs'};}
   if(p[0]==='job'){allowed(v,[]);if(p.length!==2)fail('Use job UUID.');return {type:'job',id:p[1]};}
   if(p[0]==='invoke') {allowed(v,[]);if(p.length<2||p.length>3)fail('Use invoke action.name [JSON].');return {type:'action',name:p[1],args:p[2]?json(p[2]):{},control,raw:true};}
@@ -175,13 +191,17 @@ export function unwrap(reply, selection){
   return {ok:true,...(result&&typeof result==='object'&&!Array.isArray(result)?result:{result}),job_id:job?.id,launch_id:reply.launch_id};
 }
 export async function run(argv, deps={}){
-  const task=await plan(argv), call=deps.invoke??invoke;
+  const task=await plan(argv);
+  const machine=parseArgs({args:argv,options,allowPositionals:true,strict:true}).values.machine;
+  if(machine && ['read','interactive'].includes(task.type))fail('--machine targets native app commands. Run Brain retrieval on the explicitly selected host.');
+  const transport=payload=>(deps.request??request)({...payload,...(machine?{machine_id:machine}:{})});
+  const call=deps.invoke??((name,args,control)=>invoke(name,args,{...control,transport}));
   if(task.type==='help')return {help};
-  if(task.type==='discovery')return discover(task.name,{transport:deps.request??request,offline:task.offline});
-  if(task.type==='jobs')return (deps.request??request)({method:'jobs'});
+  if(task.type==='discovery')return discover(task.name,{transport,offline:task.offline});
+  if(task.type==='jobs')return transport({method:'jobs'});
   if(task.type==='value')return task.value;
   if(task.type==='interactive'){await (deps.open??((host)=>promisify(execFile)('/usr/bin/open',['-g',`myman://${host}`])))(task.host);return {ok:true,interactive:true,dispatched:task.host};}
-  if(task.type==='job')return (deps.request??request)({method:'job',id:task.id});
+  if(task.type==='job')return transport({method:'job',id:task.id});
   if(task.type==='read')return execute(new Brain(task.root),task.name,task.args);
   if(task.type==='doctor'){
     let brain,app;try{brain=await execute(new Brain(task.root),'status',{});}catch(error){brain={ok:false,error:{code:error.code??'BRAIN_UNAVAILABLE',message:error.message}};}

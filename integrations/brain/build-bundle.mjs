@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const output = path.resolve(directory, '../../src/Resources/BrainCompanion');
-const result = await build({ absWorkingDir: directory, entryPoints: ['cli.mjs', 'server.mjs'], outdir: output, outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', target: 'node22', format: 'esm', minify: true, legalComments: 'linked', write: false, metafile: true,
+const result = await build({ absWorkingDir: directory, entryPoints: ['cli.mjs', 'server.mjs', 'app-server.mjs'], outdir: output, outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', target: 'node22', format: 'esm', minify: true, legalComments: 'linked', write: false, metafile: true,
   banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" } });
 result.outputFiles.push({ path: path.join(output, 'actions.json'), contents: await readFile(path.join(directory, 'actions.json')) });
 // The separately installed GrokBot package must carry its own workflow recipes.

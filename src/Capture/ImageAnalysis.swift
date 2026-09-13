@@ -10,6 +10,7 @@ enum ImageAnalysis {
         var id = UUID()
         let text: String
         let box: CGRect
+        var words: [TextObservation]? = nil
 
         /// Convert to image coordinates (points, top-left origin).
         func rect(in imageSize: CGSize) -> CGRect {
@@ -35,8 +36,18 @@ enum ImageAnalysis {
             DispatchQueue.global(qos: .userInitiated).async {
                 try? handler.perform([request])
                 let observations = (request.results ?? []).compactMap { observation -> TextObservation? in
-                    guard let text = observation.topCandidates(1).first?.string else { return nil }
-                    return TextObservation(text: text, box: observation.boundingBox)
+                    guard let recognized = observation.topCandidates(1).first else { return nil }
+                    let text = recognized.string
+                    var words: [TextObservation] = []
+                    // Whitespace-delimited tokens retain prices, email and code
+                    // punctuation. Vision supplies geometry, never width guesses.
+                    for word in text.split(whereSeparator: { $0.isWhitespace }) {
+                        let range = word.startIndex..<word.endIndex
+                        if let box = try? recognized.boundingBox(for: range)?.boundingBox {
+                            words.append(TextObservation(text: String(text[range]), box: box))
+                        }
+                    }
+                    return TextObservation(text: text, box: observation.boundingBox, words: words)
                 }
                 continuation.resume(returning: observations)
             }

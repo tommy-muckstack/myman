@@ -3,28 +3,31 @@ import Foundation
 import GRDB
 
 enum CaptureLifecycle {
+    private static func checkRevision(_ id: String, expected: Int?, db: GRDB.Database) throws {
+        if let expected, try Int.fetchOne(db, sql: "SELECT revision FROM captureItem WHERE id=?", arguments: [id]) != expected { throw AgentError("EDIT_CONFLICT", "Item changed; read it again.") }
+    }
     static func exists(kind: String, id: String) -> Bool {
         guard CaptureSchema.sources.contains(where: { $0.table == kind }) else { return false }
         return (try? Database.shared.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM \(kind) WHERE id = ?", arguments: [id]) }) == 1
     }
 
-    static func pin(_ item: CaptureItem) throws {
-        try Database.shared.write { try $0.execute(sql: "UPDATE captureItem SET pinned = ? WHERE id = ?", arguments: [!item.pinned, item.id]) }
+    static func pin(_ item: CaptureItem, expectedRevision: Int? = nil) throws {
+        try Database.shared.write { try checkRevision(item.id, expected: expectedRevision, db: $0); try $0.execute(sql: "UPDATE captureItem SET pinned = ?, revision = revision + 1 WHERE id = ?", arguments: [!item.pinned, item.id]) }
         ThemeStore.notify()
     }
-    static func rename(_ item: CaptureItem, title: String) throws {
-        try Database.shared.write { try $0.execute(sql: "UPDATE captureItem SET userTitle = ?, revision = revision + 1 WHERE id = ?", arguments: [String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160)), item.id]) }
+    static func rename(_ item: CaptureItem, title: String, expectedRevision: Int? = nil) throws {
+        try Database.shared.write { try checkRevision(item.id, expected: expectedRevision, db: $0); try $0.execute(sql: "UPDATE captureItem SET userTitle = ?, revision = revision + 1 WHERE id = ?", arguments: [String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160)), item.id]) }
         ThemeStore.notify()
     }
-    static func exclude(_ item: CaptureItem, excluded: Bool) throws {
-        try Database.shared.write { try $0.execute(sql: "UPDATE captureItem SET excluded = ? WHERE id = ?", arguments: [excluded, item.id]) }
+    static func exclude(_ item: CaptureItem, excluded: Bool, expectedRevision: Int? = nil) throws {
+        try Database.shared.write { try checkRevision(item.id, expected: expectedRevision, db: $0); try $0.execute(sql: "UPDATE captureItem SET excluded = ?, revision = revision + 1 WHERE id = ?", arguments: [excluded, item.id]) }
         SearchService.clearVectorCache()
         if excluded { NotificationCenter.default.post(name: .captureExcluded, object: item.id) }
         ThemeStore.notify()
     }
 
-    @MainActor static func delete(_ item: CaptureItem) throws {
-        let hit = try Database.shared.read { try item.hit(in: $0) }
+    @MainActor static func delete(_ item: CaptureItem, expectedRevision: Int? = nil) throws {
+        let hit = try Database.shared.read { try checkRevision(item.id, expected: expectedRevision, db: $0); return try item.hit(in: $0) }
         guard let hit else { return }
         var files: [String] = []
         switch hit {

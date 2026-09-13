@@ -69,6 +69,8 @@ final class EditorModel: ObservableObject {
     }
     @Published var isRemovingBackground = false
     @Published var backgroundRemoved = false
+    @Published var backgroundRemovalError: String?
+    private var backgroundRemovalUndo: (image: NSImage, backdrop: BackdropStyle)?
     /// Rounded-corner radius applied to the image itself (0 = square).
     @Published var cornerRadius: CGFloat = 0
     @Published var didCopyText = false
@@ -203,7 +205,8 @@ final class EditorModel: ObservableObject {
             pixelatePreviews[last.id] = nil
         } else if let previous = imageHistory.popLast() {
             image = previous
-            backgroundRemoved = false
+            if let removal = backgroundRemovalUndo, removal.image === previous { backdrop = removal.backdrop; backgroundRemovalUndo = nil }
+            backgroundRemoved = backgroundRemovalUndo != nil
         }
     }
 
@@ -326,41 +329,26 @@ final class EditorModel: ObservableObject {
     // MARK: Background removal (Vision subject mask → transparent background)
 
     func removeBackground() {
-        translationPatches = []
         guard !isRemovingBackground, !backgroundRemoved,
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        else { return }
-        isRemovingBackground = true
-        let size = image.size
-
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        isRemovingBackground = true; backgroundRemovalError = nil
+        let original = image, size = image.size
         Task.detached(priority: .userInitiated) {
-            let masked: CGImage? = {
-                let request = VNGenerateForegroundInstanceMaskRequest()
-                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                guard (try? handler.perform([request])) != nil,
-                      let result = request.results?.first,
-                      let maskBuffer = try? result.generateScaledMaskForImage(
-                          forInstances: result.allInstances, from: handler)
-                else { return nil }
-
-                let input = CIImage(cgImage: cgImage)
-                let filter = CIFilter.blendWithMask()
-                filter.inputImage = input
-                filter.maskImage = CIImage(cvPixelBuffer: maskBuffer)
-                filter.backgroundImage = CIImage(color: .clear).cropped(to: input.extent)
-                guard let output = filter.outputImage else { return nil }
-                return CIContext().createCGImage(output, from: output.extent)
-            }()
-
+            let masked = BackgroundRemoval.remove(cgImage)
             await MainActor.run {
                 self.isRemovingBackground = false
-                guard let masked else { return }
+                guard self.image === original else { return }
+                guard let masked else {
+                    self.backgroundRemovalError = "Couldn't separate a background in this image. Try cropping around the subject or use an image with a clearer surrounding background."
+                    return
+                }
+                self.backgroundRemovalUndo = (self.image, self.backdrop)
                 self.imageHistory.append(self.image)
+                self.translationPatches = []
                 self.image = NSImage(cgImage: masked, size: size)
                 self.backgroundRemoved = true
+                self.backdrop = .none
                 Analytics.track("editor_background_removed")
-                // A cut-out subject begs for a backdrop.
-                if self.backdrop == .none { self.backdrop = .slate }
             }
         }
     }

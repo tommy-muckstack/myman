@@ -114,13 +114,12 @@ npm ci --ignore-scripts --prefix integrations/brain
 node integrations/brain/cli.mjs status
 ```
 
-The Brain MCP is read-only and makes no network calls itself. The skill also
-documents optional app CLI actions, protected by Settings → Agents grants. A hosted agent such
+The `myman-brain` MCP server remains read-only. The separate `myman-app` MCP server exposes the same local app actions as the CLI, protected by Settings → Agents grants. Both run locally without a cloud relay. A hosted agent such
 as Grok receives the excerpts and images you ask it to retrieve; this optional integration
 is separate from MyMan's on-device AI. The root Agent Plugin is the Cursor
 Marketplace candidate; Node 22+ is enough for its committed MCP bundle.
 See [marketplace checks and remaining host tests](docs/grok-bot-marketplace.md)
-and [paste-ready listing copy](docs/marketplace-submission.md). Cursor/Hugo
+and [paste-ready listing copy](docs/marketplace-submission.md). Cursor/GrokBot
 client activation and marketplace acceptance are separate from local CLI/MCP
 verification. Grok Bot must execute on the Mac containing the Brain.
 
@@ -156,3 +155,7 @@ The meeting-capture architecture (CoreAudio process taps, diarization approach, 
 ## Open source contributions
 
 MyMan is **Apache-2.0 open source**. Humans and agents, including GrokBot, are welcome to propose fixes and improvements through the [public repository](https://github.com/tommy-muckstack/myman). See the [contribution guide](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) for setup, checks and the pull request process.
+
+### Working with multiple agents
+
+MyMan can coordinate named agents through human-issued credentials, shared source bundles, revision guards, recording ownership and explicit handoffs. [Four example workflows and setup](docs/multi-agent-workflows.md). The agent host selects the Mac and schedules work; MyMan remains a deliberately invoked utility. These additions are in the 0.8.0 candidate and require the corresponding updated app.

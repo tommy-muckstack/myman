@@ -30,11 +30,11 @@ final class AgentActions {
     private let journal = AgentJournal.shared
     init(capture: CaptureController, meetings: MeetingController, voice: VoiceController) {
         self.capture = capture; self.meetings = meetings; self.voice = voice
-        deletionObserver = NotificationCenter.default.addObserver(forName: .captureDeleted, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.purgeContentResults() }
+        deletionObserver = NotificationCenter.default.addObserver(forName: .captureDeleted, object: nil, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String) }
         }
-        exclusionObserver = NotificationCenter.default.addObserver(forName: .captureExcluded, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.purgeContentResults() }
+        exclusionObserver = NotificationCenter.default.addObserver(forName: .captureExcluded, object: nil, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String) }
         }
     }
     static var catalog: [String: Any] {
@@ -45,21 +45,32 @@ final class AgentActions {
     func receive(_ request: [String: Any]) -> [String: Any] {
         do {
             guard let method = request["method"] as? String else { throw AgentError("INVALID_REQUEST", "A method is required.") }
+            try AgentIdentity.shared.checkMachine(request)
             if method == "actions" {
+                let discoveredAgent = request["credential"] != nil ? try AgentIdentity.shared.authenticate(request) : nil
                 var catalog = Self.catalog
                 catalog["app_version"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
                 catalog["app_build"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "development"
                 catalog["permissions"] = AgentConsent.status()
+                catalog["machine"] = AgentIdentity.shared.machine
+                catalog["named_agents_required"] = AgentIdentity.shared.required
+                if let agent = discoveredAgent {
+                    catalog["agent"] = ["id": agent.id, "name": agent.name, "scopes": agent.scopes.sorted()]
+                    catalog["effective_grants"] = AgentConsent.status().mapValues { $0 }.filter { $0.key == "enabled" || agent.scopes.contains($0.key) }
+                }
                 catalog["recovery"] = ["durable": true, "retention_days": 7, "automatic_replay": false]
                 return ["ok": true, "launch_id": launchID, "result": catalog]
             }
+            let principal = try AgentIdentity.shared.authenticate(request)
             if method == "jobs" {
                 guard AgentConsent.status()["enabled"] == true else { throw AgentError("AGENT_DISABLED", "Local app actions are disabled.") }
-                return ["ok": true, "launch_id": launchID, "jobs": journal.list(), "retention_days": 7]
+                return ["ok": true, "launch_id": launchID, "jobs": journal.list().filter { ($0["owner"] as? String ?? "local") == principal.id }, "retention_days": 7]
             }
             guard let id = request["id"] as? String, UUID(uuidString: id) != nil else { throw AgentError("INVALID_REQUEST", "A UUID request/job id is required.") }
             if method == "job" {
                 guard let job = jobs[id] ?? journal.job(id) else { throw AgentError("JOB_NOT_FOUND", "Unknown or expired job; do not retry mutations automatically.") }
+                guard (job["owner"] as? String ?? "local") == principal.id else { throw AgentError("NOT_OWNER", "This job belongs to another agent.") }
+                try AgentIdentity.shared.validate(principal, action: job["action"] as? String ?? "item.read")
                 try AgentConsent.validate(job["action"] as? String ?? "item.read", args: ["confirm": true])
                 return ["ok": true, "launch_id": launchID, "job": job, "recovered": jobs[id] == nil]
             }
@@ -67,7 +78,8 @@ final class AgentActions {
                   let args = request["arguments"] as? [String: Any],
                   let schema = (Self.catalog["actions"] as? [[String: Any]])?.first(where: { $0["name"] as? String == action })?["inputSchema"] as? [String: Any] else { throw AgentError("UNKNOWN_ACTION", "Use actions to discover commands and arguments.") }
             try AgentSchema.validate(args, schema: schema)
-            let fingerprint = try JSONSerialization.data(withJSONObject: ["action": action, "arguments": args], options: [.sortedKeys])
+            try AgentIdentity.shared.validate(principal, action: action)
+            let fingerprint = try JSONSerialization.data(withJSONObject: principal.id == "local" ? ["action": action, "arguments": args] : ["action": action, "arguments": args, "owner": principal.id], options: [.sortedKeys])
             guard !retired.contains(id) else { throw AgentError("JOB_EXPIRED", "That job has expired. Inspect existing results instead of replaying it.") }
             if let previous = requests[id] {
                 guard previous == fingerprint else { throw AgentError("ID_CONFLICT", "This request id was used with different arguments.") }
@@ -81,9 +93,9 @@ final class AgentActions {
             if order.count >= 256, let index = order.firstIndex(where: { jobs[$0]?["state"] as? String != "running" }) {
                 let old = order.remove(at: index); jobs[old] = nil; requests[old] = nil; resultSizes[old] = nil; retired.insert(old)
             }
-            try journal.begin(id, action: action, fingerprint: fingerprint)
+            try journal.begin(id, action: action, fingerprint: fingerprint, owner: principal.id)
             requests[id] = fingerprint; order.append(id); inFlight += 1
-            jobs[id] = ["id": id, "action": action, "state": "running"]
+            jobs[id] = ["id": id, "action": action, "state": "running", "owner": principal.id]
             let revision = contentRevision
             Task { @MainActor in
                 defer {
@@ -92,11 +104,13 @@ final class AgentActions {
                 }
                 do {
                     try AgentConsent.validate(action, args: args)
-                    let result = try await execute(action, args)
+                    let result = try await AgentContext.$principal.withValue(principal) {
+                        try await AgentContext.$jobID.withValue(id) { try await executeCoordinated(action, args) }
+                    }
                     guard revision == contentRevision || ["item.delete", "item.exclude", "history.clear"].contains(action) else { AgentMediaStore.shared.purge(); throw AgentError("CONTENT_CHANGED", "Captured content was deleted while this job ran. Inspect existing items; do not replay the action automatically.") }
-                    jobs[id] = ["id": id, "action": action, "state": "succeeded", "result": result]
+                    jobs[id] = ["id": id, "action": action, "state": "succeeded", "result": result, "owner": principal.id]
                 }
-                catch { jobs[id] = ["id": id, "action": action, "state": "failed", "error": Self.error(error)] }
+                catch { jobs[id] = ["id": id, "action": action, "state": "failed", "error": Self.error(error), "owner": principal.id] }
             }
             return ["ok": true, "launch_id": launchID, "job": jobs[id]!]
         } catch { return ["ok": false, "launch_id": launchID, "error": Self.error(error)] }
@@ -173,6 +187,76 @@ final class AgentActions {
         guard meetings.phase == .idle, !meetings.isStarting, !voice.starting, !ScreenRecorder.shared.isBusy else { throw AgentError("BUSY", "Another capture is active.") }
         switch voice.phase { case .idle, .done: break; default: throw AgentError("BUSY", "Dictation is active.") }
     }
+    private func awaitReady(_ args: [String: Any]) async throws -> [String: Any] {
+        guard ["id", "job_id", "session_id"].filter({ args[$0] != nil }).count == 1 else { throw AgentError("INVALID_ARGUMENTS", "Select exactly one item id, job_id, or session_id.") }
+        guard args["id"] != nil || args["stage"] == nil else { throw AgentError("INVALID_ARGUMENTS", "stage applies only to item IDs.") }
+        let deadline = Date().addingTimeInterval(args["timeout"] as? Double ?? 120)
+        while true {
+            try Task.checkCancellation()
+            try AgentIdentity.shared.validate(AgentContext.principal, action: "app.wait")
+            try AgentConsent.validate("app.wait", args: args)
+            let status: [String: Any]
+            if let id = args["job_id"] as? String {
+                guard let job = jobs[id] ?? journal.job(id) else { throw AgentError("JOB_NOT_FOUND", "Unknown or expired job; do not repeat its action.") }
+                guard (job["owner"] as? String ?? "local") == AgentContext.principal.id else { throw AgentError("NOT_OWNER", "This job belongs to another agent.") }
+                guard job["action"] as? String != "app.wait" else { throw AgentError("INVALID_ARGUMENTS", "Wait on the original operation, not another waiter.") }
+                try AgentIdentity.shared.validate(AgentContext.principal, action: job["action"] as? String ?? "item.read")
+                try AgentConsent.validate(job["action"] as? String ?? "item.read", args: ["confirm": true])
+                let state = job["state"] as? String ?? "unknown"
+                if ["failed", "interrupted"].contains(state) { throw AgentError("WAIT_FAILED", "The original job did not complete.", details: ["job": job]) }
+                status = ["job_id": id, "state": state, "ready": state == "succeeded", "job": job]
+            } else if let id = args["session_id"] as? String {
+                var value = try await recordingStatus(id)
+                let state = value["state"] as? String ?? "unknown"
+                if ["failed", "cancelled", "interrupted"].contains(state) { throw AgentError("WAIT_FAILED", "Recording did not finalize.", details: ["session": value]) }
+                value["ready"] = state == "finalized"; status = value
+            } else {
+                try AgentConsent.validate("item.read", args: args)
+                let id = args["id"] as! String, stage = args["stage"] as? String ?? "indexed"
+                status = try await Task.detached(priority: .utility) { try AgentReadiness.item(id, stage: stage) }.value
+            }
+            if status["ready"] as? Bool == true { return status }
+            guard Date() < deadline else { throw AgentError("PROCESSING_TIMEOUT", "The requested result is not ready. No work was started or retried.", details: ["readiness": status]) }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+    }
+    private func executeCoordinated(_ action: String, _ args: [String: Any]) async throws -> Any {
+        try AgentIdentity.shared.validate(AgentContext.principal, action: action)
+        if ["agent.", "bundle.", "handoff.", "collaboration.", "lease."].contains(where: action.hasPrefix) || action == "session.transfer" {
+            return try AgentCollaboration.shared.execute(action, args)
+        }
+        if action == "machine.current" { return AgentIdentity.shared.machine }
+        if action == "resource.version" { return try AgentVersions.read(args) }
+        let coordination = AgentCollaboration.shared
+        let info = (Self.catalog["actions"] as? [[String: Any]])?.first { $0["name"] as? String == action }
+        let mutating = info?["readOnly"] as? Bool == false
+        var resources: [String] = []
+        if mutating, let session = args["session_id"] as? String {
+            try coordination.checkSession(session); resources.append("session:" + session)
+        }
+        if action == "clipboard.write" || args["clipboard"] as? Bool == true { resources.append("clipboard") }
+        if mutating, ["item.", "note.", "task.", "theme."].contains(where: action.hasPrefix), let id = args["id"] as? String { resources.append("item:" + id) }
+        var acquired: [String] = []
+        defer { for resource in acquired { coordination.end(resource: resource) } }
+        for resource in resources.sorted() { try coordination.begin(resource: resource, leaseID: args["lease_id"] as? String); acquired.append(resource) }
+        try AgentVersions.validate(action, args: args, named: AgentContext.principal.id != "local")
+        if ["recording.start", "meeting.start", "dictation.start"].contains(action) {
+            try coordination.pruneSessions(active: Set([ScreenRecorder.shared.agentSessionID, meetings.activeCaptureMeetingID, voice.agentSessionID].compactMap { $0 }))
+        }
+        let result = try await execute(action, args)
+        if ["recording.start", "meeting.start", "dictation.start"].contains(action), let session = (result as? [String: Any])?["session_id"] as? String {
+            do { try coordination.ownSession(session) }
+            catch { throw AgentError("OWNERSHIP_NOT_PERSISTED", "Capture started but ownership could not be saved. Use MyMan recording controls; do not start it again.", details: ["session": result]) }
+        }
+        if mutating {
+            do { try coordination.completed(action: action, result: result) }
+            catch {
+                if var value = result as? [String: Any] { value["coordination_persisted"] = false; return value }
+                return ["result": result, "coordination_persisted": false]
+            }
+        }
+        return result
+    }
     func execute(_ action: String, _ args: [String: Any]) async throws -> Any {
         let isAudio = (action.hasPrefix("recording.") && !["recording.status", "recording.frames", "recording.export"].contains(action)) || action.hasPrefix("dictation.") || ["meeting.start", "meeting.stop", "meeting.discard"].contains(action)
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
@@ -236,9 +320,30 @@ final class AgentActions {
             model.removeBackground(); try await wait(120) { !model.isRemovingBackground }
             guard model.backgroundRemoved else { throw AgentError("NO_FOREGROUND", "No foreground object could be separated.") }
             return try saveImage(model.renderFinal(), clipboard: args["clipboard"] as? Bool ?? false)
+        case "app.wait": return try await awaitReady(args)
+        case "screenshot.compare":
+            let (before, a) = try shot(["id": args["before_id"]!])
+            let (after, b) = try shot(["id": args["after_id"]!])
+            guard !before.excluded, !after.excluded else { throw AgentError("NOT_FOUND", "A comparison source is excluded.") }
+            guard let acg = a.cgImage(forProposedRect: nil, context: nil, hints: nil), let bcg = b.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw AgentError("INVALID_IMAGE", "Cannot decode comparison images.") }
+            let ignored = try (args["ignore_rects"] as? [[Double]] ?? []).map { try AgentImages.rect($0) }
+            let threshold = Int(args["threshold"] as? Double ?? 20)
+            let difference = try await Task.detached(priority: .userInitiated) { try AgentComparison.difference(acg, bcg, ignored: ignored, threshold: threshold) }.value
+            async let aLines = ImageAnalysis.textObservations(a)
+            async let bLines = ImageAnalysis.textObservations(b)
+            let changedText = await AgentComparison.changedText(before: aLines, after: bLines, size: AgentImages.size(a), ignored: ignored)
+            guard CaptureIndex.item(before.id)?.revision == before.revision, CaptureIndex.item(after.id)?.revision == after.revision,
+                  CaptureIndex.item(before.id)?.excluded == false, CaptureIndex.item(after.id)?.excluded == false else { throw AgentError("CONTENT_CHANGED", "A source changed during comparison. Select the current images again.") }
+            let image = try AgentComparison.render(before: a, after: b, difference: difference, ignored: ignored)
+            return ["before_id": before.id, "after_id": after.id, "coordinates": "image-pixels-top-left", "changed_pixels": difference.changed,
+                    "compared_pixels": difference.compared, "change_ratio": difference.compared == 0 ? 0 : Double(difference.changed) / Double(difference.compared),
+                    "threshold": threshold, "regions": difference.regions.prefix(200).map { [$0.minX, $0.minY, $0.width, $0.height] },
+                    "total_regions": difference.regions.count, "truncated": difference.regions.count > 200, "changed_text": changedText,
+                    "attachment": try AgentMediaStore.shared.image(image, prefix: "comparison"), "temporary": true] as [String: Any]
         case "screenshot.targets":
             let (source, image) = try shot(args)
-            let regions = AgentMarkup.regions(await ImageAnalysis.textObservations(image), size: AgentImages.size(image))
+            let observations = await ImageAnalysis.textObservations(image)
+            let regions = args["granularity"] as? String == "word" ? AgentMarkup.words(observations, size: AgentImages.size(image)) : AgentMarkup.regions(observations, size: AgentImages.size(image))
             let matches = (args["query"] as? String).map { AgentMarkup.matches(regions, text: $0) } ?? regions
             return ["source_id": source.id, "coordinates": "image-pixels-top-left", "regions": matches.prefix(200).map(\.json), "total": matches.count, "truncated": matches.count > 200] as [String: Any]
         case "screenshot.ocr":
@@ -291,14 +396,14 @@ final class AgentActions {
             let url = SettingsStore.shared.screenshotFolderURL.appendingPathComponent("Clip-\(UUID().uuidString).mp4")
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             do {
-                try await AgentVideo.export(URL(fileURLWithPath: source.sourcePath), to: url, start: args["start"] as? Double ?? 0, end: args["end"] as? Double, maxBytes: (args["max_bytes"] as? Double).map(Int.init))
+                try await AgentVideo.export(URL(fileURLWithPath: source.sourcePath), to: url, start: args["start"] as? Double ?? 0, end: args["end"] as? Double, maxBytes: (args["max_bytes"] as? Double).map(Int.init), edits: args["edits"] as? [[String: Any]] ?? [])
                 guard CaptureIndex.item(source.id) != nil else { throw AgentError("CONTENT_CHANGED", "Source was deleted during export.") }
                 let attachment = try await AgentVideo.attachment(url)
                 guard CaptureIndex.item(source.id)?.excluded == source.excluded else { throw AgentError("CONTENT_CHANGED", "Source was deleted or hidden during export.") }
                 let record = ScreenRecording(id: UUID().uuidString, path: url.path, duration: Int(ceil(attachment["duration"] as? Double ?? 0)), createdAt: Date())
                 try await Database.shared.write { try record.insert($0) }
                 Brain.syncRecording(id: record.id, filePath: record.path, duration: record.duration, transcript: "", createdAt: record.createdAt)
-                return ["id": "recording-" + record.id, "kind": "recording", "state": "finalized", "source_id": source.id, "path": record.path, "attachment": attachment, "transcript_status": "not_generated"] as [String: Any]
+                return ["id": "recording-" + record.id, "kind": "recording", "state": "finalized", "source_id": source.id, "path": record.path, "attachment": attachment, "transcript_status": "not_generated", "edits_applied": (args["edits"] as? [Any])?.count ?? 0, "edit_time_origin": "source"] as [String: Any]
             } catch { try? FileManager.default.removeItem(at: url); throw error }
         case "recording.cancel":
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
@@ -376,36 +481,40 @@ final class AgentActions {
             else if source.kind == "recording" { NSWorkspace.shared.open(URL(fileURLWithPath: source.sourcePath)) }
             else { CaptureActions.open(source) }
             return ["opened": source.id]
-        case "item.rename": let source = try item(args); try CaptureLifecycle.rename(source, title: args["title"] as! String); return ["id": source.id]
-        case "item.pin": let source = try item(args); if source.pinned != args["pinned"] as! Bool { try CaptureLifecycle.pin(source) }; return ["id": source.id]
-        case "item.exclude": let source = try item(args); try CaptureLifecycle.exclude(source, excluded: args["excluded"] as! Bool); return ["id": source.id]
-        case "item.delete": let source = try item(args); try CaptureLifecycle.delete(source); return ["deleted": source.id]
+        case "item.rename": let source = try item(args); try CaptureLifecycle.rename(source, title: args["title"] as! String, expectedRevision: args["expected_revision"] as? Int); return ["id": source.id]
+        case "item.pin": let source = try item(args); if source.pinned != args["pinned"] as! Bool { try CaptureLifecycle.pin(source, expectedRevision: args["expected_revision"] as? Int) }; return ["id": source.id]
+        case "item.exclude": let source = try item(args); try CaptureLifecycle.exclude(source, excluded: args["excluded"] as! Bool, expectedRevision: args["expected_revision"] as? Int); return ["id": source.id]
+        case "item.delete": let source = try item(args); try CaptureLifecycle.delete(source, expectedRevision: args["expected_revision"] as? Int); return ["deleted": source.id]
         case "item.related": return try RelatedItems.items(for: item(args).id).map { ["item": Self.json($0.item), "score": $0.score, "reason": $0.reason] as [String: Any] }
         case "theme.rename", "theme.pin", "theme.dismiss", "theme.assign", "theme.merge":
             let id = args["id"] as! String
             guard try Database.shared.read({ try Row.fetchOne($0, sql: "SELECT id FROM captureTheme WHERE id = ?", arguments: [id]) }) != nil else { throw AgentError("NOT_FOUND", "Theme not found.") }
             switch action {
-            case "theme.rename": try ThemeStore.rename(id, title: args["title"] as! String)
-            case "theme.pin": try ThemeStore.pin(id, pinned: args["pinned"] as! Bool)
-            case "theme.dismiss": try ThemeStore.dismiss(id)
-            case "theme.assign": _ = try item(["id": args["item_id"]!]); try ThemeStore.assign(args["item_id"] as! String, to: id, remove: args["remove"] as? Bool ?? false)
+            case "theme.rename": try ThemeStore.rename(id, title: args["title"] as! String, expectedVersion: args["expected_version"] as? String)
+            case "theme.pin": try ThemeStore.pin(id, pinned: args["pinned"] as! Bool, expectedVersion: args["expected_version"] as? String)
+            case "theme.dismiss": try ThemeStore.dismiss(id, expectedVersion: args["expected_version"] as? String)
+            case "theme.assign": _ = try item(["id": args["item_id"]!]); try ThemeStore.assign(args["item_id"] as! String, to: id, remove: args["remove"] as? Bool ?? false, expectedVersion: args["expected_version"] as? String)
             default:
                 let target = args["target_id"] as! String
                 guard try Database.shared.read({ try Row.fetchOne($0, sql: "SELECT id FROM captureTheme WHERE id = ? AND dismissed = 0", arguments: [target]) }) != nil else { throw AgentError("NOT_FOUND", "Target theme not found.") }
-                try ThemeStore.merge(id, into: target)
+                try ThemeStore.merge(id, into: target, expectedVersion: args["expected_version"] as? String, targetVersion: args["target_version"] as? String)
             }; return ["id": id]
         case "task.create", "task.update", "task.delete":
             var task: TaskItem
             if action == "task.create" { task = TaskItem(id: UUID().uuidString, title: args["title"] as! String, source: "manual", done: false, createdAt: Date()) }
             else { guard let found = try await Database.shared.read({ try TaskItem.fetchOne($0, key: args["id"] as! String) }) else { throw AgentError("NOT_FOUND", "Task not found.") }; task = found }
-            if action == "task.delete" { let taskID = task.id; try await Database.shared.write { _ = try TaskItem.deleteOne($0, key: taskID) } }
+            let expectedTaskVersion = args["expected_version"] as? String
+            if action == "task.delete" { let taskID = task.id; try await Database.shared.write { try AgentVersions.check("task", id: taskID, expected: expectedTaskVersion, db: $0); _ = try TaskItem.deleteOne($0, key: taskID) } }
             else {
                 if let title = args["title"] as? String { task.title = title }
                 if let notes = args["notes"] as? String { task.notes = notes }
                 if let done = args["done"] as? Bool, done != task.done { task.done = done; task.completedAt = done ? Date() : nil }
                 if let due = args["due"] as? String { guard let date = ISO8601DateFormatter().date(from: due) else { throw AgentError("INVALID_ARGUMENTS", "due must be ISO 8601 with timezone.") }; task.dueDate = date }
                 if args["clear_due"] as? Bool == true { task.dueDate = nil }
-                let updated = task; try await Database.shared.write { try updated.save($0) }
+                let updated = task; try await Database.shared.write {
+                    if action != "task.create" { try AgentVersions.check("task", id: updated.id, expected: expectedTaskVersion, db: $0) }
+                    try updated.save($0)
+                }
             }; TasksStore.shared.refresh(); return ["id": task.id]
         case "history.clear":
             guard args["confirm"] as? Bool == true else { throw AgentError("CONFIRMATION_REQUIRED", "Set confirm=true only for an explicit request to clear all history.") }
@@ -425,7 +534,7 @@ final class AgentActions {
             if let values = args["region"] as? [Double] { let region = try AgentImages.rect(values); guard CGRect(origin: .zero, size: image.size).contains(region), region.width > 10, region.height > 10 else { throw AgentError("INVALID_ARGUMENTS", "Select a text region within the screenshot.") }; model.applyCrop(region) }
             if action == "font.match" { return try await FontWorkbenchController.matchForAgent(image: model.image, title: source.title, sourceID: source.id) }
             return try await FontWorkbenchController.generateForAgent(image: model.image, title: source.title, sourceID: source.id, name: args["name"] as! String, capturedOnly: args["captured_only"] as? Bool ?? false)
-        case "font.file", "font.preview":
+        case "font.file", "font.preview", "font.quality":
             let source = try item(args); guard source.kind == "note", FontProjectStore.exists(source.sourceID) else { throw AgentError("NOT_FOUND", "Saved font not found.") }
             return try AgentFonts.file(noteID: source.sourceID, text: args["text"] as? String)
         case "font.open":
@@ -442,7 +551,8 @@ final class AgentActions {
             let model = EditorModel(image: image, fileURL: URL(fileURLWithPath: path), persistPreferences: args["preview"] as? Bool != true && args["dry_run"] as? Bool != true)
             let annotations = args["annotations"] as? [[String: Any]] ?? []
             let needsOCR = annotations.contains { $0["target_text"] != nil || $0["target_region"] != nil }
-            let regions = needsOCR ? AgentMarkup.regions(await ImageAnalysis.textObservations(image), size: size) : []
+            let observations = needsOCR ? await ImageAnalysis.textObservations(image) : []
+            let regions = AgentMarkup.regions(observations, size: size) + AgentMarkup.words(observations, size: size)
             var occupied: [CGRect] = []
             var calloutNumber = 0
             if let color = args["color"] as? String { model.annotationColor = AgentImages.color(color) }
@@ -493,6 +603,7 @@ final class AgentActions {
     }
     private func recordingStatus(_ id: String?) async throws -> [String: Any] {
         var result = try ScreenRecorder.shared.statusForAgent(sessionID: id)
+        if let session = result["session_id"] as? String { result["owner"] = AgentCollaboration.shared.sessionOwner(session) as Any? ?? NSNull() }
         if result["state"] as? String == "finalized", let path = result["path"] as? String {
             result["kind"] = "recording"
             result["attachment"] = try await AgentVideo.attachment(URL(fileURLWithPath: path))
@@ -506,7 +617,7 @@ final class AgentActions {
     }
     private var voicePhase: String { switch voice.phase { case .idle: return "idle"; case .recording: return "recording"; case .preparing: return "preparing"; case .transcribing: return "transcribing"; case .done: return "done" } }
     static func date(_ date: Date) -> String { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f.string(from: date) }
-    static func json(_ item: CaptureItem) -> [String: Any] { ["id": item.id, "kind": item.kind, "title": item.title, "body": item.body, "summary": item.summary, "path": item.sourcePath, "captured_at": date(item.capturedAt), "updated_at": date(item.modifiedAt), "pinned": item.pinned, "excluded": item.excluded] }
+    static func json(_ item: CaptureItem) -> [String: Any] { ["id": item.id, "kind": item.kind, "title": item.title, "body": item.body, "summary": item.summary, "path": item.sourcePath, "captured_at": date(item.capturedAt), "updated_at": date(item.modifiedAt), "pinned": item.pinned, "excluded": item.excluded, "revision": item.revision] }
 }
 
 /// Small validator for the deliberately limited JSON Schema subset in actions.json.

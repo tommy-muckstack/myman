@@ -46,7 +46,7 @@ Stop/cancel and screen-recording pause commands remain available after revocatio
 | Full Calendar Access | existing calendar view and scheduling behavior |
 | Input Monitoring | not required by the CLI; no pointer/key injection is provided |
 
-macOS prompts remain real. A refusal returns `PERMISSION_REQUIRED` with the relevant permission; grant it in System Settings. The CLI never changes TCC settings. Brain MCP is read-only and has no app action tools. CLI operations are local; requesting agents may send returned excerpts or pixels to their model provider. MyMan does not automatically upload the Brain or send attachments/messages.
+macOS prompts remain real. A refusal returns `PERMISSION_REQUIRED` with the relevant permission; grant it in System Settings. The CLI never changes TCC settings. The `myman-brain` MCP remains read-only; `myman-app` exposes the CLI’s app actions through the same native permission checks. CLI operations are local; requesting agents may send returned excerpts or pixels to their model provider. MyMan does not automatically upload the Brain or send attachments/messages.
 
 ## Capture, annotate, and return an image
 
@@ -205,3 +205,24 @@ With `--json`, stdout contains one JSON object, including errors. Logs belong on
 Exit codes: 0 success or intentionally pending; 2 OS permission missing; 3 cancelled; 4 agent access disabled; 5 invalid arguments/confirmation/conflicting revision or session; 6 operation/setup failure; 7 timeout. Error example: `{"ok":false,"error":{"code":"AGENT_DISABLED","message":"Enable capture access in My Man Settings → Agents for this action."}}`.
 
 The local socket is owned by the login, directory mode 0700, socket mode 0600, peer-UID checked. Payloads, concurrent jobs, retained results, and socket read times are bounded. Receipts live outside Brain in owner-only Application Support for up to seven days, capped at 256 terminal jobs and 32 recording sessions. Inline results above 64 KiB are omitted with artifact references where available. Interrupted jobs are marked on restart, temporary previews expire, and deletion/exclusion redacts retained content. Disk-write failures are reported; no action begins if its start receipt cannot be saved. `MYMAN_AGENT_SOCKET` supports an explicitly chosen owned socket for isolated developer verification, never remote TCP. Tests use a debug-only fixture app and a separate socket.
+
+## Companion 0.7.0: media and readiness
+
+Requires a MyMan build advertising these actions; public 1.1.64 does not contain them. Run live discovery first.
+
+- `capture compare --before-id ID --after-id ID --ignore-rects '[[0,0,120,30]]'`: equal-size images, pixel threshold 20 by default (0–255), source-image top-left coordinates. The temporary side-by-side image highlights changed 32-pixel tiles; JSON includes exact changed pixel counts, a ratio excluding ignored pixels, and added/removed OCR lines. Regions are bounded to 200 with `truncated`; OCR text is heuristic, not proof of functional correctness. Ignoring a region masks it for comparison, not secure redaction.
+- `capture targets --id ID --granularity word`: Vision word boxes and stable `word-ocr-...` IDs. `target_text` prefers exact words, preserving ambiguity errors for duplicates, then falls back to line matches for phrases. `target_region` accepts line or word IDs. Existing line IDs and the default line output are unchanged.
+- `record export --id ID --edits JSON`: up to 20 timed edits. Each has `type`, `start`, `end`. Caption/title need `text`; step also needs `number` (1–99); zoom/redact need `rect`. Times use the original video, even with trimming. Rectangles use oriented original pixels, top-left. Titles cover existing frames rather than adding duration. Zoom uses a fixed region with letterboxing, limited to 8×. Redaction is opaque and runs before zoom. It covers only the specified visual regions and times; it does not remove spoken audio. Same-type text overlays and zooms cannot overlap. Exports preserve originals; inspect the exported frames before sharing.
+- `wait --id ID --stage file|ocr|indexed|transcript|notes|export --timeout 120`: waits for an existing result without scheduling it. `ocr` recognizes a completed empty OCR result. `indexed` checks enrichment for the current item; it does not imply OCR, transcript or export readiness. `export` requires the current revision in the Brain catalog and its document. `transcript`/`notes` wait for available text; silence or processing failure may time out. Timeout is an error with last observed readiness.
+- `wait --job-id UUID` or `wait --session-id ID`: follows the existing job or recording to completion. Failures/interruption never restart work. Use `job` to inspect a waiter itself. `--wait-timeout` controls CLI waiting for its native job; `--timeout` controls the requested readiness wait.
+- `font quality --id NOTE-ID --text "Intended text"`: actual-font specimen plus per-letter evidence (`supported`, `weak_sample`, `approximate`, `missing`), best sample size, OCR confidence, and suggested letters to capture. These are heuristics, not certainty of identity or fidelity. Quality is also included in `font file` and `font preview`.
+
+## Local app MCP
+
+The root plugin config starts two stdio servers: existing `myman-brain` and new `myman-app`. Manual configuration may start `node /absolute/path/MyManBrain/tools/app-server.mjs`. Each advertised action becomes `myman_app_` plus its dotted name converted to underscores, with a strict schema generated from the shared catalog. `myman_app_capabilities` checks live support and grants; bundled tool availability alone is not proof the running app supports it.
+
+`_request_id` is an optional UUID for deduplication; retain it for mutations. `_wait_timeout` defaults to 25 seconds; a pending result contains `job_id` for `myman_app_job`. Native `app.wait` can continue while the MCP request returns pending. The app enforces the same grants, deletion confirmation, socket ownership, and resource lifecycle as CLI calls. No shell/pointer tool or permission-grant tool is introduced. Image pixels are returned only by explicit image/clipboard-image commands; other tools return attachment paths.
+
+## Multi-agent collaboration (0.8.0)
+
+The new `agent`, `machine`, `resource`, `bundle`, `handoff`, `lease`, `session transfer` and `collaboration events` commands use the same catalog and app MCP server. See [setup, four example workflows, permissions, revision guards, ownership and lifecycle](multi-agent-workflows.md). These commands require the updated app; public 1.1.64 does not provide them. Agent names are user-chosen, never product defaults.

@@ -8,6 +8,14 @@
         "${PLUGIN_ROOT}/src/Resources/BrainCompanion/server.mjs"
       ],
       "cwd": "${PLUGIN_ROOT}"
+    },
+    "myman-app": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/src/Resources/BrainCompanion/app-server.mjs"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
     }
   }
 }

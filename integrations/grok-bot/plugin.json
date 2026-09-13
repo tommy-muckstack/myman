@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "myman",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Find MyMan meeting notes and screenshots, capture and annotate images, and operate MyMan through approved execution on your Mac. Requires the MyMan app and Node.js 22+ locally.",
   "author": {
     "name": "MuckStack, LLC"

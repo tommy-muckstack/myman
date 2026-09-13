@@ -43,9 +43,9 @@ import CryptoKit
         guard entry["fingerprint"] as? String == Self.digest(fingerprint) else { throw AgentError("ID_CONFLICT", "This request ID was used with different arguments.") }
         return entry["job"] as? [String: Any]
     }
-    func begin(_ id: String, action: String, fingerprint: Data) throws {
+    func begin(_ id: String, action: String, fingerprint: Data, owner: String = "local") throws {
         guard !loadError else { throw AgentError("RECOVERY_UNAVAILABLE", "Cannot safely record this request.") }
-        entries[id] = ["at": Date().timeIntervalSince1970, "fingerprint": Self.digest(fingerprint), "job": ["id": id, "action": action, "state": "running"]]
+        entries[id] = ["at": Date().timeIntervalSince1970, "fingerprint": Self.digest(fingerprint), "job": ["id": id, "action": action, "state": "running", "owner": owner]]
         do { try save() } catch { entries[id] = nil; throw AgentError("RECOVERY_UNAVAILABLE", "Cannot save the request receipt; no action started.") }
     }
     func finish(_ id: String, job: [String: Any]) -> Bool {
@@ -63,7 +63,7 @@ import CryptoKit
         prune()
         return entries.values.sorted { ($0["at"] as? Double ?? 0) > ($1["at"] as? Double ?? 0) }.compactMap { entry in
             guard let job = entry["job"] as? [String: Any] else { return nil }
-            return ["id":job["id"] ?? NSNull(), "action":job["action"] ?? NSNull(), "state":job["state"] ?? NSNull(), "created_at":AgentActions.date(Date(timeIntervalSince1970: entry["at"] as? Double ?? 0))]
+            return ["id":job["id"] ?? NSNull(), "action":job["action"] ?? NSNull(), "state":job["state"] ?? NSNull(), "owner":job["owner"] ?? "local", "created_at":AgentActions.date(Date(timeIntervalSince1970: entry["at"] as? Double ?? 0))]
         }
     }
     func saveSession(_ id: String, result: [String: Any]) -> Bool {

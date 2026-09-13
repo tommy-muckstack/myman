@@ -52,7 +52,8 @@ enum Brain {
             - `themes/` — saved MyMan Themes and their source items
             - `catalog.json` — current allowlist, metadata, meeting links, tags, local times, and thumbnail references
             - `tools/cli.mjs` — bundled query and app-action companion (Node.js 22+; no npm install needed)
-            - `tools/server.mjs` — the same tools over local stdio MCP
+            - `tools/server.mjs` — read-only retrieval over local stdio MCP
+            - `tools/app-server.mjs` — permission-controlled app actions over local stdio MCP
 
             From this folder, run `node tools/cli.mjs --root "$PWD" screenshots --meeting "Jared demo"`.
             Add `--exclude-tag slide-deck`, `--app Chrome`, `--tag web-app`, or `--unique` as needed.
@@ -78,7 +79,7 @@ enum Brain {
 
             Canonical, auto-synced record of the user's My Man captures.
             The companion ships here: `node tools/cli.mjs --root "$PWD" --help` (Node.js 22+).
-            Discover explicit app actions with `node tools/cli.mjs actions`. Use `invoke` to capture, edit, record or manage content only when requested. Poll job IDs after timeouts instead of repeating mutations. The updated app must be running. Settings → Agents grants start off; the CLI cannot enable them. Delete requires confirm=true. Brain MCP is read-only; app actions use the CLI.
+            Discover explicit app actions with `node tools/cli.mjs actions`. Use `invoke` to capture, edit, record or manage content only when requested. Poll job IDs after timeouts instead of repeating mutations. The updated app must be running. Settings → Agents grants start off; the CLI cannot enable them. Delete requires confirm=true. Brain MCP is read-only; app actions use the CLI or separate app-server.mjs MCP. Discover live support first. New workflows include capture compare, word targets, record export --edits, wait, and font quality.
             Start with `screenshots --meeting "Jared demo" --exclude-tag slide-deck` for visual retrieval.
             `--meeting` accepts a meeting ID, export path, or description; ambiguous matches return candidates.
             Use `image '{"path":"screenshots/returned-file.md","size":"thumbnail"}'` for a compact visual preview.

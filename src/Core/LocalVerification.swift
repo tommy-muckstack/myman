@@ -15,6 +15,7 @@ enum VerificationPaths {
 
 #if DEBUG
 import AppKit
+import SwiftUI
 import GRDB
 
 @MainActor final class LocalVerification: NSObject, NSApplicationDelegate {
@@ -22,6 +23,7 @@ import GRDB
     private var bridge: AgentBridge?
     private var actions: AgentActions?
     private var window: NSWindow?
+    private var agentSettingsWindow: NSWindow?
     init(root: URL) { self.root = root }
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -32,10 +34,21 @@ import GRDB
             for key in AgentConsent.keys.values {
                 UserDefaults.standard.set(ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_AGENT_ACCESS"] == "enabled", forKey: key)
             }
+            if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_MULTI_AGENT"] == "enabled" {
+                var credentials: [[String: Any]] = []
+                for name in ["Capture Agent fixture", "Design fixture", "Read fixture"] {
+                    let (agent, token) = try AgentIdentity.shared.issue(name: name, scopes: name == "Read fixture" ? [] : AgentPrincipal.local.scopes)
+                    credentials.append(["id": agent.id, "token": token, "name": name])
+                }
+                let file = root.appendingPathComponent("test-credentials.json")
+                try JSONSerialization.data(withJSONObject: credentials).write(to: file, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            }
             MM.Fonts.registerFonts()
             _ = Database.shared
             Brain.bootstrap()
             BrainAgentExportObserver.shared.start()
+            CaptureEnrichment.shared.start()
             let themeA = UUID().uuidString, themeB = UUID().uuidString
             let meetingID = UUID().uuidString
             try Database.shared.write { db in
@@ -62,6 +75,12 @@ import GRDB
             window.title = "My Man · isolated verification"; window.isReleasedWhenClosed = false
             let view = NSImageView(frame: NSRect(x: 0, y: 0, width: 900, height: 600)); view.image = image; window.contentView = view
             window.makeKeyAndOrderFront(nil); self.window = window
+            if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_MULTI_AGENT"] == "enabled" {
+                let settings = NSWindow(contentRect: NSRect(x: 1100, y: 150, width: 660, height: 760), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                settings.title = "My Man · agent settings verification"; settings.isReleasedWhenClosed = false
+                settings.contentView = NSHostingView(rootView: AgentSettingsView().preferredColorScheme(.dark))
+                settings.makeKeyAndOrderFront(nil); agentSettingsWindow = settings
+            }
             let ready: [String: Any] = ["root": root.path, "fixture": url.path, "region": [100,100,900,600], "socket": AgentBridge.path, "theme_a": themeA, "theme_b": themeB, "meeting_id": "meeting-" + meetingID]
             try JSONSerialization.data(withJSONObject: ready).write(to: root.appendingPathComponent("ready.json"))
         } catch { NSLog("Verification failed: \(error)"); NSApp.terminate(nil) }

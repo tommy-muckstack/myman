@@ -7,7 +7,7 @@ struct AgentSettingsView: View {
     @AppStorage("agentRecordingEnabled") private var recording = false
     @AppStorage("agentLibraryEnabled") private var library = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("Your tools, on your terms.").font(MM.Fonts.title)
             Text("Let an agent use My Man when you ask. Choose what it can do on this Mac.")
                 .foregroundStyle(MM.Colors.textSecondary)
@@ -24,6 +24,7 @@ struct AgentSettingsView: View {
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             Text("Agent setup: myman doctor --json\nCommand reference: myman --help")
                 .font(MM.Fonts.metadata).textSelection(.enabled)
-        }.font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary).padding(MM.Layout.paddingLarge)
+            AgentIdentitySettings()
+        }.font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary).padding(MM.Layout.paddingLarge) }
     }
 }
