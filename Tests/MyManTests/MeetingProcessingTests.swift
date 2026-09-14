@@ -17,6 +17,21 @@ private actor ProcessingGate {
 }
 
 final class MeetingProcessingTests: XCTestCase {
+    @MainActor func testNotesSaveUsesTheSameDatabaseAsPeopleWithoutReentry() async throws {
+        let (db, meeting) = try fixture()
+        let original = Database.shared
+        Database.shared = db
+        defer { Database.shared = original }
+        let service = MeetingNotesService(database: db) { _, _, _ in
+            "## Summary\nThe proposal will be sent on Friday."
+        }
+        let notes = await service.notes(meetingID: meeting.id)
+        XCTAssertFalse(notes.isEmpty)
+        let saved = try await db.read { try Meeting.fetchOne($0, key: meeting.id) }
+        XCTAssertEqual(saved?.summary, notes)
+        XCTAssertEqual(saved?.transcript, meeting.transcript)
+    }
+
     @MainActor private func fixture() throws -> (DatabaseQueue, Meeting) {
         let db = try DatabaseQueue()
         try Database.migrator.migrate(db)

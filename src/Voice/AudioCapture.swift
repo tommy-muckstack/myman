@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import AudioEngineSafety
 import CoreAudio
 import Foundation
 
@@ -17,6 +18,7 @@ final class AudioCapture: @unchecked Sendable {
 
     private var engine: AVAudioEngine?
     private var vpEnabled = false
+    private var requestedVoiceProcessing = false
     private var tapInstalled = false
     private var buffers: [UUID: [Float]] = [:]
     private var modes: [UUID: Mode] = [:]
@@ -61,24 +63,30 @@ final class AudioCapture: @unchecked Sendable {
     /// the caller's thread: voice-processing setup alone blocks 100ms+, and
     /// at launch it once blocked for 3s (MYMAN-2).
     func warm() {
-        Self.engineQueue.async { [self] in prepare() }
+        Self.engineQueue.async { [self] in
+            do { try prepare() }
+            catch { NSLog("My Man [Audio] microphone warmup failed: %@", error.localizedDescription) }
+        }
     }
 
     /// MUST run on `engineQueue` (or the idle-release path that owns it).
-    private func prepare() {
+    private func prepare() throws {
         prepareLock.lock()
         defer { prepareLock.unlock() }
         guard engine == nil else { return }
-        let eng = AVAudioEngine()
+        var eng = AVAudioEngine()
         // Voice processing (AGC + noise suppression) lifts whispers for the
         // dictation model. Best-effort — plain capture if hardware refuses.
         let wantVP = desiredVoiceProcessing()
-        if wantVP {
-            try? eng.inputNode.setVoiceProcessingEnabled(true)
+        if wantVP, let error = MMSetVoiceProcessing(eng, true) {
+            NSLog("My Man [Audio] voice processing unavailable: %@", error.localizedDescription)
+            // Failed setup can leave a partially configured graph. Fall back
+            // to raw capture on a fresh engine, never reuse that graph.
+            eng = AVAudioEngine()
         }
-        vpEnabled = wantVP
-        _ = eng.inputNode.outputFormat(forBus: 0) // force graph configuration
-        eng.prepare()
+        if let error = MMPrepareAudioEngine(eng) { throw error }
+        vpEnabled = eng.inputNode.isVoiceProcessingEnabled
+        requestedVoiceProcessing = wantVP
         engine = eng
         cacheInputRate(of: eng)
         if vpEnabled { scheduleIdleRelease() }
@@ -144,7 +152,7 @@ final class AudioCapture: @unchecked Sendable {
                     continuation.resume()
                 } else {
                     continuation.resume()
-                    Self.engineQueue.async { [self] in prepare() }
+                    warm()
                 }
             }
         }
@@ -160,6 +168,11 @@ final class AudioCapture: @unchecked Sendable {
         guard idle else { return }
         prepareLock.lock()
         defer { prepareLock.unlock() }
+        discardEngine()
+    }
+
+    /// Engine-queue only. A failed graph must never be reused on a later take.
+    private func discardEngine() {
         if tapInstalled {
             engine?.inputNode.removeTap(onBus: 0)
             tapInstalled = false
@@ -167,6 +180,7 @@ final class AudioCapture: @unchecked Sendable {
         engine?.stop()
         engine = nil
         vpEnabled = false
+        requestedVoiceProcessing = false
     }
 
     /// Start a capture session. The engine starts on the first session and
@@ -246,7 +260,7 @@ final class AudioCapture: @unchecked Sendable {
         lock.lock()
         let raw = buffers.removeValue(forKey: id) ?? []
         lastTakeRawPeak = raw.map(abs).max() ?? 0
-        modes.removeValue(forKey: id)
+        let endedRawSession = modes.removeValue(forKey: id) == .raw
         lock.unlock()
         // The caller gets its audio straight back — stopping the hardware
         // blocks on CoreAudio exactly like starting it does, so it happens on
@@ -260,15 +274,18 @@ final class AudioCapture: @unchecked Sendable {
                 try? reconfigureAndRun()
                 return
             }
-            if tapInstalled {
-                engine?.inputNode.removeTap(onBus: 0)
-                tapInstalled = false
+            // A call ending can change the device's input format. Release
+            // the graph so the next take negotiates the current format.
+            if endedRawSession {
+                discardEngine()
+            } else {
+                if tapInstalled {
+                    engine?.inputNode.removeTap(onBus: 0)
+                    tapInstalled = false
+                }
+                engine?.stop()
+                if vpEnabled { scheduleIdleRelease() }
             }
-            engine?.stop() // engine object stays warm for the next take…
-            // …but only briefly: a stopped engine still holds an initialized
-            // voice-processing unit, and that alone keeps every other app's
-            // audio ducked. Hand the machine back.
-            if vpEnabled { scheduleIdleRelease() }
         }
         return Self.finalize(raw, sampleRate: rate)
     }
@@ -301,29 +318,27 @@ final class AudioCapture: @unchecked Sendable {
 
     /// MUST run on `engineQueue` — every call in here can block.
     private func reconfigureAndRun() throws {
-        prepare()
+        do { try configureAndRun() }
+        catch {
+            discardEngine()
+            throw error
+        }
+    }
+
+    private func configureAndRun() throws {
+        try prepare()
         let wantVP = desiredVoiceProcessing()
-        if let eng = engine, eng.isRunning, wantVP == vpEnabled, tapInstalled { return }
+        if let eng = engine, eng.isRunning, wantVP == requestedVoiceProcessing, tapInstalled { return }
         // Toggling voice processing on a prepared engine is a CoreAudio
         // crash farm (the dictation-during-meeting deaths) — REBUILD instead.
-        if wantVP != vpEnabled || engine == nil {
-            if tapInstalled {
-                engine?.inputNode.removeTap(onBus: 0)
-                tapInstalled = false
-            }
-            engine?.stop()
-            let eng = AVAudioEngine()
-            try? eng.inputNode.setVoiceProcessingEnabled(wantVP)
-            vpEnabled = wantVP
-            _ = eng.inputNode.outputFormat(forBus: 0)
-            eng.prepare()
-            engine = eng
-            cacheInputRate(of: eng)
+        if wantVP != requestedVoiceProcessing || engine == nil {
+            discardEngine()
+            try prepare()
         }
         guard let eng = engine else { return }
         if !tapInstalled {
             // Record at native format (float32); resample at drain/end.
-            eng.inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buf, _ in
+            let error = MMInstallInputTap(eng) { [weak self] buf, _ in
                 guard let self, let floatData = buf.floatChannelData else { return }
                 let frameCount = Int(buf.frameLength)
                 var chunk = [Float](repeating: 0, count: frameCount)
@@ -336,9 +351,10 @@ final class AudioCapture: @unchecked Sendable {
                 }
                 self.lock.unlock()
             }
+            if let error { throw error }
             tapInstalled = true
         }
-        if !eng.isRunning { try eng.start() }
+        if !eng.isRunning, let error = MMStartAudioEngine(eng) { throw error }
     }
 
     /// `processesUsingMic` off the caller's thread. Walking the process
