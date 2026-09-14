@@ -33,8 +33,12 @@ final class SelectionOverlayCoordinator {
         for window in childWindows {
             window.clearSelection()
             window.orderFrontRegardless()
-            window.makeKey()
+            window.makeFirstResponder(window.contentView)
         }
+        // Start keyboard focus on the display where selection will begin.
+        // Other displays still accept the first press through acceptsFirstMouse.
+        let pointerWindow = childWindows.first { $0.frame.contains(NSEvent.mouseLocation) }
+        (pointerWindow ?? childWindows.first)?.makeKey()
         isShowing = true
         NSCursor.crosshair.push()
     }
@@ -312,5 +316,9 @@ final class SelectionOverlayView: NSView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+    // Nonactivating panels alone do not opt their content into first-click
+    // delivery. The initial press must reach mouseDown to begin the drag,
+    // including when this display's panel is not the key window.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 }
