@@ -1,4 +1,4 @@
-> September 13, 2026: **0.9.0 candidate prepared** for recorded briefs, worker/reviewer evidence checks and local share pages. My Man 1.1.65 is published; it does not contain these new brief actions. The initial marketplace application remains recorded as pending. No update email, new form, public Bot template link or live GrokBot acceptance is claimed.
+> September 13, 2026: candidate **0.10.0** prepared. Synthetic Grok Bot local execution and visible image delivery passed; marketplace application remains pending.
 
 # MyMan Brain — Cursor Marketplace submission
 
@@ -30,7 +30,7 @@ Requires MyMan on macOS and Node.js 22+ on that Mac. New text-targeted markup, w
 
 The Brain MCP makes no network requests and never modifies MyMan's database. Brain sync is one-way from the app. Your agent/model provider can receive the excerpts and images it retrieves for your request. There is no hosted Brain, automatic upload, silent capture or cloud sync supplied by this plugin.
 
-For Grok Bot, local-computer execution must target the Mac containing MyMan and its Brain. Installing a plugin on Grok's cloud computer does not give it access to the Mac's files. Live GrokBot invocation and marketplace installation have not yet been verified.
+For Grok Bot, local-computer execution must target the Mac containing MyMan and its Brain. Installing a plugin on Grok's cloud computer does not give it access to the Mac's files. A synthetic Grok Bot/Hugo check on September 13 verified Mac-local execution and a visible returned PNG. Marketplace installation and public Bot template publication remain separate, unverified steps.
 
 ## Reviewer setup
 
@@ -68,3 +68,11 @@ Adds human-managed named credentials, explicit Mac verification, shared bundles 
 Adds a native brief workspace; revisioned recording references; explicit worker/reviewer assignments; per-criterion evidence review; timestamped frame extraction with explicitly untimed transcripts; local share pages containing user-selected result media and separately authored public copy; two reusable workflow prompts; and live connection/setup checks. Requires an app advertising `brief.*` and `workflow.templates`; plugin installation alone does not supply native actions. See [workflow guide](visual-brief-workflows.md).
 
 Cursor marketplace update ready: **myman-brain 0.9.0**. Repo: https://github.com/tommy-muckstack/myman. While the initial @muckstack application is pending, the next step is an authorized update email to marketplace-publishing@cursor.com with this version and repository, rather than a duplicate application. No email has been sent.
+
+## Human and agent workflow candidate 0.10.0
+
+Adds guided Mac connection checks, selected-file context export, bounded scrolling capture, floating screenshot references, a human workflow activity view, cooperative cancellation for supported read/render jobs, source-backed meeting decision proposals, reviewed follow-up drafts, dictation delivery history/corrections and app-specific styles. My Man 1.1.67 or live discovery of the corresponding actions is required.
+
+Optional sharing is a distinct, explicit network action. It uploads selected content to a configured personal HTTPS service backed by private storage. It requires a separate `sharing` grant plus confirmation; library access alone does not permit publishing. The server enforces expiry/revocation and never returns a bypass Blob URL. Prior downloaded copies cannot be recalled. The Brain retrieval server remains read-only and local.
+
+Cursor marketplace update ready: **myman-brain 0.10.0**. Org **@muckstack**, repo https://github.com/tommy-muckstack/myman. While the initial application is pending, the next step is an authorized update email to marketplace-publishing@cursor.com, not a duplicate application. No email/form was sent. See [verification](verification/human-agent-workflows-2026-09-13.md).

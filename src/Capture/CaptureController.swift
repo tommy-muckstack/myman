@@ -31,6 +31,7 @@ final class CaptureController: SelectionOverlayDelegate {
     }
 
     func beginRegionCapture() {
+        if NSWorkspace.shared.isVoiceOverEnabled { CaptureChooser.shared.open(); return }
         guard overlay?.isShowing != true else { return }
         Task { @MainActor in
             let engine = CaptureEngine.shared
@@ -266,6 +267,7 @@ final class ThumbnailPanel {
 
     private func scheduleDismiss(after seconds: TimeInterval) {
         dismissTimer?.invalidate()
+        guard !NSWorkspace.shared.isVoiceOverEnabled else { countdown.cycle = nil; return }
         countdown.cycle = (seconds, UUID())
         dismissTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.close() }
@@ -322,21 +324,23 @@ private struct ThumbnailView: View {
             onHoverChanged(h)
         }
         .onTapGesture { onEdit() }
+        .accessibilityAction(named: Text("Edit screenshot"), onEdit)
         .draggable(fileURL)
         .help("Copied to clipboard — click to edit, drag anywhere")
     }
 
     private var hoverActions: some View {
         HStack(spacing: 14) {
-            Label("Edit", systemImage: "pencil")
-                .clickable(minSize: 22)
-                .onTapGesture { onEdit() }
-            Label("Finder", systemImage: "folder")
-                .clickable(minSize: 22)
-                .onTapGesture {
+            Button(action: onEdit) { Label("Edit", systemImage: "pencil") }.buttonStyle(.plain).clickable()
+            Button {
+                CaptureActions.perform {
+                    if let item = try Database.shared.read({ try CaptureItem.fetchOne($0, sql: "SELECT * FROM captureItem WHERE sourcePath = ?", arguments: [fileURL.path]) }) { try FloatingReference.open(item); onDismiss() }
+                }
+            } label: { Label("Float", systemImage: "pin") }.buttonStyle(.plain).clickable()
+            Button {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                     onDismiss()
-                }
+            } label: { Label("Finder", systemImage: "folder") }.buttonStyle(.plain).clickable()
         }
         .font(MM.Fonts.hint)
         .labelStyle(.titleAndIcon)
@@ -345,16 +349,14 @@ private struct ThumbnailView: View {
         .padding(.vertical, 6)
         .background(Capsule().fill(.black.opacity(0.65)))
         .padding(.bottom, 8)
-        .opacity(hovering ? 1 : 0)
+        .opacity(1)
     }
 
     private var dismissButton: some View {
-        Image(systemName: "xmark.circle.fill")
+        Button(action: onDismiss) { Image(systemName: "xmark.circle.fill")
             .font(.system(size: 15))
             .symbolRenderingMode(.palette)
             .foregroundStyle(.white, .black.opacity(0.6))
-            .clickable(minSize: 32)
-            .onTapGesture { onDismiss() }
-            .opacity(hovering ? 1 : 0)
+        }.buttonStyle(.plain).accessibilityLabel("Dismiss screenshot preview").clickable(minSize: 32)
     }
 }

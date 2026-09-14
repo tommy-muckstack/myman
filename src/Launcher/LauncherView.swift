@@ -170,12 +170,12 @@ struct LauncherView: View {
     private var actionBar: some View {
         HStack(spacing: 6) {
             ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
-                actionChip(action, selected: selectedAction == index)
-                    .onTapGesture {
+                Button {
                         guard action.enabled else { return }
                         selectedAction = index
                         execute()
-                    }
+                    } label: { actionChip(action, selected: selectedAction == index) }
+                    .buttonStyle(.plain).disabled(!action.enabled).accessibilityLabel(action.title)
                     .onHover { hovering in
                         if hovering {
                             hoveredAction = action.id

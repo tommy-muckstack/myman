@@ -299,3 +299,9 @@ Companion 0.8.0 adds [multi-agent workflows](../../docs/multi-agent-workflows.md
 ## Recorded brief workflows (0.9.0)
 
 Use `workflow check`, `workflow templates`, and `brief create|list|read|open|handoff|refresh|submit|review|export|delete`. The native app must advertise these actions. [Executable recipes and lifecycle](../../docs/visual-brief-workflows.md). The app MCP adds `myman_app_workflow_check` plus generated tools for the new catalog actions; the Brain server remains read-only.
+
+## Human and agent workflows (1.1.67 / companion 0.10.0)
+
+Workflows and Recovery brings connection checks, selected context handoff, source-backed meeting decisions, dictation delivery history and safe continuation into My Man. Scrolling capture and floating references join keyboard/VoiceOver capture controls and scalable interface text. [Workflow guide](https://github.com/tommy-muckstack/myman/blob/main/docs/human-agent-workflows.md).
+
+Sharing is optional and explicit: selected content can be published through a configured private sharing service with server-enforced expiration/revocation. Agent publishing has a separate disabled-by-default permission. This does not upload or host the Brain. Recipient copies cannot be recalled. [Personal sharing setup](https://github.com/tommy-muckstack/myman/tree/main/integrations/share-service).

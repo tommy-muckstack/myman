@@ -43,14 +43,16 @@ import CryptoKit
         guard entry["fingerprint"] as? String == Self.digest(fingerprint) else { throw AgentError("ID_CONFLICT", "This request ID was used with different arguments.") }
         return entry["job"] as? [String: Any]
     }
-    func begin(_ id: String, action: String, fingerprint: Data, owner: String = "local") throws {
+    func begin(_ id: String, action: String, fingerprint: Data, owner: String = "local", inputs: [String: Any] = [:]) throws {
         guard !loadError else { throw AgentError("RECOVERY_UNAVAILABLE", "Cannot safely record this request.") }
-        entries[id] = ["at": Date().timeIntervalSince1970, "fingerprint": Self.digest(fingerprint), "job": ["id": id, "action": action, "state": "running", "owner": owner]]
+        entries[id] = ["at": Date().timeIntervalSince1970, "fingerprint": Self.digest(fingerprint), "job": ["id": id, "action": action, "state": "running", "owner": owner, "inputs": inputs, "started_at": AgentActions.date(Date())]]
         do { try save() } catch { entries[id] = nil; throw AgentError("RECOVERY_UNAVAILABLE", "Cannot save the request receipt; no action started.") }
     }
     func finish(_ id: String, job: [String: Any]) -> Bool {
         guard entries[id] != nil else { return false }
         var result = job
+        if let prior = entries[id]?["job"] as? [String: Any] { result["inputs"] = prior["inputs"]; result["started_at"] = prior["started_at"] }
+        result["finished_at"] = AgentActions.date(Date())
         if let data = try? JSONSerialization.data(withJSONObject: result), data.count > 64 * 1024 {
             let original = result["result"] as? [String: Any] ?? [:]
             result["result"] = original.filter { ["id","path","session_id","kind"].contains($0.key) }.merging(["recovery_status":"large_result_omitted", "message":"Read the saved item again; inline data was not persisted."]) { a, _ in a }
@@ -74,7 +76,7 @@ import CryptoKit
     func purgeContent() {
         for id in entries.keys {
             guard var job = entries[id]?["job"] as? [String: Any], job["state"] as? String != "running" else { continue }
-            job["result"] = nil; job["state"] = "failed"
+            job["result"] = nil; job["inputs"] = nil; job["state"] = "failed"
             job["error"] = ["code":"CONTENT_REMOVED", "message":"Results were cleared after content was deleted or excluded. Do not replay this request."]
             entries[id]?["job"] = job
         }

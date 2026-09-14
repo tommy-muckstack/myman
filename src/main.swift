@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         )
         let actions = AgentActions(capture: capture, meetings: meetings, voice: voice)
         actions.openSurface = { [weak self] surface in
-            switch surface { case "note": self?.notesPanel.show(); case "settings": SettingsController.shared.show(); case "briefs": AgentBriefWindow.shared.open(); default: self?.launcher.open() }
+            switch surface { case "note": self?.notesPanel.show(); case "settings": SettingsController.shared.show(); case "briefs": AgentBriefWindow.shared.open(); case "workflows": WorkflowCenter.shared.open(); default: self?.launcher.open() }
         }
         agentActions = actions
         let bridge = AgentBridge { actions.receive($0) }
@@ -335,6 +335,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         shot.keyEquivalentModifierMask = [.option, .shift]
         shot.target = self
         menu.addItem(shot)
+        let chooser = NSMenuItem(title: "Choose Capture…", action: #selector(chooseCapture), keyEquivalent: "")
+        chooser.target = self; menu.addItem(chooser)
+        let scroll = NSMenuItem(title: "Scrolling Capture…", action: #selector(captureScrolling), keyEquivalent: "")
+        scroll.target = self; menu.addItem(scroll)
         let note = NSMenuItem(title: "New Note", action: #selector(showNotes), keyEquivalent: "n")
         note.keyEquivalentModifierMask = [.option, .shift]
         note.target = self
@@ -346,6 +350,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         meeting.keyEquivalentModifierMask = [.option, .shift]
         meeting.target = self
         menu.addItem(meeting)
+        let workflows = NSMenuItem(title: "Workflows and Recovery…", action: #selector(showWorkflows), keyEquivalent: "")
+        workflows.target = self
+        menu.addItem(workflows)
         menu.addItem(.separator())
         let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
@@ -451,6 +458,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     @objc private func toggleVoice() { voice.toggle() }
     @objc private func toggleMeeting() { meetings.toggle() }
     @objc private func showSettings() { SettingsController.shared.show() }
+    @objc private func showWorkflows() { WorkflowCenter.shared.open() }
+    @objc private func chooseCapture() { CaptureChooser.shared.open() }
+    @objc private func captureScrolling() { ScrollingCapture.shared.beginSelection() }
 }
 
 MainActor.assumeIsolated {

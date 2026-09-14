@@ -1,0 +1,5 @@
+{
+  "rewrites": [{ "source": "/s/:id", "destination": "/api/shares?id=:id" }],
+  "functions": { "api/shares.mjs": { "maxDuration": 30 } },
+  "headers": [{ "source": "/(.*)", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }] }]
+}

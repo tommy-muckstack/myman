@@ -55,6 +55,16 @@ import AppKit
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         return ["path": url.path, "mime_type": "text/html", "file_size": data.count, "expires_at": AgentActions.date(Date().addingTimeInterval(3600))]
     }
+    func file(_ data: Data, extension suffix: String, mime: String, maximum: Int) throws -> [String: Any] {
+        expire()
+        guard data.count <= maximum, ["md", "png", "mov", "mp4", "m4v"].contains(suffix.lowercased()) else { throw AgentError("TOO_LARGE", "Unsupported or oversized handoff attachment.") }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard try FileManager.default.contentsOfDirectory(atPath: root.path).count < 256 else { throw AgentError("PREVIEW_LIMIT", "Let older handoffs expire before exporting more.") }
+        let url = root.appendingPathComponent("context-" + UUID().uuidString + "." + suffix)
+        try data.write(to: url, options: .withoutOverwriting)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return ["path": url.path, "mime_type": mime, "file_size": data.count, "expires_at": AgentActions.date(Date().addingTimeInterval(3600))]
+    }
     static func canvas(size: CGSize, draw: (CGContext) -> Void) throws -> NSImage {
         let width = Int(ceil(size.width)), height = Int(ceil(size.height))
         guard width > 0, height > 0, width <= 16000, height <= 16000, width * height <= 32_000_000,
