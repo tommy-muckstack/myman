@@ -43,7 +43,20 @@ enum DictationCleanup {
     /// User-editable vocabulary at ~/MyManBrain/vocabulary.md — one term per
     /// line. The cleanup pass restores mangled versions of these exact terms.
     static func vocabulary() -> [String] {
-        let url = Brain.root.appendingPathComponent("vocabulary.md")
+        var terms = userVocabulary()
+        // Teammate names + company domains from the people registry — the
+        // proper nouns ASR reliably mangles until it's told the spelling.
+        for term in builtInVocabulary + People.vocabularyTerms() where !terms.contains(where: {
+            $0.caseInsensitiveCompare(term) == .orderedSame
+        }) {
+            terms.append(term)
+        }
+        return terms
+    }
+
+    /// File-only vocabulary. Meeting task validation calls this inside its
+    /// database write; consulting People here would reenter that same queue.
+    static func userVocabulary(at url: URL = Brain.root.appendingPathComponent("vocabulary.md")) -> [String] {
         if !FileManager.default.fileExists(atPath: url.path) {
             let seed = """
             # Vocabulary
@@ -61,26 +74,9 @@ enum DictationCleanup {
             content = migrated + (migrated.hasSuffix("\n") ? "" : "\n")
             try? content.write(to: url, atomically: true, encoding: .utf8)
         }
-        var terms = content.split(separator: "\n")
+        return content.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasPrefix("#") }
-        // Teammate names + company domains from the people registry — the
-        // proper nouns ASR reliably mangles until it's told the spelling.
-        for term in builtInVocabulary + People.vocabularyTerms() where !terms.contains(where: {
-            $0.caseInsensitiveCompare(term) == .orderedSame
-        }) {
-            terms.append(term)
-        }
-        return terms
-    }
-
-    static func userVocabulary() -> [String] {
-        let url = Brain.root.appendingPathComponent("vocabulary.md")
-        _ = vocabulary() // creates the seed file if needed
-        let content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        return content.split(separator: "\n").map {
-            $0.trimmingCharacters(in: .whitespaces)
-        }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
     }
 
     static func setUserVocabulary(_ terms: [String]) {

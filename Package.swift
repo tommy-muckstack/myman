@@ -13,9 +13,11 @@ let package = Package(
         .package(url: "https://github.com/amplitude/Amplitude-Swift.git", from: "1.9.0"),
     ],
     targets: [
+        .target(name: "AudioEngineSafety", path: "support/AudioEngineSafety"),
         .executableTarget(
             name: "MyMan",
             dependencies: [
+                "AudioEngineSafety",
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "Sparkle", package: "Sparkle"),
@@ -31,7 +33,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MyManTests",
-            dependencies: ["MyMan"],
+            dependencies: ["MyMan", "AudioEngineSafety"],
             path: "Tests/MyManTests"
         ),
     ]
