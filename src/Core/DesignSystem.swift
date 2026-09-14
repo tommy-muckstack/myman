@@ -30,8 +30,8 @@ enum MM {
             light: NSColor(red: 0.45, green: 0.45, blue: 0.50, alpha: 1),
             dark: NSColor(white: 1, alpha: 0.7))
         static let textTertiary = dynamic("mm.textTertiary",
-            light: NSColor(red: 0.60, green: 0.60, blue: 0.65, alpha: 1),
-            dark: NSColor(white: 1, alpha: 0.5))
+            light: NSColor(white: 0.44, alpha: 1),
+            dark: NSColor(white: 1, alpha: 0.65))
         static let border = dynamic("mm.border",
             light: NSColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1),
             dark: NSColor(white: 1, alpha: 0.12))
@@ -75,12 +75,16 @@ enum MM {
         }
 
         static let tableSize: CGFloat = 15
-        static let title = gellix(20, .medium)
-        static let body = gellix(15)
-        static let bodyInput = gellix(16)
-        static let secondary = gellix(13)
-        static let metadata = gellix(11.5)
-        static let hint = gellix(11)
+        static var interfaceScale: CGFloat {
+            let value = UserDefaults.standard.double(forKey: "interfaceTextScale")
+            return value == 0 ? 1 : min(1.5, max(1, value))
+        }
+        static var title: Font { gellix(20 * interfaceScale, .medium) }
+        static var body: Font { gellix(15 * interfaceScale) }
+        static var bodyInput: Font { gellix(16 * interfaceScale) }
+        static var secondary: Font { gellix(13 * interfaceScale) }
+        static var metadata: Font { gellix(11.5 * interfaceScale) }
+        static var hint: Font { gellix(11 * interfaceScale) }
     }
 
     enum Document {

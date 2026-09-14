@@ -202,6 +202,7 @@ private struct AgentBriefShareForm: View {
     @State private var title = ""
     @State private var summary = ""
     @State private var botURL = ""
+    @State private var publishing = false
     @State private var selection = Set<String>()
     @State private var error = ""
     var body: some View {
@@ -220,15 +221,31 @@ private struct AgentBriefShareForm: View {
                 }
             }
             TextField("Public Grok Bot share link (optional)", text: $botURL).textFieldStyle(.roundedBorder)
-            Text("Save a self-contained HTML page to preview or upload yourself. Nothing is published by this step.").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+            Text("Save a local HTML page, or publish selected results for 24 hours. Published pages are limited to 3 MB. Anyone with the link can view them until expiry or revocation.").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             if !error.isEmpty { Text(error).foregroundStyle(MM.Colors.textSecondary) }
             HStack {
                 Button("Cancel") { dismiss() }.clickable()
                 Spacer()
-                Button("Save share page…") { save() }.clickable().disabled(title.isEmpty || selection.isEmpty || selection.count > 4)
+                Button("Publish for 24 hours") { publish() }.clickable().disabled(publishing || title.isEmpty || selection.isEmpty || selection.count > 4)
+                Button("Save share page…") { save() }.clickable().disabled(publishing || title.isEmpty || selection.isEmpty || selection.count > 4)
             }
         }.font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary).padding(MM.Layout.paddingLarge)
         }.frame(width: 640, height: 600).background(MM.Colors.background)
+    }
+    private func publish() {
+        guard !publishing else { return }
+        guard !SharePublishing.shared.endpoint.isEmpty else { WorkflowCenter.shared.open(tab: "sharing"); return }
+        publishing = true
+        Task {
+            defer { publishing = false }
+            do {
+                let result = try AgentBriefs.shared.exportForHuman(brief.id, expected: brief.revision, args: ["public_title": title, "public_summary": summary, "output_ids": brief.outputs.map(\.id).filter { selection.contains($0) }, "bot_url": botURL])
+                guard let attachment = result["attachment"] as? [String: Any], let path = attachment["path"] as? String else { return }
+                let data = try Data(contentsOf: URL(fileURLWithPath: path))
+                let receipt = try await SharePublishing.shared.publish(data: data, mime: "text/html", sourceID: brief.sources.first?.id ?? brief.id, title: title, seconds: 86400, sourceIDs: brief.sources.map(\.id) + Array(selection))
+                copyBriefText(receipt.url); Toast.show("Share link copied. Manage it in Workflows → Sharing."); dismiss()
+            } catch { self.error = error.localizedDescription }
+        }
     }
     private func save() {
         do {

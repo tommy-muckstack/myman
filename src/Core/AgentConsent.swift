@@ -4,8 +4,8 @@ import Foundation
 /// Settings by the human; settings.update deliberately cannot enable them.
 enum AgentConsent {
     static let keys = ["capture": "agentCaptureEnabled", "markup": "agentMarkupEnabled",
-                       "recording": "agentRecordingEnabled", "library": "agentLibraryEnabled"]
-    static let cleanup: Set<String> = ["recording.stop", "recording.cancel", "recording.pause", "meeting.stop", "meeting.discard", "dictation.stop", "dictation.cancel"]
+                       "recording": "agentRecordingEnabled", "library": "agentLibraryEnabled", "sharing": "agentSharingEnabled"]
+    static let cleanup: Set<String> = ["recording.stop", "recording.cancel", "recording.pause", "meeting.stop", "meeting.discard", "dictation.stop", "dictation.cancel", "capture.scroll.stop", "capture.scroll.cancel", "capture.scroll.status", "workflow.cancel", "share.revoke"]
     @MainActor static func requirements(_ action: String) -> [String] {
         (AgentActions.catalog["actions"] as? [[String: Any]])?.first(where: { $0["name"] as? String == action })?["permissions"] as? [String] ?? ["library"]
     }
@@ -20,7 +20,7 @@ enum AgentConsent {
                 guard defaults.bool(forKey: keys[group]!) else { throw AgentError("AGENT_DISABLED", "Enable \(group) access in My Man Settings → Agents for this action.") }
             }
         }
-        if ["item.delete", "task.delete", "history.clear"].contains(action), args["confirm"] as? Bool != true {
+        if ["item.delete", "task.delete", "history.clear", "share.publish"].contains(action), args["confirm"] as? Bool != true {
             throw AgentError("CONFIRMATION_REQUIRED", "This destructive action requires --confirm (confirm=true).")
         }
     }

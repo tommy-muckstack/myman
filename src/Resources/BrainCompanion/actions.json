@@ -1,5 +1,5 @@
 {
-  "version": "0.9.0",
+  "version": "0.10.0",
   "actions": [
     {
       "name": "app.status",
@@ -26,7 +26,8 @@
               "search",
               "note",
               "settings",
-              "briefs"
+              "briefs",
+              "workflows"
             ]
           }
         },
@@ -1387,7 +1388,7 @@
     },
     {
       "name": "font.file",
-      "description": "Get a saved font\u2019s validated OpenType file with attachment metadata, specimen preview, coverage and provenance. Does not install it.",
+      "description": "Get a saved font’s validated OpenType file with attachment metadata, specimen preview, coverage and provenance. Does not install it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2082,7 +2083,7 @@
     },
     {
       "name": "note.attach",
-      "description": "Copy an image into a note\u2019s owned assets and append its Markdown image. Supply source_id (screenshot) or an absolute local path. Source deletion does not break the note. Optional revision guard; returns the note revision and image attachment. Named agents must supply expected_updated_at.",
+      "description": "Copy an image into a note’s owned assets and append its Markdown image. Supply source_id (screenshot) or an absolute local path. Source deletion does not break the note. Optional revision guard; returns the note revision and image attachment. Named agents must supply expected_updated_at.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2163,7 +2164,7 @@
     },
     {
       "name": "font.preview",
-      "description": "Render a specimen from a saved font\u2019s actual OpenType bytes. Returns coverage, provenance, approximate-character warnings and a temporary preview. Does not install the font.",
+      "description": "Render a specimen from a saved font’s actual OpenType bytes. Returns coverage, provenance, approximate-character warnings and a temporary preview. Does not install the font.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2383,7 +2384,7 @@
     },
     {
       "name": "bundle.create",
-      "description": "Collect 1\u2013100 source item references and revisions for registered members. No media is copied; changed sources are marked on read.",
+      "description": "Collect 1–100 source item references and revisions for registered members. No media is copied; changed sources are marked on read.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2697,7 +2698,7 @@
     },
     {
       "name": "lease.acquire",
-      "description": "Reserve clipboard or item:ITEM-ID for 5\u2013300 seconds. Supply returned lease_id on mutations. Expiry does not cancel work in flight.",
+      "description": "Reserve clipboard or item:ITEM-ID for 5–300 seconds. Supply returned lease_id on mutations. Expiry does not cancel work in flight.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3190,6 +3191,544 @@
         },
         "required": [
           "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "workflow.handshake",
+      "description": "Receive a short-lived connection check from a named agent. Returns a synthetic image for the human to confirm in the host; does not claim host attachment delivery.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "challenge": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "challenge"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "workflow.open",
+      "description": "Open the human workflow, connection, dictation recovery or meeting decisions view.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "activity",
+              "dictation",
+              "meetings",
+              "sharing"
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "decision.list",
+      "description": "List source-backed meeting decision records. Inspect the current source revision; stale records are historical, not current evidence.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "decision.create",
+      "description": "Propose a meeting decision supported by a unique exact transcript quote. A human must review it before follow-up drafting.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "topic": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "quote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "source_id",
+          "expected_revision",
+          "topic",
+          "text",
+          "quote"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "decision.followup",
+      "description": "Create follow-up Markdown from human-reviewed decisions and explicitly selected related captures. Does not send anything.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true
+          },
+          "related_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "minItems": 1,
+            "maxItems": 12,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "capture.float",
+      "description": "Open a saved screenshot as a floating reference inside My Man.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "capture.scroll.start",
+      "description": "Start bounded scrolling capture for a screen region in desktop points. The user or approved host scrolls; My Man captures overlapping sections. Stop to save; cancel to discard.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number"
+              },
+              "height": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "region"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "capture"
+      ]
+    },
+    {
+      "name": "capture.scroll.status",
+      "description": "Read status of this agent's active scrolling capture.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "capture"
+      ]
+    },
+    {
+      "name": "capture.scroll.stop",
+      "description": "Stop this agent's scrolling capture and save the joined screenshot to the library.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "capture"
+      ]
+    },
+    {
+      "name": "capture.scroll.cancel",
+      "description": "Discard this agent's active scrolling capture.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "capture"
+      ]
+    },
+    {
+      "name": "workflow.context",
+      "description": "Export explicitly selected captures as local host-sized attachments. Does not send files or grant library access.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "minItems": 1,
+            "maxItems": 5,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "workflow.cancel",
+      "description": "Request cooperative cancellation of this agent’s supported read/render job. Inspect the final receipt and any files before retrying.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "meeting.speaker",
+      "description": "Correct timestamped speaker labels with a revision guard. Preserves original transcript and user notes; invalidates generated evidence.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "share.publish",
+      "description": "Publish one explicitly chosen current capture. Requires separate sharing grant and confirm=true. Link expires on the server; recipients can keep copies.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 604800
+          },
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision",
+          "confirm"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "sharing",
+        "library"
+      ]
+    },
+    {
+      "name": "share.list",
+      "description": "List this agent’s published share receipts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "sharing"
+      ]
+    },
+    {
+      "name": "share.revoke",
+      "description": "Revoke a link owned by this agent. The server must confirm before revocation is reported.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "sharing"
+      ]
+    },
+    {
+      "name": "dictation.history",
+      "description": "Read recent dictation delivery and correction records. Unverified insertion must be inspected before any replay.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "dictation.correction",
+      "description": "Save a corrected recovery transcript with an exact-text guard. Agent corrections do not train personal vocabulary and are not pasted automatically.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50000
+          },
+          "expected_text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50000
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50000
+          }
+        },
+        "required": [
+          "id",
+          "expected_text",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "dictation.style",
+      "description": "Set a writing style for one destination app bundle ID. Default removes that override.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bundle_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "default",
+              "casual",
+              "neutral",
+              "professional",
+              "verbatim"
+            ]
+          }
+        },
+        "required": [
+          "bundle_id",
+          "tone"
         ],
         "additionalProperties": false
       },

@@ -21,6 +21,7 @@ final class AgentActions {
     private var order: [String] = []
     private var retired = Set<String>()
     private var resultSizes: [String: Int] = [:]
+    private var activeTasks: [String: Task<Void, Never>] = [:]
     private var inFlight = 0
     private var audioCommand = false
     private var deletionObserver: NSObjectProtocol?
@@ -30,11 +31,17 @@ final class AgentActions {
     private let journal = AgentJournal.shared
     init(capture: CaptureController, meetings: MeetingController, voice: VoiceController) {
         self.capture = capture; self.meetings = meetings; self.voice = voice
+        WorkflowActivity.cancel = { [weak self] id, human in
+            guard let self, let job = self.jobs[id], job["state"] as? String == "running", let action = job["action"] as? String, WorkflowActivity.cancellable.contains(action), let task = self.activeTasks[id] else { throw AgentError("NOT_CANCELLABLE", "This command cannot be stopped safely. Inspect its result before continuing.") }
+            guard human || job["owner"] as? String == AgentContext.principal.id else { throw AgentError("NOT_OWNER", "This request belongs to another agent.") }
+            self.jobs[id]?["stop_requested"] = true
+            task.cancel()
+        }
         deletionObserver = NotificationCenter.default.addObserver(forName: .captureDeleted, object: nil, queue: .main) { [weak self] notification in
-            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String); AgentBriefs.shared.purge(itemID: notification.object as? String) }
+            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String); AgentBriefs.shared.purge(itemID: notification.object as? String); DictationHistory.shared.purge(itemID: notification.object as? String); MeetingDecisions.shared.purge(itemID: notification.object as? String); FloatingReference.purge(itemID: notification.object as? String); SharePublishing.shared.purge(sourceID: notification.object as? String) }
         }
         exclusionObserver = NotificationCenter.default.addObserver(forName: .captureExcluded, object: nil, queue: .main) { [weak self] notification in
-            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String); AgentBriefs.shared.purge(itemID: notification.object as? String) }
+            MainActor.assumeIsolated { self?.purgeContentResults(); AgentCollaboration.shared.purge(itemID: notification.object as? String); AgentBriefs.shared.purge(itemID: notification.object as? String); DictationHistory.shared.purge(itemID: notification.object as? String); MeetingDecisions.shared.purge(itemID: notification.object as? String); FloatingReference.purge(itemID: notification.object as? String); SharePublishing.shared.purge(sourceID: notification.object as? String) }
         }
     }
     static var catalog: [String: Any] {
@@ -93,23 +100,27 @@ final class AgentActions {
             if order.count >= 256, let index = order.firstIndex(where: { jobs[$0]?["state"] as? String != "running" }) {
                 let old = order.remove(at: index); jobs[old] = nil; requests[old] = nil; resultSizes[old] = nil; retired.insert(old)
             }
-            try journal.begin(id, action: action, fingerprint: fingerprint, owner: principal.id)
+            try journal.begin(id, action: action, fingerprint: fingerprint, owner: principal.id, inputs: WorkflowActivity.references(args))
             requests[id] = fingerprint; order.append(id); inFlight += 1
             jobs[id] = ["id": id, "action": action, "state": "running", "owner": principal.id]
             let revision = contentRevision
-            Task { @MainActor in
+            activeTasks[id] = Task { @MainActor in
                 defer {
+                    activeTasks[id] = nil
                     inFlight -= 1; trimResults(keeping: id)
                     if let job = jobs[id], !journal.finish(id, job: job) { jobs[id]?["recovery_persisted"] = false }
                 }
                 do {
                     try AgentConsent.validate(action, args: args)
+                    try Task.checkCancellation()
                     let result = try await AgentContext.$principal.withValue(principal) {
                         try await AgentContext.$jobID.withValue(id) { try await executeCoordinated(action, args) }
                     }
+                    try Task.checkCancellation()
                     guard revision == contentRevision || ["item.delete", "item.exclude", "history.clear"].contains(action) else { AgentMediaStore.shared.purge(); throw AgentError("CONTENT_CHANGED", "Captured content was deleted while this job ran. Inspect existing items; do not replay the action automatically.") }
                     jobs[id] = ["id": id, "action": action, "state": "succeeded", "result": result, "owner": principal.id]
                 }
+                catch is CancellationError { jobs[id] = ["id": id, "action": action, "state": "cancelled", "error": ["code": "CANCELLED", "message": "Stopped. Temporary output may already exist; inspect saved files before continuing."], "owner": principal.id] }
                 catch { jobs[id] = ["id": id, "action": action, "state": "failed", "error": Self.error(error), "owner": principal.id] }
             }
             return ["ok": true, "launch_id": launchID, "job": jobs[id]!]
@@ -264,6 +275,46 @@ final class AgentActions {
         defer { if isAudio { audioCommand = false } }
         switch action {
         case "workflow.templates": return ["templates": AgentWorkflowTemplates.catalog, "host_sharing_verified": false]
+        case "dictation.history": return ["entries": try WorkflowValues.json(Array(DictationHistory.shared.entries.prefix(args["limit"] as? Int ?? 20)))]
+        case "dictation.correction":
+            guard let entry = DictationHistory.shared.entries.first(where: { $0.id == args["id"] as? String }), (entry.correctedText ?? entry.text) == args["expected_text"] as? String else { throw AgentError("EDIT_CONFLICT", "Read the current dictation before saving a correction.") }
+            try DictationHistory.shared.correct(entry.id, text: args["text"] as! String, human: false)
+            return ["id": entry.id, "corrected": true, "vocabulary_learning": false]
+        case "dictation.style":
+            let bundle = args["bundle_id"] as! String
+            let tone = args["tone"] as! String
+            DictationAppStyles.set(tone == "default" ? nil : DictationTone(rawValue: tone), for: bundle)
+            return ["bundle_id": bundle, "tone": tone]
+        case "share.publish":
+            let source = try item(args)
+            guard source.revision == args["expected_revision"] as? Int else { throw AgentError("EDIT_CONFLICT", "Read the current capture before sharing.") }
+            let receipt = try await SharePublishing.shared.publish(item: source, seconds: args["ttl_seconds"] as? Int ?? 86400, human: false)
+            return ["id": receipt.id, "url": receipt.url, "expires_at": Self.date(receipt.expiresAt)]
+        case "share.list": return ["shares": try WorkflowValues.json(SharePublishing.shared.receipts.filter { $0.owner == AgentContext.principal.id })]
+        case "share.revoke": try await SharePublishing.shared.revoke(args["id"] as! String, human: false); return ["revoked": true]
+        case "workflow.cancel":
+            try WorkflowActivity.cancel(args["job_id"] as! String, false)
+            return ["stop_requested": true, "job_id": args["job_id"]!]
+        case "workflow.context": return try WorkflowContext.export(ids: args["ids"] as! [String])
+        case "meeting.speaker":
+            let source = try item(args)
+            guard source.revision == args["expected_revision"] as? Int else { throw AgentError("EDIT_CONFLICT", "Read the current meeting before correcting a speaker.") }
+            let updated = try MeetingDecisions.correctSpeaker(source: source, from: args["from"] as! String, to: args["to"] as! String)
+            return ["id": updated.id, "revision": updated.revision, "message": "Transcript updated. Review existing notes for old speaker references."]
+        case "workflow.handshake": return try WorkflowConnection.shared.handshake(args["challenge"] as! String)
+        case "workflow.open": WorkflowCenter.shared.open(tab: args["tab"] as? String ?? "activity"); return ["opened": true]
+        case "decision.list": return ["decisions": try WorkflowValues.json(MeetingDecisions.shared.decisions), "requires_source_review": true]
+        case "decision.create":
+            return ["decision": try WorkflowValues.json(MeetingDecisions.shared.add(sourceID: args["source_id"] as! String, revision: args["expected_revision"] as! Int, topic: args["topic"] as! String, text: args["text"] as! String, quote: args["quote"] as! String))]
+        case "decision.followup": return ["draft_markdown": try MeetingDecisions.shared.followup(ids: args["ids"] as! [String], relatedIDs: args["related_ids"] as? [String] ?? []), "sent": false]
+        case "capture.float": try FloatingReference.open(item(args)); return ["opened": true]
+        case "capture.scroll.start":
+            let region = args["region"] as! [String: Any]
+            let id = try ScrollingCapture.shared.start(region: CGRect(x: region["x"] as! Double, y: region["y"] as! Double, width: region["width"] as! Double, height: region["height"] as! Double))
+            return ["session_id": id, "state": "capturing", "scrolling": "user_or_host_controlled"]
+        case "capture.scroll.status": return try ScrollingCapture.shared.status(id: args["session_id"] as! String)
+        case "capture.scroll.stop": return try await ScrollingCapture.shared.finish(id: args["session_id"] as! String)
+        case "capture.scroll.cancel": try ScrollingCapture.shared.cancel(id: args["session_id"] as! String); return ["cancelled": true]
         case "app.doctor":
             return ["permissions": ["screen_recording": CGPreflightScreenCaptureAccess(), "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, "camera": AVCaptureDevice.authorizationStatus(for: .video) == .authorized, "accessibility": AXIsProcessTrusted(), "calendar": EKEventStore.authorizationStatus(for: .event) == .fullAccess, "input_monitoring": "not_required"], "agents": AgentConsent.status(), "brain_root": Brain.root.path, "brain_available": FileManager.default.fileExists(atPath: Brain.root.appendingPathComponent("catalog.json").path), "screen_recording_supported": ScreenRecorder.isSupported, "pointer_control": "not_supported"] as [String: Any]
         case "windows.list":
@@ -639,7 +690,11 @@ enum AgentSchema {
             if let values = schema["enum"] as? [String], !values.contains(string) { try fail() }
             if let pattern = schema["pattern"] as? String, string.range(of: pattern, options: .regularExpression) == nil { try fail() }
         case "boolean": guard let n = value as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() else { try fail() }
-        case "number": guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.isFinite, n.doubleValue >= (schema["minimum"] as? Double ?? -.greatestFiniteMagnitude), n.doubleValue <= (schema["maximum"] as? Double ?? .greatestFiniteMagnitude) else { try fail() }
+        case "number", "integer":
+            guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.isFinite,
+                  n.doubleValue >= ((schema["minimum"] as? NSNumber)?.doubleValue ?? -.greatestFiniteMagnitude),
+                  n.doubleValue <= ((schema["maximum"] as? NSNumber)?.doubleValue ?? .greatestFiniteMagnitude) else { try fail() }
+            if schema["type"] as? String == "integer", n.doubleValue.rounded(.towardZero) != n.doubleValue { try fail() }
         default: try fail()
         }
     }

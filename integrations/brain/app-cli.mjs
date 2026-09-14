@@ -18,6 +18,25 @@ const common = ['machine','json','root','wait','wait-ready','no-wait','request-i
 const legacy = {open:'open',launcher:'open',screenshot:'screenshot',note:'note',dictation:'dictation',meeting:'meeting','cancel-meeting':'cancel-meeting',record:'record',settings:'settings'};
 const pairs = {
   'workflow templates':'workflow.templates',
+  'dictation history':'dictation.history',
+  'dictation correction':'dictation.correction',
+  'dictation style':'dictation.style',
+  'share publish':'share.publish',
+  'share list':'share.list',
+  'share revoke':'share.revoke',
+  'workflow context':'workflow.context',
+  'workflow cancel':'workflow.cancel',
+  'meeting speaker':'meeting.speaker',
+  'workflow handshake':'workflow.handshake',
+  'workflow open':'workflow.open',
+  'decision list':'decision.list',
+  'decision create':'decision.create',
+  'decision followup':'decision.followup',
+  'capture float':'capture.float',
+  'capture scroll start':'capture.scroll.start',
+  'capture scroll status':'capture.scroll.status',
+  'capture scroll stop':'capture.scroll.stop',
+  'capture scroll cancel':'capture.scroll.cancel',
   'brief create':'brief.create','brief open':'brief.open',
   'brief list':'brief.list',
   'brief read':'brief.read',
@@ -136,7 +155,8 @@ export async function plan(argv) {
   const pair=p.slice(0,2).join(' ');
   if(pair==='library search' && v.offline){allowed(v,['offline','query','kind','limit']);if(p.length!==2||!v.query)fail('Use library search --query TEXT --offline.');return {type:'read',name:'search',args:{query:v.query,...(v.kind?{kind:v.kind}:{}),...(v.limit?{limit:number(v.limit)}:{})},root:v.root};}
   if(pair==='library search' && v.root)fail('Native search uses this app’s library; use --offline with --root for a Brain export.');
-  let name=pairs[pair], args={}, consumed=2;
+  const triple=p.length>=3?p.slice(0,3).join(' '):'';
+  let name=pairs[triple]??pairs[pair], args={}, consumed=pairs[triple]?3:2;
   if(['meeting status','dictation status'].includes(pair)){allowed(v,[]);if(p.length!==2)fail('Unexpected arguments.');return {type:'action',name:'app.status',args:{},control,select:p[0]==='record'?'screen_recording':p[0]};}
   if(['screenshot','capture-markup'].includes(p[0])){if(v.mode!=='agent')fail('Geometry capture requires --mode agent.');name=p[0]==='screenshot'?'screenshot.capture':'screenshot.capture_markup';consumed=1;}
   if(p[0]==='annotate'){name='screenshot.edit';consumed=1;}
@@ -147,9 +167,14 @@ export async function plan(argv) {
     allowed(v,[...Object.keys(schema.properties).map(k=>k.replaceAll('_','-')),...special]);
     for(const [key,val] of Object.entries(v)) {
       const target=key.replaceAll('-','_');if(!Object.hasOwn(schema.properties,target))continue;
-      args[target]=schema.properties[target].type==='boolean'&&typeof val==='string'?onOff(val):schema.properties[target].type==='number'?number(val):schema.properties[target].type==='array'?(target==='region'||target==='crop'||target==='times'?String(val).split(',').map(number):json(val)):val;
+      const type=schema.properties[target].type;
+      if(type==='boolean')args[target]=typeof val==='string'?onOff(val):val;
+      else if(type==='number'||type==='integer')args[target]=number(val);
+      else if(type==='object')args[target]=json(val);
+      else if(type==='array')args[target]=['region','crop','times'].includes(target)?String(val).split(',').map(number):json(val);
+      else args[target]=val;
     }
-    if(v.region)args.region=v.region.split(',').map(number);
+    if(v.region)args.region=schema.properties.region?.type==='object'?json(v.region):v.region.split(',').map(number);
     if(v['body-file']!==undefined || v.file!==undefined){if(v.body!==undefined || (v['body-file']!==undefined&&v.file!==undefined))fail('Choose one body input.');if(!Object.hasOwn(schema.properties,'body'))fail('Body input is not supported.');args.body=await input(v['body-file']??v.file);}
     if(v.ops!==undefined || v['ops-file']!==undefined){
       if(!Object.hasOwn(schema.properties,'annotations'))fail('This command does not accept markup.');

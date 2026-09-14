@@ -237,6 +237,7 @@ struct SettingsPanelView: View {
     @State private var automationCopied = false
     @State private var vocabularySuggestions: [String] = []
     @State private var knownPeople: [Person] = []
+    @AppStorage("interfaceTextScale") private var interfaceTextScale = 1.0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -245,9 +246,8 @@ struct SettingsPanelView: View {
                     .font(MM.Fonts.title)
                     .foregroundStyle(MM.Colors.textPrimary)
                 Spacer()
-                IconView(icon: .close, size: 16, color: MM.Colors.textTertiary)
-                    .clickable(minSize: 32)
-                    .onTapGesture { onDismiss() }
+                Button(action: onDismiss) { IconView(icon: .close, size: 16, color: MM.Colors.textTertiary) }
+                    .buttonStyle(.plain).accessibilityLabel("Close settings").clickable(minSize: 32)
             }
             .padding(.horizontal, MM.Layout.paddingLarge)
             .padding(.vertical, MM.Layout.padding)
@@ -375,6 +375,10 @@ struct SettingsPanelView: View {
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Appearance") {
+                Picker("Interface text size", selection: $interfaceTextScale) {
+                    Text("Standard").tag(1.0); Text("Larger").tag(1.25); Text("Largest").tag(1.5)
+                }.clickable()
+                Text("Reopen other windows to apply the new text size.").font(MM.Fonts.metadata)
                 HStack(spacing: 6) {
                     let selected = store.theme ?? AppTheme.matchingSystem
                     ForEach(AppTheme.allCases) { option in
@@ -399,11 +403,13 @@ struct SettingsPanelView: View {
                 ForEach(DictationTone.allCases) { tone in Text(tone.label).tag(tone) }
             }.labelsHidden().pickerStyle(.segmented)
             Text(store.dictationTone.detail).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+            DictationAppStyleSettings()
+            Button("Review dictation delivery and corrections…") { WorkflowCenter.shared.open(tab: "dictation") }.clickable()
             Toggle("Noise suppression on the mic", isOn: $store.enhanceMicrophone)
                 .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
             Text("Turns down other apps' audio while you dictate — macOS only offers this by putting the whole machine in call mode.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            TextEditor(text: $vocabularyText).font(MM.Fonts.secondary).frame(height: 130)
+            TextEditor(text: $vocabularyText).font(MM.Fonts.secondary).frame(height: 130).accessibilityLabel("Personal vocabulary, one term per line")
                 .scrollContentBackground(.hidden).padding(6)
                 .background(RoundedRectangle(cornerRadius: 8).fill(MM.Colors.surface))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MM.Colors.border, lineWidth: 1))

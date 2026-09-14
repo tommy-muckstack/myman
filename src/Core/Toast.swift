@@ -36,6 +36,8 @@ enum Toast {
                      secondaryAction: (() -> Void)? = nil,
                      duration: TimeInterval = 8) {
         dismiss()
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+            userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue])
         let view = ToastView(
             message: message, systemImage: systemImage,
             actionLabel: actionLabel, duration: duration,
@@ -137,9 +139,8 @@ private struct ToastView: View {
                 }
                 .buttonStyle(.plain)
             }
-            IconView(icon: .close, size: 14, color: MM.Colors.textTertiary)
-                .clickable(minSize: 32)
-                .onTapGesture { onClose() }
+            Button(action: onClose) { IconView(icon: .close, size: 14, color: MM.Colors.textTertiary) }
+                .buttonStyle(.plain).accessibilityLabel("Dismiss notification").clickable(minSize: 32)
                 .opacity(hovering ? 1 : 0.4)
         }
         .padding(.horizontal, 14)

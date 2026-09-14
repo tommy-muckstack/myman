@@ -1,8 +1,9 @@
-> September 13, 2026: **0.9.0 candidate prepared** for recorded briefs, worker/reviewer evidence checks and local share pages. My Man 1.1.65 is published; it does not contain these new brief actions. The initial marketplace application remains recorded as pending. No update email, new form, public Bot template link or live GrokBot acceptance is claimed.
+> September 13, 2026: **0.10.0 candidate prepared** for connection checks, selected-file handoff, scrolling capture, meeting decisions, dictation recovery and optional expiring shares. A synthetic check through Grok Bot/Hugo reached the isolated My Man app on the Mac and returned a visible PNG, confirmed by Tommy's screenshot. This is host execution/attachment evidence, not marketplace approval or a public Bot template listing.
+
 
 # Cursor Marketplace and GrokBot preparation
 
-Status (September 13, 2026): root Cursor candidate **0.9.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or GrokBot activation is claimed. The 0.9.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced.
+Status (September 13, 2026): root Cursor candidate **0.10.0** is prepared and local retrieval is verified. Tommy reports that the initial publisher application was submitted and is **awaiting review**; no listing approval or GrokBot activation is claimed. The 0.10.0 update has not been submitted or notified. The Mac-local CLI is the supported integration path. No hosted Brain or automatic cloud sync is introduced. Optional explicit publishing uses a separate private sharing service, a dedicated credential and a disabled-by-default sharing grant.
 
 For each agent-package update, follow the [Cursor marketplace release policy](cursor-marketplace-release.md). Shipping MyMan does not update the marketplace package. Use the [My Man logo](https://raw.githubusercontent.com/tommy-muckstack/myman/main/assets/icon-256.png) in publisher/listing fields and check [submission status](marketplace-submission.md#submission-status) before preparing an update notification.
 
@@ -41,7 +42,7 @@ GrokBot package directory: `integrations/grok-bot`
 
 Local Mac MCP package directory: repository root
 
-License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.9.0. Recorded briefs require MyMan 1.1.66 or an app advertising the brief actions. See [current verification](verification/recorded-briefs-2026-09-13.md); the matrix below records the earlier marketplace baseline.
+License: Apache-2.0. GrokBot skill package, root Cursor candidate and companion runtime: 0.10.0. Recorded briefs require MyMan 1.1.66 or an app advertising the brief actions. See [current verification](verification/recorded-briefs-2026-09-13.md); the matrix below records the earlier marketplace baseline.
 
 Cursor's documented submission flow is a public Git repository plus review through its publish form; it supports the Agent Plugins standard. That verifies the Cursor route, **not a GrokBot-specific submission API or a Mac-local MCP bridge**. [Cursor plugin reference](https://cursor.com/docs/reference/plugins), [submission form](https://cursor.com/marketplace/publish), [Agent Plugins schemas](https://agent-plugins.org/).
 

@@ -20,6 +20,17 @@ jobs:
       - run: npm run typecheck --prefix integrations/font-workbench
       - run: npm test --prefix integrations/font-workbench
       - run: npm run check-bundle --prefix integrations/font-workbench
+  sharing-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: integrations/share-service/package-lock.json
+      - run: npm ci --ignore-scripts --prefix integrations/share-service
+      - run: npm test --prefix integrations/share-service
   build:
     runs-on: macos-latest
     steps:

@@ -82,3 +82,11 @@ Mac targeting verifies the host-selected local connection; it does not connect t
 ## Recorded briefs and visual proof (companion 0.9.0)
 
 For a recorded bug report, demo-to-launch kit, independent evidence review, or a selected result share page, read [recorded brief workflows](references/visual-brief-workflows.md). Run `workflow check` on the selected Mac first. The host dispatches assigned work; My Man stores the brief and enforces worker/reviewer identities and revisions. `brief read --include-context` returns timed frames and untimed transcript text. Inspect original context and outputs before judging every acceptance criterion. Export only the public text and result IDs the user selected; `brief export` writes a local page and never publishes it. A local setup pass does not verify GrokBot dispatch or attachment delivery. Use `workflow templates` for reusable starter prompts, and create public Bot links through the host's actual sharing flow.
+
+## Human and agent workflows (0.10.0)
+
+Discover live actions before using new commands. `workflow.handshake` proves the Mac received a connection challenge; verify an actual returned attachment separately. `workflow.context` exports only explicitly selected captures and never sends files. Use `workflow.open` for human activity, recovery and review.
+
+Scrolling capture requires overlap as the user/approved host scrolls; stop to save, cancel to discard. Decision proposals need unique exact transcript evidence, current revisions and human confirmation before follow-up drafting. Dictation history marks uncertain insertion; inspect the target before retrying. Agent corrections never teach personal vocabulary. Supported read/render jobs accept `workflow.cancel`; poll the final receipt and inspect files, never replay automatically.
+
+Publishing is optional and needs a separately configured service, a `sharing` grant, current source revision and explicit `confirm=true`. Publish only user-selected content. Do not send or publish by default. Expiry/revocation cannot recall recipient copies. The host must return visible file attachments; local paths do not establish delivery. See the [workflow reference](references/human-agent-workflows.md).

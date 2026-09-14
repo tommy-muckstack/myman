@@ -354,9 +354,8 @@ final class VoiceController: ObservableObject {
                 phase = .idle
                 return
             }
-            let text = await DictationCleanup.clean(rawText, tone: SettingsStore.shared.dictationTone,
+            let text = await DictationCleanup.clean(rawText, tone: DictationAppStyles.tone(for: targetApp?.bundleIdentifier, fallback: SettingsStore.shared.dictationTone),
                                                     targetBundleID: targetApp?.bundleIdentifier)
-            pasteText(text)
             let dictationID = UUID().uuidString
             // History, not a note: dictations are throwaway-but-recoverable.
             let saved: Void? = try? await Database.shared.write { db in
@@ -369,6 +368,21 @@ final class VoiceController: ObservableObject {
                     """)
             }
             lastDictationID = saved == nil ? nil : dictationID
+            var delivery = DictationDelivery.Outcome(state: "clipboard", reason: "Your text was copied. Recovery history could not be saved.", milliseconds: 0)
+            var entry = DictationHistory.Entry(id: dictationID, text: text, targetBundle: targetApp?.bundleIdentifier ?? "", createdAt: Date(), outcome: delivery)
+            do {
+                try DictationHistory.shared.save(entry)
+                delivery = await DictationDelivery.deliver(text)
+                entry.outcome = delivery
+                try DictationHistory.shared.save(entry)
+            } catch {
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+                delivery.state = "uncertain"
+                delivery.reason = "Could not update recovery history. Your text is on the clipboard; inspect the destination before pasting."
+            }
+            if delivery.state != "verified" {
+                Toast.show(delivery.reason, actionLabel: "Review", action: { WorkflowCenter.shared.open(tab: "dictation") }, duration: 12)
+            }
             TaskExtractor.run(text: text, source: .dictation)
             Analytics.track("dictation_completed", [
                 "chars": text.count,
@@ -376,7 +390,9 @@ final class VoiceController: ObservableObject {
                 "engine": TranscriptionService.shared.kind.rawValue,
                 "end_reason": endReason,
                 "cleanup_changed": text != rawText,
-                "auto_pasted": AXIsProcessTrusted(),
+                "auto_pasted": delivery.state == "verified",
+                "delivery_state": delivery.state,
+                "delivery_ms": delivery.milliseconds,
             ])
             phase = .done(text)
             if let panel {

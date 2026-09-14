@@ -44,6 +44,7 @@ struct CaptureThumbnail: View {
 }
 
 private struct CaptureRowHighlight: ViewModifier {
+    var keyboardFocused = false
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -53,7 +54,7 @@ private struct CaptureRowHighlight: ViewModifier {
             .background(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
                 .fill(hovered ? MM.Colors.surface : .clear))
             .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
-                .strokeBorder(hovered ? MM.Colors.border.opacity(0.5) : .clear))
+                .strokeBorder(keyboardFocused ? MM.Colors.textPrimary : hovered ? MM.Colors.border.opacity(0.5) : .clear, lineWidth: keyboardFocused ? 2 : 1))
             .onHover { hovered = $0 }
             .onDisappear { hovered = false }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
@@ -63,6 +64,7 @@ private struct CaptureRowHighlight: ViewModifier {
 struct CaptureResultRow: View {
     let match: CaptureMatch
     var selected = false
+    var keyboardFocused = false
     var body: some View {
         HStack(spacing: MM.Layout.spacing) {
             if match.item.kind == "screenshot" { CaptureThumbnail(path: match.item.sourcePath, revision: match.item.revision) }
@@ -83,7 +85,7 @@ struct CaptureResultRow: View {
         }
         .padding(MM.Layout.spacing)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .modifier(CaptureRowHighlight())
+        .modifier(CaptureRowHighlight(keyboardFocused: keyboardFocused))
         .foregroundStyle(MM.Colors.textPrimary)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -114,6 +116,7 @@ struct CaptureLibraryView: View {
     private var customEnd: Date { get { controls.customEnd } nonmutating set { controls.customEnd = newValue } }
     @State private var dateAnchor = Date()
     @State private var selectedThemeID: String?
+    @State private var keyboardNavigation = false
 
     private var filter: CaptureFilter {
         var result = CaptureFilter(kind: kind, themeID: themeID.isEmpty ? nil : themeID, pinnedOnly: pinned, includeExcluded: includeExcluded)
@@ -161,7 +164,7 @@ struct CaptureLibraryView: View {
                             }
                             ForEach(model.results) { match in
                                 Button { open(match) } label: {
-                                    CaptureResultRow(match: match, selected: model.selectedID == match.id)
+                                    CaptureResultRow(match: match, selected: model.selectedID == match.id, keyboardFocused: keyboardNavigation && model.selectedID == match.id)
                                         .clickable()
                                 }
                                 .buttonStyle(.plain)
@@ -201,10 +204,11 @@ struct CaptureLibraryView: View {
         .frame(height: 440)
         .onAppear { reload() }
         .onDisappear { model.cancel() }
-        .onChange(of: query) { _, _ in reload() }
+        .onChange(of: query) { _, _ in keyboardNavigation = false; reload() }
         .onChange(of: filter) { _, _ in reload() }
         .onReceive(NotificationCenter.default.publisher(for: .captureLibraryChanged)) { _ in reload() }
         .onReceive(NotificationCenter.default.publisher(for: .captureLibraryCommand)) { event in
+            if ["up", "down"].contains(event.object as? String ?? "") { keyboardNavigation = true }
             if mode == .themes {
                 let index = visibleThemes.firstIndex { $0.id == selectedThemeID } ?? -1
                 if event.object as? String == "open", let theme = visibleThemes.first(where: { $0.id == selectedThemeID }) ?? visibleThemes.first { openTheme(theme.id) }
@@ -264,7 +268,7 @@ struct CaptureLibraryView: View {
                 if theme.pinned { Image(systemName: "pin.fill").foregroundStyle(MM.Colors.accent) }
                 Text(theme.latest.formatted(.relative(presentation: .named))).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }.padding(MM.Layout.spacing).frame(maxWidth: .infinity, alignment: .leading)
-                .modifier(CaptureRowHighlight())
+                .modifier(CaptureRowHighlight(keyboardFocused: keyboardNavigation && selectedThemeID == theme.id))
                 .accessibilityAddTraits(selectedThemeID == theme.id ? [.isSelected] : [])
                 .clickable()
         }.buttonStyle(.plain)
@@ -277,7 +281,12 @@ struct CaptureLibraryView: View {
     }
     @ViewBuilder private func itemMenu(_ item: CaptureItem) -> some View {
         Button("Open original") { CaptureActions.open(item, query: query) }
+        if item.kind == "screenshot" {
+            Button("Float as reference") { CaptureActions.perform { try FloatingReference.open(item) } }
+        }
         if item.kind == "recording" { Button("Make agent brief…") { AgentBriefWindow.shared.open(recording: item) } }
+        Button("Share…") { CaptureShare.open(item) }
+        Button("Prepare context for Bot…") { WorkflowContext.show(item) }
         Button("Preview & related") { CaptureDetailController.shared.open(item, query: query) }
         Button("Copy") { CaptureActions.copy(item) }
         Button(item.kind == "screenshot" ? "Copy detected text" : "Copy text") { CaptureActions.copy(item, textOnly: true) }

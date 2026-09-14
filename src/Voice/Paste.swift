@@ -42,6 +42,10 @@ func pasteText(_ text: String, into app: NSRunningApplication? = nil) {
         return
     }
 
+    guard let target, NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+        return
+    }
     typeUnicode(text)
 }
 

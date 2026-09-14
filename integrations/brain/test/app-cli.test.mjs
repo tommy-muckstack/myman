@@ -96,3 +96,14 @@ test('discovery, receipts and explicit offline search route without hidden mutat
  await assert.rejects(plan(['library','search','--query','pricing','--root','/tmp/other']));
  const interrupted=await run(['note','create','--body','x'],{invoke:async()=>({ok:true,recovered:true,job:{id:'saved',state:'interrupted',error:{code:'APP_RESTARTED'}}})});assert.equal(interrupted.ok,false);assert.equal(interrupted.recovered,true);
 });
+
+test('workflow CLI preserves three-part routes, integer revisions and object regions', async () => {
+  const scroll = await plan(['capture','scroll','start','--region','{"x":10,"y":20,"width":500,"height":400}']);
+  assert.equal(scroll.name,'capture.scroll.start');
+  assert.deepEqual(scroll.args.region,{x:10,y:20,width:500,height:400});
+  const decision = await plan(['decision','create','--source-id','meeting-fixture','--expected-revision','3','--topic','Launch','--text','Launch Tuesday','--quote','We agreed to launch on Tuesday.']);
+  assert.equal(decision.args.expected_revision,3);
+  assert.equal((await plan(['workflow','context','--ids','["note-fixture","meeting-fixture"]'])).args.ids.length,2);
+  await assert.rejects(plan(['capture','scroll','start','--region','not-json']));
+  await assert.rejects(plan(['capture','scroll','stop','extra','--session-id','fixture']));
+});
