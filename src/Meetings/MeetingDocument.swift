@@ -182,6 +182,7 @@ struct MeetingDocumentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            MeetingLinkedNotesView(meetingID: meeting.id, database: database)
             if showSlides, !slidePaths.isEmpty { slideCarousel }
             if showTranscript {
                 transcriptEditor

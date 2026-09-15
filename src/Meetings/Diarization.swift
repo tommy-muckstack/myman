@@ -43,9 +43,16 @@ actor Diarization {
         let samples = WavWriter.readSamples(from: URL(fileURLWithPath: path))
         guard samples.count > 16000 else { return [] }
         do {
+            let profiles = (try? VoiceProfiles.all()) ?? []
+            let known = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.name) })
+            manager.speakerManager.reset()
+            manager.initializeKnownSpeakers(profiles.filter { $0.embedding.count == 256 }.map {
+                Speaker(id: $0.id, name: $0.name, currentEmbedding: $0.embedding, isPermanent: true)
+            })
             let result = try manager.performCompleteDiarization(samples, sampleRate: 16000)
             return result.segments.map {
-                (String($0.speakerId), Double($0.startTimeSeconds), Double($0.endTimeSeconds))
+                (known[String($0.speakerId)].map { "known:" + $0 } ?? String($0.speakerId),
+                 Double($0.startTimeSeconds), Double($0.endTimeSeconds))
             }
         } catch {
             NSLog("My Man [Diarize] failed: \(error)")

@@ -96,6 +96,7 @@ struct NoteDocumentView: View {
             .padding(.horizontal, MM.Document.margin)
             .padding(.top, MM.Layout.paddingLarge)
             .padding(.bottom, MM.Layout.spacing)
+            if let meetingID = note.meetingID { NoteMeetingLink(meetingID: meetingID) }
             RichMarkdownEditor(markdown: Binding(get: { body_ }, set: { text in
                 body_ = text
                 autosave.submit { try store.updateDocument(note, body: text) }

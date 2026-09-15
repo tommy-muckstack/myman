@@ -25,6 +25,7 @@ struct CountdownBar: View {
 /// for outcomes that deserve a glance, not a modal.
 @MainActor
 enum Toast {
+    enum Position { case topRight, bottomRight }
     private static var panel: FloatingPanel?
     private static var dismissTask: Task<Void, Never>?
 
@@ -34,7 +35,8 @@ enum Toast {
                      action: (() -> Void)? = nil,
                      secondaryLabel: String? = nil,
                      secondaryAction: (() -> Void)? = nil,
-                     duration: TimeInterval = 8) {
+                     duration: TimeInterval = 8,
+                     position: Position = .topRight) {
         dismiss()
         NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
             userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue])
@@ -75,7 +77,8 @@ enum Toast {
         if measured.width > 1, measured.height > 1 { size = measured }
         let visible = screen.visibleFrame
         toast.setFrame(
-            NSRect(x: visible.maxX - size.width - 24, y: visible.maxY - size.height - 24,
+            NSRect(x: visible.maxX - size.width - 24,
+                   y: position == .bottomRight ? visible.minY + 24 : visible.maxY - size.height - 24,
                    width: size.width, height: size.height),
             display: true
         )

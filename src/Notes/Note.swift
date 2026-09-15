@@ -9,6 +9,7 @@ struct Note: Identifiable, Equatable, Codable, FetchableRecord, PersistableRecor
     var body: String
     var createdAt: Date
     var updatedAt: Date
+    var meetingID: String? = nil
 
     init(body: String) {
         self.id = UUID().uuidString

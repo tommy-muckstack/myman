@@ -66,12 +66,14 @@ private struct TaskRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Image(systemName: "circle")
-                .font(.system(size: 13))
-                .foregroundStyle(MM.Colors.textTertiary)
-                .clickable()
-                .onTapGesture { TasksStore.shared.toggle(task) }
-                .help("Mark done")
+            Button { TasksStore.shared.toggle(task) } label: {
+                Image(systemName: "circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(MM.Colors.textTertiary)
+                    .clickable()
+            }
+            .buttonStyle(.plain)
+            .help("Mark done")
             VStack(alignment: .leading, spacing: 1) {
                 Text(task.title)
                     .font(MM.Fonts.body)
@@ -103,14 +105,18 @@ private struct TaskRow: View {
             }
             Spacer(minLength: 0)
             HStack(spacing: 4) {
-                IconView(icon: .open, size: 12, color: MM.Colors.textTertiary)
-                    .clickable()
-                    .onTapGesture { TaskComposerController.shared.show(editing: task) }
-                    .help("Edit task")
-                IconView(icon: .trash, size: 12, color: MM.Colors.textTertiary)
-                    .clickable()
-                    .onTapGesture { TasksStore.shared.delete(task) }
-                    .help("Delete task")
+                Button { TaskComposerController.shared.show(editing: task) } label: {
+                    IconView(icon: .open, size: 12, color: MM.Colors.textTertiary)
+                        .clickable()
+                }
+                .buttonStyle(.plain)
+                .help("Edit task")
+                Button { TasksStore.shared.delete(task) } label: {
+                    IconView(icon: .trash, size: 12, color: MM.Colors.textTertiary)
+                        .clickable()
+                }
+                .buttonStyle(.plain)
+                .help("Delete task")
             }
             .opacity(hovering ? 1 : 0)
         }
@@ -120,7 +126,8 @@ private struct TaskRow: View {
             RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
                 .fill(hovering ? MM.Colors.surface : .clear)
         )
-        .contentShape(Rectangle())
+        .clickable()
+        .onTapGesture { TaskComposerController.shared.show(editing: task) }
         .onHover { h in
             withAnimation(MM.Motion.gentle) { hovering = h }
         }
@@ -328,7 +335,7 @@ struct CalendarPanelView: View {
                                 .foregroundStyle(MM.Colors.accent)
                         }
                         .contentShape(Rectangle())
-                        .clickable(minSize: 22)
+                        .clickable()
                     }
                     .buttonStyle(.plain)
                     .help("Open this meeting's notes")
@@ -342,6 +349,7 @@ struct CalendarPanelView: View {
                         .padding(.vertical, 3)
                         .background(Capsule().fill(MM.Colors.background))
                         .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+                        .clickable()
                         .help("Prepare meeting brief")
                 }
             }
@@ -356,10 +364,9 @@ struct CalendarPanelView: View {
             RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
                 .fill(MM.Colors.surface)
         )
-        .contentShape(Rectangle())
+        .clickable()
         .onHover { isHovering in
             withAnimation(.easeInOut(duration: 0.14)) { hovering = isHovering }
-            isHovering ? NSCursor.pointingHand.set() : NSCursor.arrow.set()
         }
         .onTapGesture {
             openInGoogleCalendar(event)
