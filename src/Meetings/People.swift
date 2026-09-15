@@ -183,6 +183,8 @@ enum People {
             .sorted(by: { $0.startDate > $1.startDate })
             .first else { return [] }
         return (event.attendees ?? [])
+            // Rooms and equipment are invited too; they never speak.
+            .filter { $0.participantType == .person || $0.participantType == .unknown }
             .compactMap { participant in
                 let email = participant.url.absoluteString.hasPrefix("mailto:")
                     ? String(participant.url.absoluteString.dropFirst("mailto:".count))

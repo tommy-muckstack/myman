@@ -5,6 +5,41 @@ import NaturalLanguage
 enum MeetingVocabulary {
     struct Correction { let text: String; let corrections: [String] }
 
+    /// Product and tool names that speech recognizers reliably mangle
+    /// ("Amplitune", "Jupiter", "Snow flake"). Applied to meeting transcripts
+    /// only, through the same fuzzy restore dictation uses, which needs a
+    /// close spelling match — never a global word swap.
+    static let commonTerms: [String] = [
+        "Amplitude", "Mixpanel", "PostHog", "Datadog", "Snowflake", "Databricks", "BigQuery", "Redshift",
+        "Looker", "Tableau", "Jupyter", "Kubernetes", "Terraform", "Postgres", "GraphQL", "TypeScript",
+        "Salesforce", "HubSpot", "Zendesk", "Intercom", "Zapier", "Airtable", "Notion", "Figma", "GitHub",
+        "GitLab", "Jira", "Confluence", "Linear", "Asana", "Webflow", "Vercel", "Supabase", "Firebase",
+        "Shopify", "Stripe", "Segment", "Braze", "Iterable", "Marketo", "Anthropic", "Claude Code",
+        "OpenAI", "ChatGPT", "Copilot", "Gemini", "Cursor", "Windsurf", "Granola", "TestFlight", "Xcode",
+        "Sentry", "PagerDuty", "Grafana", "Prometheus", "Splunk", "Okta", "Auth0", "Twilio", "SendGrid",
+        "Metabase", "dbt", "Airflow", "Kafka", "Redis", "MongoDB", "DynamoDB", "Lambda", "Cloudflare",
+        "Netlify", "Heroku", "Docker", "Ansible", "Puppet", "Elasticsearch", "Algolia", "LaunchDarkly",
+        "Statsig", "Optimizely", "FullStory", "Hotjar", "Pendo", "Appcues", "WalkMe", "Gong", "Chorus",
+    ]
+
+    /// Capitalized words in a title that look like names, products or
+    /// companies — not the ordinary words around them.
+    static func properNouns(in title: String) -> [String] {
+        let stop: Set<String> = ["the", "and", "with", "for", "user", "research", "meeting", "call", "sync", "weekly",
+                                 "monthly", "daily", "standup", "review", "planning", "product", "marketing", "design",
+                                 "engineering", "sales", "team", "check", "interview", "intro", "demo", "kickoff", "office",
+                                 "hours", "discussion", "chat", "catch", "follow", "update", "session", "workshop", "prep"]
+        var seen = Set<String>()
+        var result: [String] = []
+        for token in title.split(whereSeparator: { $0.isWhitespace || "|-–—:/,()[]".contains($0) }) {
+            let word = String(token).trimmingCharacters(in: .punctuationCharacters)
+            guard word.count >= 3, word.first?.isUppercase == true, word.allSatisfy({ $0.isLetter || $0 == "'" }),
+                  !stop.contains(word.lowercased()), word != word.uppercased() || word.count <= 5 else { continue }
+            if seen.insert(word.lowercased()).inserted { result.append(word) }
+        }
+        return result
+    }
+
     /// Approved vocabulary is applied only to derived input. Never mutate the
     /// captured transcript. Explicit aliases are useful for a reviewed repair;
     /// ambiguous everyday words are not bundled as global substitutions.

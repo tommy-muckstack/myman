@@ -200,7 +200,9 @@ enum Brain {
         started: \(iso(meeting.startedAt))
         ended: \(meeting.endedAt.map(iso) ?? "")
         participants:
-        \(yamlList(participants))\(lowContent ? "\nlow_content: true" : "")
+        \(yamlList(participants))
+        calendar_invitees:
+        \(yamlList(meeting.participants.filter { !$0.isOwner && !$0.name.contains("@") }.map(\.name)))\(lowContent ? "\nlow_content: true" : "")
         ---
 
         # \(meeting.title)

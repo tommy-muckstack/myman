@@ -27,9 +27,42 @@ struct MeetingAnalysis: Codable, Sendable {
     var facts: [MeetingFact] = []
     var actions: [MeetingCommitment] = []
     var omittedPrivatePassages: Bool = false
+    /// Candidate notes dropped because their words were not readable
+    /// English — garbled recognition must never become a key point.
+    var unclearPassages: Int = 0
 }
 
 enum MeetingEvidence {
+    /// Readable text in the meeting's language. Recognition of a poor
+    /// passage yields stray non-Latin letters ("agnıs") or word salad that
+    /// no language model recognizes; promoting either into notes produces
+    /// confident nonsense. Short phrases pass on the character test alone.
+    static func legible(_ text: String, language: NLLanguage = .english) -> Bool {
+        let allowed = CharacterSet.letters.subtracting(nonLatinLetters)
+        for scalar in text.unicodeScalars where CharacterSet.letters.contains(scalar) {
+            // ASCII plus Latin-1 accents (Renée, Müller); Latin Extended (ı, ş, ł) is
+            // not English and marks a passage the recognizer could not hear.
+            guard allowed.contains(scalar), scalar.value < 0x0100 else { return false }
+        }
+        let words = MeetingSource.words(text)
+        guard words.count >= 6 else { return true }
+        let recognizer = NLLanguageRecognizer()
+        recognizer.languageConstraints = [language, .spanish, .french, .german, .portuguese, .italian, .dutch, .turkish]
+        recognizer.processString(text)
+        let hypotheses = recognizer.languageHypotheses(withMaximum: 3)
+        guard let best = hypotheses.max(by: { $0.value < $1.value }) else { return true }
+        return best.key == language && best.value >= 0.5
+    }
+
+    private static let nonLatinLetters: CharacterSet = {
+        var set = CharacterSet()
+        for range in [0x0370...0x03FF, 0x0400...0x052F, 0x0590...0x08FF, 0x0900...0x0DFF, 0x0E00...0x0E7F,
+                      0x1100...0x11FF, 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xAC00...0xD7AF] {
+            set.insert(charactersIn: Unicode.Scalar(range.lowerBound)!...Unicode.Scalar(range.upperBound)!)
+        }
+        return set
+    }()
+
     static func containsQuote(_ quote: String, in text: String) -> Bool {
         let value = MeetingSource.normalized(quote)
         return value.count >= 12 && MeetingSource.words(value).count >= 4
@@ -80,7 +113,8 @@ enum MeetingEvidence {
     }
 
     static func fact(_ candidate: MeetingFact, sources: [Int: MeetingSourceTurn]) -> MeetingFact? {
-        guard let source = source(for: candidate.quote, in: sources),
+        guard legible(candidate.text), legible(candidate.quote),
+              let source = source(for: candidate.quote, in: sources),
               candidate.text.count >= 12, candidate.text.count <= 650,
               groundedWording(candidate.text, in: source.speaker + " " + source.text) else { return nil }
         // Accept the model's natural tendency to start with the speaker,
@@ -100,7 +134,8 @@ enum MeetingEvidence {
     }
 
     static func commitment(_ candidate: MeetingCommitment, sources: [Int: MeetingSourceTurn]) -> MeetingCommitment? {
-        guard candidate.confidence >= 0.85, let source = source(for: candidate.quote, in: sources),
+        guard legible(candidate.quote), legible(candidate.task),
+              candidate.confidence >= 0.85, let source = source(for: candidate.quote, in: sources),
               !source.timestamp.isEmpty, containsQuote(candidate.quote, in: source.text),
               !MeetingSource.genericSpeaker(candidate.owner),
               isTaskTitle(candidate.task), groundedWording(candidate.task, in: source.text) else { return nil }
@@ -148,6 +183,7 @@ enum GroundedMeetingNotes {
         }
         let sources = Dictionary(uniqueKeysWithValues: prepared.map { ($0.id, $0) })
         var facts: [MeetingFact] = []; var actions: [MeetingCommitment] = []
+        var unclear = 0
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *), case .available = SystemLanguageModel.default.availability {
             let windows = MeetingSource.windows(prepared)
@@ -161,9 +197,11 @@ enum GroundedMeetingNotes {
                         let candidate = MeetingFact(sourceID: $0.sourceID, text: $0.text, quote: $0.quote, importance: $0.importance)
                         if let fact = MeetingEvidence.fact(candidate, sources: sources) { return fact }
                         // Keep the model-selected evidence if its paraphrase is
-                        // unsupported. Never substitute an unrelated paragraph.
+                        // unsupported. Never substitute an unrelated paragraph,
+                        // and never quote a passage that is not readable.
                         guard let source = MeetingEvidence.source(for: $0.quote, in: sources),
                               (60...450).contains($0.quote.count) else { return nil }
+                        guard MeetingEvidence.legible($0.quote) else { unclear += 1; return nil }
                         return MeetingFact(sourceID: source.id, text: "“\($0.quote)”", quote: $0.quote, importance: 1)
                     }
                     if meeting.captureKind != .listening {
@@ -182,16 +220,20 @@ enum GroundedMeetingNotes {
         }
         #endif
         guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
-        if facts.isEmpty { facts = fallbackFacts(prepared) }
+        if facts.isEmpty {
+            let fallback = fallbackFacts(prepared)
+            facts = fallback.filter { MeetingEvidence.legible($0.quote) }
+            unclear += fallback.count - facts.count
+        }
         var seen = Set<String>()
         actions = actions.sorted { $0.confidence > $1.confidence }.filter { seen.insert($0.key).inserted }
         actions = Array(actions.prefix(6)).sorted { $0.sourceID < $1.sourceID }
         let selected = selectFacts(facts)
-        let markdown = render(facts: selected, actions: actions, sources: sources, meeting: meeting, privateOmitted: omitted)
+        let markdown = render(facts: selected, actions: actions, sources: sources, meeting: meeting, privateOmitted: omitted, unclear: unclear)
         let audit = publicSource.flatMap { MeetingVocabulary.correct($0.text, terms: DictationCleanup.userVocabulary(), aliases: corrections).corrections }
         let suffix = Array(Set(audit)).sorted().map { "<!-- corrected: \($0.replacingOccurrences(of: "--", with: "—")) -->" }.joined(separator: "\n")
         return MeetingAnalysis(markdown: markdown + (suffix.isEmpty ? "" : "\n\n" + suffix), facts: selected,
-                               actions: actions, omittedPrivatePassages: omitted)
+                               actions: actions, omittedPrivatePassages: omitted, unclearPassages: unclear)
     }
 
     static func selectFacts(_ facts: [MeetingFact]) -> [MeetingFact] {
@@ -227,7 +269,7 @@ enum GroundedMeetingNotes {
     }
 
     static func render(facts: [MeetingFact], actions: [MeetingCommitment], sources: [Int: MeetingSourceTurn],
-                       meeting: Meeting, privateOmitted: Bool) -> String {
+                       meeting: Meeting, privateOmitted: Bool, unclear: Int = 0) -> String {
         func line(_ fact: MeetingFact) -> String {
             guard let source = sources[fact.sourceID] else { return "" }
             return "- \(source.speaker): \(fact.text) \(source.timestamp.isEmpty ? "(time unavailable)" : "[" + source.timestamp + "]")"
@@ -249,6 +291,7 @@ enum GroundedMeetingNotes {
             }
         }
         if privateOmitted { output += "\n\n*Private passages omitted from these notes.*" }
+        if unclear > 0 { output += "\n\n*\(unclear) unclear passage\(unclear == 1 ? " was" : "s were") left out of these notes. The transcript has the original words.*" }
         return output
     }
 

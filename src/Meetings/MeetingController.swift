@@ -124,6 +124,10 @@ final class MeetingController: ObservableObject {
 
     private let tap = SystemAudioTap()
     private var micSession: UUID?
+    /// Seconds the microphone file starts after the system-audio file. The
+    /// tap is running before the mic engine finishes starting, so mic
+    /// timestamps sit this far behind the remote track unless corrected.
+    private var micStartLag = 0.0
     private var micDrainTimer: Timer?
     private var systemWriter: WavWriter?
     private var micWriter: WavWriter?
@@ -258,7 +262,7 @@ final class MeetingController: ObservableObject {
         let reader = LiveMeetingTranscriptReader(
             micURL: micWriter?.url, systemURL: systemWriter?.url,
             singleRemote: sessionAttendeeNames.fromAttendees && Set(sessionAttendeeNames.names).count == 1,
-            startedAt: meeting.startedAt)
+            startedAt: meeting.startedAt, micLag: micStartLag)
         liveTranscript.start(reader: reader, ownerName: meeting.resolvedOwner, candidates: sessionAttendeeNames)
     }
 
@@ -433,8 +437,10 @@ final class MeetingController: ObservableObject {
             }
         }
         do {
+            let tapStarted = Date()
             try tap.start()
             micSession = try await AudioCapture.shared.begin(.raw)
+            micStartLag = min(10, max(0, Date().timeIntervalSince(tapStarted)))
         } catch {
             NSLog("My Man [Meeting] start failed: \(error)")
             tap.stop()
@@ -816,7 +822,7 @@ final class MeetingController: ObservableObject {
         let job = TranscriptionJob(
             record: finished,
             micPath: micURL?.path, systemPath: systemURL?.path,
-            candidates: sessionAttendeeNames, attendees: pendingAttendees)
+            candidates: sessionAttendeeNames, attendees: pendingAttendees, micLag: micStartLag)
         meeting = nil
         pendingAttendees = []
         sessionAttendeeNames = .none
@@ -833,6 +839,7 @@ final class MeetingController: ObservableObject {
         let systemPath: String?
         let candidates: SpeakerCandidates
         let attendees: [(name: String, email: String?)]
+        var micLag: Double = 0
     }
 
     func enqueueTranscription(_ job: TranscriptionJob) {
@@ -1077,14 +1084,16 @@ final class MeetingController: ObservableObject {
     /// 60s chunk transcriptions with their start offsets — the coarse
     /// fallback shape when turn detection fails on a track.
     nonisolated private static func transcribeWavChunks(atPath path: String, service: TranscriptionService)
-        async -> [(start: Double, text: String)] {
+        async -> [(start: Double, end: Double, text: String)] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
         let headerBytes: UInt64 = 44
-        let seconds = chunkSeconds(service)
+        // Short chunks bound how far a line can sit from its real moment;
+        // a 60s chunk stamped at its start put answers before questions.
+        let seconds = min(20, chunkSeconds(service))
         let chunkBytes = 16000 * seconds * 2 // one chunk of mono Int16
         var offset = headerBytes
-        var parts: [(start: Double, text: String)] = []
+        var parts: [(start: Double, end: Double, text: String)] = []
         while true {
             try? handle.seek(toOffset: offset)
             guard let data = try? handle.read(upToCount: chunkBytes), !data.isEmpty else { break }
@@ -1104,13 +1113,37 @@ final class MeetingController: ObservableObject {
                     consumedBytes = cut * 2
                 }
             }
-            let start = Double(offset - headerBytes) / 32000
+            let chunkStart = Double(offset - headerBytes) / 32000
             let text = await service.transcribe(samples)
-            if !text.isEmpty { parts.append((start, text)) }
+            if !text.isEmpty {
+                // Stamp where the speech is, not where the chunk begins.
+                let bounds = audibleBounds(samples) ?? (0, Double(samples.count) / 16000)
+                parts.append((chunkStart + bounds.start, chunkStart + bounds.end, text))
+            }
             if isFinal { break }
             offset += UInt64(consumedBytes)
         }
         return parts
+    }
+
+    /// First and last audible instants of a clip (0.1s frames against the
+    /// clip's own peak), so a chunk's words are dated to its speech.
+    nonisolated static func audibleBounds(_ samples: [Float]) -> (start: Double, end: Double)? {
+        let frame = 1600
+        guard samples.count >= frame else { return nil }
+        var energies: [Float] = []
+        var index = 0
+        while index + frame <= samples.count {
+            var sum: Float = 0
+            for value in samples[index..<(index + frame)] { sum += value * value }
+            energies.append(sqrt(sum / Float(frame)))
+            index += frame
+        }
+        guard let peak = energies.max(), peak > 0.0015 else { return nil }
+        let threshold = max(0.002, peak * 0.2)
+        guard let first = energies.firstIndex(where: { $0 >= threshold }),
+              let last = energies.lastIndex(where: { $0 >= threshold }) else { return nil }
+        return (Double(first) * 0.1, Double(last + 1) * 0.1)
     }
 
     /// Seconds of audio in a 16k mono Int16 WAV.
@@ -1136,22 +1169,30 @@ final class MeetingController: ObservableObject {
         // one quiet side of a call still produces well above 2).
         let sparse = duration > 120 && covered / duration < 2
         guard turns.isEmpty || sparse else { return turns }
+        // Before giving up on turn timing, listen harder: a quiet track
+        // usually still has turns, just under the normal gate.
+        let quiet = await transcribeTurns(atPath: path, speaker: speaker,
+                                          segments: speechSegments(atPath: path, sensitive: true), service: service)
+        let quietChars = quiet.reduce(0) { $0 + $1.text.count }
+        if quietChars > Int(covered) * 2, quietChars > 40, Double(quietChars) / max(duration, 1) >= 2 {
+            Analytics.track("meeting_track_sensitive_gate", ["speaker": speaker, "chars": quietChars])
+            return quiet
+        }
         let chunks = await transcribeWavChunks(atPath: path, service: service)
         let chunkChars = chunks.reduce(0) { $0 + $1.text.count }
         guard chunkChars > Int(covered) * 2, chunkChars > 40 else { return turns }
         Analytics.track("meeting_track_fallback",
                         ["speaker": speaker, "turn_chars": Int(covered),
                          "chunk_chars": chunkChars, "duration_s": Int(duration)])
-        let chunkLength = Double(chunkSeconds(service))
         return chunks.map {
-            MeetingTurn(start: $0.start, end: $0.start + chunkLength, speaker: speaker, text: $0.text)
+            MeetingTurn(start: $0.start, end: $0.end, speaker: speaker, text: $0.text)
         }
     }
 
     /// Speech turns in a 16k WAV via energy gating, streamed — frame RMS at
     /// 0.1s, threshold adaptive over the track's noise floor, 1s of silence
     /// closes a turn. Memory cost: one float per frame.
-    nonisolated private static func speechSegments(atPath path: String) -> [(start: Double, end: Double)] {
+    nonisolated private static func speechSegments(atPath path: String, sensitive: Bool = false) -> [(start: Double, end: Double)] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
         try? handle.seek(toOffset: 44)
@@ -1180,7 +1221,10 @@ final class MeetingController: ObservableObject {
         // diffing a real 44-min call against two other recorders). The gate
         // must sit between this track's noise floor and its own peak.
         guard peak > 0.0015 else { return [] } // genuinely silent track
-        let threshold = max(0.002, min(max(0.004, noiseFloor * 2.5), peak * 0.25))
+        let threshold = sensitive
+            ? max(0.0015, min(max(0.0025, noiseFloor * 1.5), peak * 0.12))
+            : max(0.002, min(max(0.004, noiseFloor * 2.5), peak * 0.25))
+        let closeAfterFrames = sensitive ? 15 : 10
         var segments: [(Double, Double)] = []
         var current: (first: Int, last: Int)?
         var silentFrames = 0
@@ -1190,7 +1234,7 @@ final class MeetingController: ObservableObject {
                 if current == nil { current = (i, i) } else { current?.last = i }
             } else if current != nil {
                 silentFrames += 1
-                if silentFrames >= 10 {
+                if silentFrames >= closeAfterFrames {
                     if let c = current {
                         segments.append((Double(c.first) * 0.1, Double(c.last + 1) * 0.1))
                     }
@@ -1286,6 +1330,8 @@ final class MeetingController: ObservableObject {
                                       overlapDiarization: Bool = true,
                                       corrections: [LiveTranscriptCorrection] = [],
                                       wallDuration: Double? = nil,
+                                      micLag: Double = 0,
+                                      title: String = "",
                                       service: TranscriptionService = .shared) async -> MeetingTranscriptResult {
         // A track with more audio than the meeting lasted was resampled at
         // the wrong rate after a device swap. Put it back on the clock, per
@@ -1310,7 +1356,10 @@ final class MeetingController: ObservableObject {
         async let echo = AudioEchoEvidence.analyze(micPath: micPath, systemPath: systemPath)
         var turns: [MeetingTurn] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
+            // The mic file starts once its engine is up; the tap was already
+            // rolling. Put the owner's words back on the shared timeline.
             turns += onClock(await turnsWithFallback(atPath: micPath, speaker: Self.ownerLabel, service: service), micScale)
+                .map { MeetingTurn(start: $0.start + micLag, end: $0.end + micLag, speaker: $0.speaker, text: $0.text) }
         }
         if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
             var sysTurns: [MeetingTurn]
@@ -1332,7 +1381,7 @@ final class MeetingController: ObservableObject {
                 let voices = collapsePhantomSpeakers(in: segments)
                 if Set(voices.map(\.speaker)).count >= 2 {
                     sysTurns = []
-                    for interval in Self.speakerIntervals(speech: speechSegments(atPath: systemPath), voices: voices) {
+                    for interval in Self.speakerIntervals(speech: speechForDiarized(path: systemPath, voices: voices), voices: voices) {
                         sysTurns += await transcribeTurns(atPath: systemPath, speaker: interval.speaker,
                                                           segments: [(interval.start, interval.end)], service: service)
                     }
@@ -1350,6 +1399,14 @@ final class MeetingController: ObservableObject {
             // resolves by which one finishes first.
             turns.sort { ($0.start, $0.end) < ($1.start, $1.end) }
             let original = MeetingSource.render(turns)
+            // Restore known spellings AFTER the raw record is kept: the
+            // original transcript stays exactly what the recognizer heard.
+            let terms = vocabularyTerms(candidates: candidates, title: title)
+            turns = turns.map { turn in
+                var fixed = turn
+                fixed.text = DictationCleanup.applyVocabulary(turn.text, terms: terms)
+                return fixed
+            }
             let cleaned = MeetingChannelDedupe.clean(mic: turns.filter { $0.speaker == Self.ownerLabel },
                                                     system: turns.filter { $0.speaker != Self.ownerLabel }, echo: await echo)
             turns = (cleaned.mic + cleaned.system).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
@@ -1411,6 +1468,24 @@ final class MeetingController: ObservableObject {
         return await Diarization.shared.speakerSegments(forWavAtPath: path)
     }
 
+    /// The energy gate decides what gets recognized; the speaker model has
+    /// its own voice activity detection. When the gate hears far less than
+    /// the voices say was spoken (a quiet remote track), the voices are the
+    /// better map of where speech is — dropping to whole-track chunks would
+    /// lose both timing and speaker boundaries.
+    nonisolated static func speechForDiarized(path: String, voices: [(speaker: String, start: Double, end: Double)])
+        -> [(start: Double, end: Double)] {
+        let gated = speechSegments(atPath: path)
+        let gatedTotal = gated.reduce(0) { $0 + ($1.end - $1.start) }
+        let voiced = mergeSegments(voices.map { ($0.start, $0.end) }.sorted { $0.0 < $1.0 })
+        let voicedTotal = voiced.reduce(0) { $0 + ($1.end - $1.start) }
+        guard voicedTotal > 30, gatedTotal < voicedTotal * 0.5 else { return gated }
+        let quiet = speechSegments(atPath: path, sensitive: true)
+        let quietTotal = quiet.reduce(0) { $0 + ($1.end - $1.start) }
+        Analytics.track("meeting_remote_gate_sparse", ["gated_s": Int(gatedTotal), "voiced_s": Int(voicedTotal), "quiet_s": Int(quietTotal)])
+        return quietTotal >= voicedTotal * 0.5 ? quiet : voiced
+    }
+
     /// Split audio BEFORE recognition when the remote stream has multiple
     /// voices. A majority-overlap label on a long mixed turn attributes the
     /// host's question to the guest. Overlapping voices stay visibly uncertain.
@@ -1440,12 +1515,17 @@ final class MeetingController: ObservableObject {
     /// names. ASR mangles recurring proper nouns the same few ways every
     /// meeting ("Sneehith", "stat sig"); the restore pass puts the canonical
     /// spelling back without asking a model to rewrite anything.
-    nonisolated static func vocabularyTerms(candidates: SpeakerCandidates) -> [String] {
+    nonisolated static func vocabularyTerms(candidates: SpeakerCandidates, title: String = "") -> [String] {
         var terms = DictationCleanup.vocabulary()
-        for name in candidates.names
-        where !terms.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-            terms.append(name)
+        func add(_ term: String) {
+            guard term.count >= 3, !terms.contains(where: { $0.caseInsensitiveCompare(term) == .orderedSame }) else { return }
+            terms.append(term)
         }
+        candidates.names.forEach(add)
+        // Proper nouns in the meeting's own name: a company or product the
+        // recognizer has never heard of is usually written right there.
+        MeetingVocabulary.properNouns(in: title).forEach(add)
+        MeetingVocabulary.commonTerms.forEach(add)
         return terms
     }
 
@@ -1488,8 +1568,13 @@ final class MeetingController: ObservableObject {
         if substantial.count >= 3 {
             phantoms = Set(total.filter { $0.key != dominant.key && $0.value < 8 }.keys)
         } else {
+            // Two voices on the remote stream: the second is only an artefact
+            // when it is BOTH a small share and short. A colleague who asks a
+            // few questions in a 20-minute interview holds under a tenth of
+            // the lead voice yet is very much a person — folding them put the
+            // interviewer's questions in the interviewee's mouth.
             phantoms = Set(total.filter { $0.key != dominant.key &&
-                ($0.value < dominant.value * 0.10 || $0.value < 8) }.keys)
+                ($0.value < 8 || ($0.value < dominant.value * 0.05 && $0.value < 30)) }.keys)
         }
         guard !phantoms.isEmpty else { return segments }
         Analytics.track("meeting_phantom_speaker_collapsed", ["count": phantoms.count])
