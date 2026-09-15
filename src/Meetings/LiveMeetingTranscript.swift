@@ -35,13 +35,16 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
     private var speakerNames: [String: String] = [:]
     private var unknownSpeakerCount = 0
 
+    private let micLag: Double
+
     init(micURL: URL?, systemURL: URL?, singleRemote: Bool, profileDatabase: DatabaseQueue? = nil,
-         startedAt: Date? = nil) {
+         startedAt: Date? = nil, micLag: Double = 0) {
         self.micURL = micURL
         self.systemURL = systemURL
         self.singleRemote = singleRemote
         self.profileDatabase = profileDatabase
         self.startedAt = startedAt
+        self.micLag = micLag
     }
 
     /// A track cannot legitimately hold more audio than time has passed.
@@ -61,8 +64,9 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
             Analytics.track("live_transcript_time_drift",
                             ["track": track, "file_s": Int(fileSeconds), "wall_s": Int(wall ?? 0)])
         }
-        guard scale < 1 else { return turns }
-        return turns.map { MeetingTurn(start: $0.start * scale, end: $0.end * scale, speaker: $0.speaker, text: $0.text) }
+        let lag = track == "mic" ? micLag : 0
+        guard scale < 1 || lag > 0 else { return turns }
+        return turns.map { MeetingTurn(start: $0.start * scale + lag, end: $0.end * scale + lag, speaker: $0.speaker, text: $0.text) }
     }
 
     func prepare() async throws {

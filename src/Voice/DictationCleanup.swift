@@ -179,7 +179,11 @@ enum DictationCleanup {
                     // ordinary prose safe. A single-edit substitution is safe
                     // even when that first letter is wrong (Luxstack →
                     // MuckStack; Chetana → Chethana).
-                    let fuzzy = term.key.count >= 6 && (
+                    // A fuzzy repair may only span as many words as the term
+                    // itself: "Amplitune C" is one mangled word plus a real
+                    // one, not a two-word spelling of Amplitude.
+                    let termWords = term.canonical.split(whereSeparator: \.isWhitespace).count
+                    let fuzzy = term.key.count >= 6 && windowSize == termWords && (
                         (key.first == term.key.first && distance <= 2)
                         || (abs(key.count - term.key.count) <= 1 && distance <= 1)
                     )
