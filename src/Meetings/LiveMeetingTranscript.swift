@@ -22,18 +22,47 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
     private let systemURL: URL?
     private let singleRemote: Bool
     private let profileDatabase: DatabaseQueue?
+    private let startedAt: Date?
     private var micOffset = 0
     private var systemOffset = 0
+    /// Seconds of real time per second of file audio, per track. 1 unless a
+    /// track has more audio than the clock allows (see `wallClockScale`).
+    private var micScale = 1.0
+    private var systemScale = 1.0
+    private var driftReported: Set<String> = []
     private var asr: AsrManager?
     private var diarizer: DiarizerManager?
     private var speakerNames: [String: String] = [:]
     private var unknownSpeakerCount = 0
 
-    init(micURL: URL?, systemURL: URL?, singleRemote: Bool, profileDatabase: DatabaseQueue? = nil) {
+    init(micURL: URL?, systemURL: URL?, singleRemote: Bool, profileDatabase: DatabaseQueue? = nil,
+         startedAt: Date? = nil) {
         self.micURL = micURL
         self.systemURL = systemURL
         self.singleRemote = singleRemote
         self.profileDatabase = profileDatabase
+        self.startedAt = startedAt
+    }
+
+    /// A track cannot legitimately hold more audio than time has passed.
+    /// When it does (a device swap resampled at the wrong rate), stretch its
+    /// timeline onto the clock so no line is ever dated in the future and
+    /// both tracks still interleave in order. Lag is normal and left alone.
+    static func wallClockScale(fileSeconds: Double, wallSeconds: Double?) -> Double {
+        guard let wallSeconds, wallSeconds > 0, fileSeconds > wallSeconds + 1 else { return 1 }
+        return wallSeconds / fileSeconds
+    }
+
+    private func align(_ turns: [MeetingTurn], track: String, fileSeconds: Double) -> [MeetingTurn] {
+        let wall = startedAt.map { Date().timeIntervalSince($0) }
+        let scale = Self.wallClockScale(fileSeconds: fileSeconds, wallSeconds: wall)
+        if track == "mic" { micScale = scale } else { systemScale = scale }
+        if scale < 1, driftReported.insert(track).inserted {
+            Analytics.track("live_transcript_time_drift",
+                            ["track": track, "file_s": Int(fileSeconds), "wall_s": Int(wall ?? 0)])
+        }
+        guard scale < 1 else { return turns }
+        return turns.map { MeetingTurn(start: $0.start * scale, end: $0.end * scale, speaker: $0.speaker, text: $0.text) }
     }
 
     func prepare() async throws {
@@ -66,6 +95,7 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
         if let micURL, let chunk = try Self.readChunk(at: micURL, offset: micOffset) {
             mic = try await decode(chunk, speaker: MeetingController.ownerLabel)
             micOffset += chunk.samples.count
+            mic = align(mic, track: "mic", fileSeconds: Double(micOffset) / 16000)
         }
         try Task.checkCancellation()
         if let systemURL, let chunk = try Self.readChunk(at: systemURL, offset: systemOffset) {
@@ -93,6 +123,7 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
                 remote = try await decode(chunk, speaker: "Speaker unclear")
             }
             systemOffset += chunk.samples.count
+            remote = align(remote, track: "system", fileSeconds: Double(systemOffset) / 16000)
         }
         // Suppress microphone copies of the remote speech using the same
         // conservative textual evidence as the final transcript.
@@ -106,6 +137,8 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
     }
 
     func rememberVoice(name: String, start: Double, end: Double) async throws {
+        // Rows carry clock time; the WAV is addressed in file time.
+        let start = start / systemScale, end = end / systemScale
         guard let systemURL, end - start >= 2 else { throw CocoaError(.validationMissingMandatoryProperty) }
         if diarizer == nil {
             let models = try await DiarizerModels.downloadIfNeeded()
@@ -188,12 +221,18 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
 @MainActor
 final class LiveMeetingTranscript: ObservableObject {
     enum Status: Equatable { case waiting, preparing, live, unavailable }
+    /// One block per run of speech: the speaker, when they STARTED, and
+    /// everything they said until someone else spoke. `turnIDs` lists the
+    /// machine turns folded into the block, first one giving the row its id.
     struct Row: Identifiable, Equatable {
         let id: String
         let speaker: String
         let timestamp: String
         let text: String
         var suggestedName: String? = nil
+        var turnIDs: [String] = []
+        /// Names read off the call window, offered as one-tap choices.
+        var callParticipants: [String] = []
     }
     @Published private(set) var rows: [Row] = []
     @Published private(set) var status: Status = .waiting
@@ -202,10 +241,17 @@ final class LiveMeetingTranscript: ObservableObject {
     var onEditsChanged: ([LiveTranscriptCorrection]) -> Void = { _ in }
     var onTextCorrected: (String) -> Void = { _ in }
     private var turns: [MeetingTurn] = []
+    /// Human text, keyed by the row (group) id it replaced.
     private var correctedText: [String: String] = [:]
+    /// Where a corrected group's audio ends — the correction owns the whole
+    /// interval, not just the first machine turn.
+    private var correctedEnd: [String: Double] = [:]
+    /// Machine turns whose words a group correction already replaced.
+    private var absorbed: [String: String] = [:]
     private var confirmedNames: [String: String] = [:]
     private var ownerName = ""
     private var candidates = SpeakerCandidates.none
+    private(set) var callParticipants: [String] = []
     private var reader: (any LiveMeetingTranscriptReading)?
     private var learningTask: Task<Void, Never>?
     private var task: Task<Void, Never>?
@@ -230,8 +276,6 @@ final class LiveMeetingTranscript: ObservableObject {
 
     private func resume(reader: any LiveMeetingTranscriptReading) {
         let generation = self.generation
-        let ownerName = self.ownerName
-        let candidates = self.candidates
         status = .preparing
         task = Task { [weak self] in
             do {
@@ -242,8 +286,10 @@ final class LiveMeetingTranscript: ObservableObject {
                 while !Task.isCancelled, self?.generation == generation {
                     let next = try await reader.next()
                     try Task.checkCancellation()
-                    guard self?.generation == generation else { return }
-                    self?.append(next, ownerName: ownerName, candidates: candidates)
+                    guard let self, self.generation == generation else { return }
+                    // Names can arrive mid-meeting (calendar refresh, the
+                    // call window): always label with the latest evidence.
+                    self.append(next, ownerName: self.ownerName, candidates: self.candidates)
                     try await Task.sleep(for: .seconds(1))
                 }
             } catch is CancellationError {
@@ -265,10 +311,30 @@ final class LiveMeetingTranscript: ObservableObject {
         generation = UUID()
         turns = []
         correctedText = [:]
+        correctedEnd = [:]
+        absorbed = [:]
         confirmedNames = [:]
+        callParticipants = []
         editingRowID = nil
         rows = []
         status = .waiting
+    }
+
+    /// New speaker evidence for a meeting already in progress.
+    func updateCandidates(_ candidates: SpeakerCandidates) {
+        guard self.candidates != candidates else { return }
+        self.candidates = candidates
+        rebuildRows()
+    }
+
+    /// Names visible on the call window. They never label a line on their
+    /// own; they become one-tap choices and a "Possibly" hint when only one
+    /// other person is on the call.
+    func updateCallParticipants(_ names: [String]) {
+        let cleaned = names.filter { !$0.isEmpty && !MeetingSource.genericSpeaker($0) }
+        guard callParticipants != cleaned else { return }
+        callParticipants = cleaned
+        rebuildRows()
     }
 
     func append(_ batch: [MeetingTurn], ownerName: String, candidates: SpeakerCandidates) {
@@ -286,36 +352,60 @@ final class LiveMeetingTranscript: ObservableObject {
     var corrections: [LiveTranscriptCorrection] {
         turns.compactMap { turn in
             let id = rowID(turn)
+            // A group correction already covers this turn's interval.
+            if absorbed[id] != nil { return nil }
             let name = confirmedNames[turn.speaker == "Speaker unclear" ? id : turn.speaker]
             guard correctedText[id] != nil || name != nil else { return nil }
-            return LiveTranscriptCorrection(id: id, sourceSpeaker: turn.speaker, start: turn.start, end: turn.end,
+            return LiveTranscriptCorrection(id: id, sourceSpeaker: turn.speaker, start: turn.start,
+                                            end: correctedEnd[id] ?? turn.end,
                                             text: correctedText[id], speakerName: name)
         }
     }
 
+    /// The machine turns shown as one block, first one first.
+    private func groupTurns(rowID: String) -> [MeetingTurn] {
+        let ids = rows.first { $0.id == rowID }?.turnIDs ?? [rowID]
+        let byID = Dictionary(turns.map { (self.rowID($0), $0) }, uniquingKeysWith: { first, _ in first })
+        return ids.compactMap { byID[$0] }
+    }
+
     func edit(rowID: String, text: String, speakerName: String) {
-        guard let turn = turns.first(where: { self.rowID($0) == rowID }) else { return }
+        let group = groupTurns(rowID: rowID)
+        guard let first = group.first, let row = rows.first(where: { $0.id == rowID }) else { return }
         let name = speakerName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !name.isEmpty, !MeetingSource.genericSpeaker(name) {
-            confirmedNames[turn.speaker == "Speaker unclear" ? rowID : turn.speaker] = name
+            for turn in group {
+                confirmedNames[turn.speaker == "Speaker unclear" ? self.rowID(turn) : turn.speaker] = name
+            }
         }
-        if text != turn.text {
+        // Clear any earlier correction of this group before re-deriving it.
+        for (turnID, groupID) in absorbed where groupID == rowID { absorbed.removeValue(forKey: turnID) }
+        if text != row.text {
             correctedText[rowID] = text
+            correctedEnd[rowID] = group.map(\.end).max() ?? first.end
+            for turn in group.dropFirst() { absorbed[self.rowID(turn)] = rowID }
             onTextCorrected(text)
-        } else { correctedText.removeValue(forKey: rowID) }
+        } else {
+            correctedText.removeValue(forKey: rowID)
+            correctedEnd.removeValue(forKey: rowID)
+        }
         rebuildRows()
         onEditsChanged(corrections)
         editingRowID = nil
     }
 
-    func canRememberVoice(rowID: String) -> Bool {
-        guard let turn = turns.first(where: { self.rowID($0) == rowID }) else { return false }
-        return turn.speaker != MeetingController.ownerLabel && turn.speaker != "Speaker unclear" && turn.end - turn.start >= 2
+    /// The clearest stretch of one voice in a block: the longest turn, if it
+    /// is long enough to fingerprint.
+    private func voiceSample(rowID: String) -> MeetingTurn? {
+        groupTurns(rowID: rowID)
+            .filter { $0.speaker != MeetingController.ownerLabel && $0.speaker != "Speaker unclear" && $0.end - $0.start >= 2 }
+            .max { $0.end - $0.start < $1.end - $1.start }
     }
 
+    func canRememberVoice(rowID: String) -> Bool { voiceSample(rowID: rowID) != nil }
+
     func rememberVoice(rowID: String, name: String) {
-        guard let reader, canRememberVoice(rowID: rowID),
-              let turn = turns.first(where: { self.rowID($0) == rowID }) else { return }
+        guard let reader, let turn = voiceSample(rowID: rowID) else { return }
         learningTask?.cancel()
         let generation = self.generation
         voiceLearningMessage = "Remembering voice…"
@@ -334,15 +424,55 @@ final class LiveMeetingTranscript: ObservableObject {
 
     private func rebuildRows() {
         let named = MeetingController.nameSpeakers(in: turns, candidates: candidates)
-        let suggestions = MeetingSpeakerHints.suggestions(in: turns, names: candidates.names)
-        rows = zip(turns, named).map { raw, named in
+        var suggestions = MeetingSpeakerHints.suggestions(in: turns, names: candidates.names + callParticipants)
+        // Exactly one other person visible on the call and one unnamed
+        // remote voice: that is who it most likely is. Still only a hint.
+        let others = callParticipants.filter { !Self.sameName($0, ownerName) }
+        let remoteVoices = Set(turns.map(\.speaker).filter { $0.hasPrefix("Speaker ") && $0 != "Speaker unclear" })
+        if others.count == 1, remoteVoices.count == 1, let voice = remoteVoices.first, suggestions[voice] == nil {
+            suggestions[voice] = others[0]
+        }
+        var built: [Row] = []
+        for (raw, named) in zip(turns, named) {
             let id = rowID(raw)
+            if absorbed[id] != nil { continue }
             let confirmed = confirmedNames[raw.speaker == "Speaker unclear" ? id : raw.speaker]
             let speaker = confirmed ?? (raw.speaker == "Speaker unclear" ? raw.speaker : named.speaker == MeetingController.ownerLabel
                 ? (ownerName.isEmpty ? "You" : "\(ownerName) (you)") : named.speaker)
-            return Row(id: id, speaker: speaker,
-                       timestamp: MeetingSource.stamp(named.start), text: correctedText[id] ?? named.text,
-                       suggestedName: confirmed == nil && speaker.hasPrefix("Speaker ") ? suggestions[raw.speaker] : nil)
+            let suggested = confirmed == nil && speaker.hasPrefix("Speaker ") ? suggestions[raw.speaker] : nil
+            let corrected = correctedText[id]
+            // Same person still talking: keep their name and start time and
+            // let the words run on. Corrected blocks and uncertain audio
+            // stay their own rows so edits keep exact intervals.
+            if corrected == nil, let last = built.last, last.speaker == speaker, speaker != "Speaker unclear",
+               correctedText[last.id] == nil {
+                built[built.count - 1] = Row(id: last.id, speaker: speaker, timestamp: last.timestamp,
+                                             text: Self.join(last.text, named.text),
+                                             suggestedName: last.suggestedName ?? suggested,
+                                             turnIDs: last.turnIDs + [id], callParticipants: last.callParticipants)
+                continue
+            }
+            // A corrected block still owns the turns it replaced, so a later
+            // edit of the same block keeps the whole interval.
+            let members = [id] + turns.map(rowID).filter { absorbed[$0] == id }
+            built.append(Row(id: id, speaker: speaker, timestamp: MeetingSource.stamp(named.start),
+                             text: corrected ?? named.text, suggestedName: suggested, turnIDs: members,
+                             callParticipants: speaker == MeetingController.ownerLabel || speaker.hasSuffix("(you)") ? [] : others))
         }
+        rows = built
+    }
+
+    private static func join(_ lhs: String, _ rhs: String) -> String {
+        let left = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        let right = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        if left.isEmpty { return right }
+        if right.isEmpty { return left }
+        return left + " " + right
+    }
+
+    nonisolated static func sameName(_ a: String, _ b: String) -> Bool {
+        let x = a.lowercased().split(whereSeparator: \.isWhitespace), y = b.lowercased().split(whereSeparator: \.isWhitespace)
+        guard let xf = x.first, let yf = y.first else { return false }
+        return x == y || (xf == yf && (x.count == 1 || y.count == 1))
     }
 }

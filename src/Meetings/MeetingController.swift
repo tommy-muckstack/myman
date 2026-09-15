@@ -257,7 +257,8 @@ final class MeetingController: ObservableObject {
               micWriter != nil || systemWriter != nil else { return }
         let reader = LiveMeetingTranscriptReader(
             micURL: micWriter?.url, systemURL: systemWriter?.url,
-            singleRemote: sessionAttendeeNames.fromAttendees && Set(sessionAttendeeNames.names).count == 1)
+            singleRemote: sessionAttendeeNames.fromAttendees && Set(sessionAttendeeNames.names).count == 1,
+            startedAt: meeting.startedAt)
         liveTranscript.start(reader: reader, ownerName: meeting.resolvedOwner, candidates: sessionAttendeeNames)
     }
 
@@ -493,7 +494,7 @@ final class MeetingController: ObservableObject {
         stopConfirmationVisible = false
         if !provisional { startLiveTranscript() }
         applyPillFrame()
-        levels = Array(repeating: 0, count: 16)
+        levels = Array(repeating: 0, count: 64)
         lastAudibleAt = started
         lastRemoteAudibleAt = started
         endNudgeShown = false
@@ -665,10 +666,39 @@ final class MeetingController: ObservableObject {
         }
     }
 
+    private let participantScanner = CallParticipantScanner()
+
     private func captureSlide(meetingID: String) async {
-        guard case .recording = phase, slidePaths.count < 24 else { return }
+        guard case .recording = phase else { return }
+        guard let image = await captureCallWindow() else { return }
+        await scanCallParticipants(image)
+        guard slidePaths.count < 24 else { return }
+        keepSlideIfChanged(image, meetingID: meetingID)
+    }
+
+    /// Names on the call window are the best evidence of who is talking.
+    /// They become one-tap choices and hints; a name never lands on a line
+    /// without a person confirming it.
+    private func scanCallParticipants(_ image: CGImage) async {
+        let known = sessionAttendeeNames.names
+        let owner = meeting?.resolvedOwner ?? NSFullUserName()
+        let names = await participantScanner.ingest(image, owner: owner, knownNames: known)
+        guard case .recording = phase, !names.isEmpty, names != liveTranscript.callParticipants else { return }
+        liveTranscript.updateCallParticipants(names)
+        var merged = sessionAttendeeNames
+        for name in names where !merged.names.contains(where: { LiveMeetingTranscript.sameName($0, name) }) {
+            merged.names.append(name)
+        }
+        if merged != sessionAttendeeNames {
+            sessionAttendeeNames = merged
+            liveTranscript.updateCandidates(merged)
+            Analytics.track("meeting_call_names_seen", ["count": names.count])
+        }
+    }
+
+    private func captureCallWindow() async -> CGImage? {
         guard let content = try? await SCShareableContent
-            .excludingDesktopWindows(true, onScreenWindowsOnly: true) else { return }
+            .excludingDesktopWindows(true, onScreenWindowsOnly: true) else { return nil }
         let callBundles = Set(MeetingDetector.strongApps.keys)
             .union(MeetingDetector.browserBundles)
         let candidates = content.windows.filter { window in
@@ -678,7 +708,7 @@ final class MeetingController: ObservableObject {
         }
         guard let window = candidates.max(by: {
             $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
-        }) else { return }
+        }) else { return nil }
 
         let config = SCStreamConfiguration()
         // Cap by SCALE, never by independent width/height — mismatched caps
@@ -688,10 +718,12 @@ final class MeetingController: ObservableObject {
         config.width = max(2, Int(window.frame.width * scaleFactor))
         config.height = max(2, Int(window.frame.height * scaleFactor))
         config.showsCursor = false
-        guard let image = try? await SCScreenshotManager.captureImage(
+        return try? await SCScreenshotManager.captureImage(
             contentFilter: SCContentFilter(desktopIndependentWindow: window),
-            configuration: config) else { return }
+            configuration: config)
+    }
 
+    private func keepSlideIfChanged(_ image: CGImage, meetingID: String) {
         // Keep a frame only when the window meaningfully changed — slides
         // flipping, screen shares starting — never 90 copies of one face.
         let fingerprint = Self.fingerprint(image)
@@ -807,6 +839,7 @@ final class MeetingController: ObservableObject {
         transcriptionRevision += 1
         let revision = transcriptionRevision
         transcribingTitles.append(job.record.title)
+        MeetingTranscriptionStatus.shared.begin(meetingID: job.record.id, title: job.record.title)
         Analytics.track("meeting_transcription_queued",
                         ["queue_depth": transcribingTitles.count])
         let previous = transcriptionChain
@@ -819,6 +852,7 @@ final class MeetingController: ObservableObject {
             if let index = self.transcribingTitles.firstIndex(of: job.record.title) {
                 self.transcribingTitles.remove(at: index)
             }
+            MeetingTranscriptionStatus.shared.finish(meetingID: job.record.id)
             // Completion never touches the next meeting's recording widget.
             if self.transcriptionRevision == revision { self.transcriptionChain = nil }
         }
@@ -1251,7 +1285,23 @@ final class MeetingController: ObservableObject {
                                       candidates: SpeakerCandidates = .none,
                                       overlapDiarization: Bool = true,
                                       corrections: [LiveTranscriptCorrection] = [],
+                                      wallDuration: Double? = nil,
                                       service: TranscriptionService = .shared) async -> MeetingTranscriptResult {
+        // A track with more audio than the meeting lasted was resampled at
+        // the wrong rate after a device swap. Put it back on the clock, per
+        // track, before anything is ordered, matched, or stamped.
+        let micScale = LiveMeetingTranscriptReader.wallClockScale(
+            fileSeconds: micPath.map(wavDuration(atPath:)) ?? 0, wallSeconds: wallDuration)
+        let systemScale = LiveMeetingTranscriptReader.wallClockScale(
+            fileSeconds: systemPath.map(wavDuration(atPath:)) ?? 0, wallSeconds: wallDuration)
+        func onClock(_ turns: [MeetingTurn], _ scale: Double) -> [MeetingTurn] {
+            guard scale < 1 else { return turns }
+            return turns.map { MeetingTurn(start: $0.start * scale, end: $0.end * scale, speaker: $0.speaker, text: $0.text) }
+        }
+        if micScale < 1 || systemScale < 1 {
+            Analytics.track("meeting_transcript_time_drift",
+                            ["mic_scale": micScale, "system_scale": systemScale, "wall_s": Int(wallDuration ?? 0)])
+        }
         // The diarizer owns separate models/state. Start it while the ASR
         // processes the tracks, then join before assigning any speaker labels.
         // ASR slices themselves remain serial on the supplied speech engine.
@@ -1260,7 +1310,7 @@ final class MeetingController: ObservableObject {
         async let echo = AudioEchoEvidence.analyze(micPath: micPath, systemPath: systemPath)
         var turns: [MeetingTurn] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
-            turns += await turnsWithFallback(atPath: micPath, speaker: Self.ownerLabel, service: service)
+            turns += onClock(await turnsWithFallback(atPath: micPath, speaker: Self.ownerLabel, service: service), micScale)
         }
         if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
             var sysTurns: [MeetingTurn]
@@ -1293,7 +1343,7 @@ final class MeetingController: ObservableObject {
                     sysTurns = await turnsWithFallback(atPath: systemPath, speaker: speaker, service: service)
                 }
             }
-            turns += sysTurns
+            turns += onClock(sysTurns, systemScale)
         }
         if !turns.isEmpty {
             // Strictly chronological, and a turn that starts with another
@@ -1307,10 +1357,13 @@ final class MeetingController: ObservableObject {
             // is still available for matching the microphone and remote audio.
             if !corrections.isEmpty {
                 turns = await MeetingLiveEdits.apply(corrections, to: turns) { edge in
-                    let path = edge.speaker == Self.ownerLabel ? micPath : systemPath
+                    let isMic = edge.speaker == Self.ownerLabel
+                    let path = isMic ? micPath : systemPath
                     guard let path else { return [] }
-                    return await transcribeTurns(atPath: path, speaker: edge.speaker,
-                                                 segments: [(edge.start, edge.end)], service: service)
+                    // Edges are clock time; the WAV is addressed in file time.
+                    let scale = isMic ? micScale : systemScale
+                    return onClock(await transcribeTurns(atPath: path, speaker: edge.speaker,
+                                                         segments: [(edge.start / scale, edge.end / scale)], service: service), scale)
                 }
             }
             if cleaned.kind == .listening {
@@ -1974,18 +2027,17 @@ struct MeetingPillView: View {
         .frame(width: 320)
     }
 
+    /// Collapsed: a compact 16-bar pulse. Expanded: the bars run the width
+    /// of the header, stretching and folding back with the card. The pill
+    /// window animates its frame at the same pace, so both move together.
     private var waveform: some View {
-        HStack(spacing: 2) {
-            ForEach(Array(controller.levels.enumerated()), id: \.offset) { _, level in
-                Capsule()
-                    .fill(MM.Colors.accent)
-                    .frame(width: 2, height: 3 + CGFloat(min(1, level * 6)) * 12)
-            }
-        }
-        .animation(.linear(duration: 0.08), value: controller.levels)
-        // Fixed container: dancing bars must NEVER change the card's size —
-        // size changes resize the window, and that loop reads as flicker.
-        .frame(height: 18)
+        let expanded = controller.titleEditorVisible && !controller.isProvisional
+        return WaveformBars(levels: controller.levels)
+            .frame(maxWidth: expanded ? .infinity : WaveformBars.compactWidth, alignment: .leading)
+            // Fixed height: dancing bars must NEVER change the card's size —
+            // size changes resize the window, and that loop reads as flicker.
+            .frame(height: 18)
+            .animation(reduceMotion ? nil : MM.Motion.silky, value: expanded)
     }
 
     private var pillRow: some View {
@@ -2065,6 +2117,30 @@ struct MeetingPillView: View {
     private func elapsed(since start: Date) -> String {
         let seconds = max(0, Int(now.timeIntervalSince(start)))
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+/// Level history drawn newest-on-the-right, as many bars as the width holds.
+struct WaveformBars: View {
+    let levels: [Float]
+    static let barWidth: CGFloat = 2
+    static let gap: CGFloat = 2
+    static let compactWidth: CGFloat = 16 * (barWidth + gap) - gap
+
+    var body: some View {
+        GeometryReader { geo in
+            let count = max(1, Int((geo.size.width + Self.gap) / (Self.barWidth + Self.gap)))
+            let shown = Array(levels.suffix(count))
+            HStack(spacing: Self.gap) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, level in
+                    Capsule()
+                        .fill(MM.Colors.accent)
+                        .frame(width: Self.barWidth, height: 3 + CGFloat(min(1, level * 6)) * 12)
+                }
+            }
+            .animation(.linear(duration: 0.08), value: shown)
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
+        }
     }
 }
 

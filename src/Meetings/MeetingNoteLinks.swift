@@ -11,16 +11,30 @@ struct MeetingLinkedNotesView: View {
             if !notes.isEmpty {
                 VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
                     ForEach(notes) { note in
+                        // The note you took during the call, readable right
+                        // here; the button opens it for editing.
                         Button { NoteDocumentController.shared.open(note) } label: {
-                            HStack(spacing: MM.Layout.spacing / 2) {
-                                IconView(icon: .note, color: MM.Colors.textSecondary)
-                                Text("My note: \(note.title)").lineLimit(1)
+                            VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                                HStack(spacing: MM.Layout.spacing / 2) {
+                                    IconView(icon: .note, color: MM.Colors.textSecondary)
+                                    Text("My note").font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                                    Spacer()
+                                    Text("Open").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.accent)
+                                }
+                                Text(MarkdownRich.plainText(note.body))
+                                    .font(MM.Fonts.body)
+                                    .foregroundStyle(MM.Colors.textPrimary)
+                                    .lineLimit(8)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .font(MM.Fonts.secondary)
-                            .foregroundStyle(MM.Colors.textPrimary)
+                            .padding(MM.Layout.padding)
+                            .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
+                            .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall).strokeBorder(MM.Colors.border, lineWidth: 1))
                             .clickable()
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("My note: \(note.title)")
                     }
                 }
                 .padding(.horizontal, MM.Document.margin)
