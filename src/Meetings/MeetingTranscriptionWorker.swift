@@ -11,7 +11,8 @@ actor MeetingTranscriptionWorker {
         timer.finish("speech_model_ready")
         let result = await MeetingController.buildTranscriptResult(
             micPath: job.micPath, systemPath: job.systemPath,
-            candidates: job.candidates, corrections: job.record.liveCorrections, service: service)
+            candidates: job.candidates, corrections: job.record.liveCorrections,
+            wallDuration: job.record.endedAt.map { $0.timeIntervalSince(job.record.startedAt) }, service: service)
         Analytics.track("meeting_transcribed", ["transcript_chars": result.transcript.count,
                                                 "engine": service.kind.rawValue])
         return result

@@ -96,6 +96,83 @@ final class LiveMeetingTranscriptTests: XCTestCase {
         XCTAssertTrue(transcript.rows.isEmpty)
     }
 
+    @MainActor func testOneSpeakerTalkingThroughPausesIsOneBlock() {
+        let transcript = LiveMeetingTranscript()
+        let jamie = SpeakerCandidates(names: ["Jamie"], fromAttendees: true)
+        transcript.append([
+            MeetingTurn(start: 0, end: 4, speaker: "You", text: "We also call Amplitude C P."),
+            MeetingTurn(start: 9, end: 14, speaker: "You", text: "our internal"),
+            MeetingTurn(start: 30, end: 34, speaker: "You", text: "Jupiter container."),
+            MeetingTurn(start: 36, end: 40, speaker: "Speaker 2", text: "I like it."),
+            MeetingTurn(start: 44, end: 47, speaker: "You", text: "Great."),
+        ], ownerName: "Alex", candidates: jamie)
+        XCTAssertEqual(transcript.rows.map(\.speaker), ["Alex (you)", "Jamie", "Alex (you)"])
+        XCTAssertEqual(transcript.rows.map(\.timestamp), ["0:00", "0:36", "0:44"])
+        XCTAssertEqual(transcript.rows[0].text, "We also call Amplitude C P. our internal Jupiter container.")
+        XCTAssertEqual(transcript.rows[0].turnIDs.count, 3)
+        // Later words from the same person join the open block, and the
+        // block's identity never changes under the reader.
+        let firstID = transcript.rows[2].id
+        transcript.append([MeetingTurn(start: 50, end: 53, speaker: "You", text: "Let's move on.")], ownerName: "Alex", candidates: jamie)
+        XCTAssertEqual(transcript.rows.count, 3)
+        XCTAssertEqual(transcript.rows[2].id, firstID)
+        XCTAssertEqual(transcript.rows[2].text, "Great. Let's move on.")
+        // Uncertain audio is never folded into a person's block.
+        transcript.append([MeetingTurn(start: 55, end: 57, speaker: "Speaker unclear", text: "Yeah."),
+                           MeetingTurn(start: 58, end: 60, speaker: "Speaker unclear", text: "Sure.")], ownerName: "Alex", candidates: jamie)
+        XCTAssertEqual(transcript.rows.map(\.speaker).suffix(2), ["Speaker unclear", "Speaker unclear"])
+    }
+
+    @MainActor func testEditingABlockOwnsItsWholeInterval() {
+        let transcript = LiveMeetingTranscript()
+        var edits: [LiveTranscriptCorrection] = []
+        transcript.onEditsChanged = { edits = $0 }
+        transcript.append([
+            MeetingTurn(start: 0, end: 4, speaker: "Speaker 2", text: "We can send the plan"),
+            MeetingTurn(start: 5, end: 9, speaker: "Speaker 2", text: "tomorrow."),
+            MeetingTurn(start: 12, end: 15, speaker: "You", text: "Thanks."),
+        ], ownerName: "Alex", candidates: .none)
+        XCTAssertEqual(transcript.rows.count, 2)
+        let block = transcript.rows[0]
+        transcript.edit(rowID: block.id, text: "We can send the plan on Tuesday.", speakerName: "Jamie")
+        XCTAssertEqual(edits.count, 1)
+        XCTAssertEqual(edits[0].start, 0); XCTAssertEqual(edits[0].end, 9)
+        XCTAssertEqual(edits[0].text, "We can send the plan on Tuesday.")
+        XCTAssertEqual(edits[0].speakerName, "Jamie")
+        XCTAssertEqual(transcript.rows.map(\.speaker), ["Jamie", "Alex (you)"])
+        XCTAssertEqual(transcript.rows[0].text, "We can send the plan on Tuesday.")
+        XCTAssertEqual(transcript.rows[0].turnIDs.count, 2)
+        // Editing again still covers both original turns.
+        transcript.edit(rowID: block.id, text: "We can send the plan on Wednesday.", speakerName: "Jamie")
+        XCTAssertEqual(edits.count, 1); XCTAssertEqual(edits[0].end, 9)
+        XCTAssertEqual(transcript.rows.count, 2)
+    }
+
+    func testTimelineOnlyShrinksAudioThatOutranTheClock() {
+        XCTAssertEqual(LiveMeetingTranscriptReader.wallClockScale(fileSeconds: 100, wallSeconds: 80), 0.8, accuracy: 0.0001)
+        XCTAssertEqual(LiveMeetingTranscriptReader.wallClockScale(fileSeconds: 100, wallSeconds: 100.5), 1)
+        XCTAssertEqual(LiveMeetingTranscriptReader.wallClockScale(fileSeconds: 80, wallSeconds: 100), 1)
+        XCTAssertEqual(LiveMeetingTranscriptReader.wallClockScale(fileSeconds: 100, wallSeconds: nil), 1)
+    }
+
+    @MainActor func testNamesSeenOnTheCallBecomeChoicesAndASingleHint() {
+        let transcript = LiveMeetingTranscript()
+        transcript.append([
+            MeetingTurn(start: 0, end: 4, speaker: "You", text: "Morning."),
+            MeetingTurn(start: 5, end: 9, speaker: "Speaker 2", text: "Morning, ready?"),
+        ], ownerName: "Alex Rivera", candidates: .none)
+        XCTAssertNil(transcript.rows[1].suggestedName)
+        transcript.updateCallParticipants(["Michelle Shih", "Alex Rivera"])
+        XCTAssertEqual(transcript.rows[1].suggestedName, "Michelle Shih")
+        XCTAssertEqual(transcript.rows[1].callParticipants, ["Michelle Shih"])
+        XCTAssertEqual(transcript.rows[0].callParticipants, [])
+        // Two other people: choices, but no guess.
+        transcript.updateCallParticipants(["Michelle Shih", "Carmen DeCouto", "Alex Rivera"])
+        XCTAssertNil(transcript.rows[1].suggestedName)
+        XCTAssertEqual(transcript.rows[1].callParticipants, ["Michelle Shih", "Carmen DeCouto"])
+        XCTAssertEqual(transcript.rows[1].speaker, "Speaker 2")
+    }
+
     @MainActor func testLateLiveResultsCannotReturnAfterStop() async {
         let reader = DelayedLiveReader()
         let transcript = LiveMeetingTranscript()
@@ -137,9 +214,15 @@ final class LiveMeetingTranscriptTests: XCTestCase {
         text.setSelectedRange(NSRange(location: 2, length: 6))
         var rows = transcript.rows
         rows.append(.init(id: "new", speaker: "Jamie", timestamp: "8:00", text: "One more detail."))
-        LiveTranscriptScrollView.update(text, in: scroll, rows: rows)
+        // A reader who scrolled away keeps their place…
+        LiveTranscriptScrollView.update(text, in: scroll, rows: rows, follow: false)
         XCTAssertEqual(scroll.contentView.bounds.origin.y, 100, accuracy: 1)
         XCTAssertEqual(text.selectedRange(), NSRange(location: 2, length: 6))
+        // …while the live view, pinned to the newest words, follows them.
+        rows.append(.init(id: "pinned", speaker: "Alex", timestamp: "8:05", text: "Still talking."))
+        LiveTranscriptScrollView.update(text, in: scroll, rows: rows, follow: true)
+        XCTAssertEqual(scroll.contentView.bounds.maxY, text.bounds.height, accuracy: 2)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 100))
         scroll.contentView.scroll(to: NSPoint(x: 0, y: text.bounds.height - scroll.contentSize.height))
         rows.append(.init(id: "newer", speaker: "Alex", timestamp: "8:10", text: "We can make that change tomorrow."))
         LiveTranscriptScrollView.update(text, in: scroll, rows: rows)

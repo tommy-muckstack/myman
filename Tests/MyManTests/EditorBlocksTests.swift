@@ -55,6 +55,29 @@ final class EditorBlocksTests: XCTestCase {
         try command("i"); type(" plain", into: text)
         XCTAssertEqual(save(text), "Title\nHello world* next* plain")
     }
+    @MainActor func testTabNestsListItemsAndShiftTabBringsThemBack() async throws {
+        let (window, text) = try await host("Title\n- First\n- Second")
+        defer { window.contentView = nil; window.close() }
+        text.setSelectedRange(NSRange(location: text.string.utf16.count, length: 0))
+        text.insertTab(nil)
+        XCTAssertEqual(save(text), "Title\n- First\n  - Second")
+        text.insertTab(nil)
+        XCTAssertEqual(save(text), "Title\n- First\n    - Second")
+        // Typing continues on the nested line, and Enter keeps the level.
+        type(" item", into: text)
+        text.insertNewline(nil)
+        type("Third", into: text)
+        XCTAssertEqual(save(text), "Title\n- First\n    - Second item\n    - Third")
+        text.insertBacktab(nil)
+        XCTAssertEqual(save(text), "Title\n- First\n    - Second item\n  - Third")
+        // Plain text is untouched by Tab.
+        let (plainWindow, plain) = try await host("Title\nBody")
+        defer { plainWindow.contentView = nil; plainWindow.close() }
+        plain.setSelectedRange(NSRange(location: plain.string.utf16.count, length: 0))
+        XCTAssertFalse(plain.indentList(by: 1))
+        XCTAssertEqual(save(plain), "Title\nBody")
+    }
+
     @MainActor func testTableEditingNavigationAndRoundTrip() async throws {
         let source = "Title\n| Name | Status |\n| :--- | ---: |\n| **Design** | Ready |\n| Café 日本語 | `a|b` |\n\nAfter"
         let (window, text) = try await host(source)

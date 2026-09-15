@@ -145,6 +145,20 @@ final class MeetingTranscriptTests: XCTestCase {
         XCTAssertNil(MeetingDocumentView.parseTurns("You:\nJust a plain block of text."))
     }
 
+    func testReadingViewShowsOneBlockPerSpeakerRun() {
+        let turns = [
+            MeetingDocumentView.TranscriptTurn(speaker: "Morgan", time: "3:25", text: "We also call Amplitude C P."),
+            MeetingDocumentView.TranscriptTurn(speaker: "Morgan", time: "3:29", text: "our internal"),
+            MeetingDocumentView.TranscriptTurn(speaker: "Morgan", time: "3:34", text: "Jupiter container."),
+            MeetingDocumentView.TranscriptTurn(speaker: "You", time: "3:44", text: "I like it."),
+            MeetingDocumentView.TranscriptTurn(speaker: "Morgan", time: "3:50", text: "Good."),
+        ]
+        let blocks = MeetingDocumentView.grouped(turns)
+        XCTAssertEqual(blocks.map(\.speaker), ["Morgan", "You", "Morgan"])
+        XCTAssertEqual(blocks.map(\.time), ["3:25", "3:44", "3:50"])
+        XCTAssertEqual(blocks[0].text, "We also call Amplitude C P. our internal Jupiter container.")
+    }
+
     func testEachSpeakerGetsAStableDistinctColor() {
         let turns = [
             MeetingDocumentView.TranscriptTurn(speaker: "You", time: "0:01", text: "a"),

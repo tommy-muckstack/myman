@@ -56,9 +56,14 @@ struct RichMarkdownEditor: NSViewRepresentable {
     var showsEmptyPlaceholder = true
     var documentID = ""
     var assets = DocumentAssets.shared
+    /// Small hosts (the recording card) cannot afford page margins.
+    var compact = false
+    var onFocusChanged: ((Bool) -> Void)? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = RichNoteTextView()
+        textView.compactMargins = compact
+        textView.onFocusChanged = onFocusChanged
         textView.delegate = context.coordinator
         textView.isRichText = true
         textView.allowsUndo = true
@@ -95,6 +100,7 @@ struct RichMarkdownEditor: NSViewRepresentable {
         guard let textView = scroll.documentView as? RichNoteTextView else { return }
         session?.textView = textView
         textView.showsEmptyPlaceholder = showsEmptyPlaceholder
+        textView.onFocusChanged = onFocusChanged
         if context.coordinator.lastMarkdown != markdown {
             let selection = textView.selectedRange()
             textView.textStorage?.setAttributedString(MarkdownRich.attributed(from: markdown, firstLineIsTitle: firstLineIsTitle, assets: assets))
@@ -129,7 +135,21 @@ final class RichNoteTextView: NSTextView {
     var imageDropLocation: Int?
     var placeholder = "Start writing…"
     var showsEmptyPlaceholder = true
+    var compactMargins = false
+    var onFocusChanged: ((Bool) -> Void)?
     private var formatBar: NSHostingView<FormatBar>?
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { onFocusChanged?(true) }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { onFocusChanged?(false) }
+        return resigned
+    }
     private var slashMenu: NSHostingView<BlockPicker>?
     private var slashRange: NSRange?
     private var choices: [DocumentBlock] = []
@@ -142,8 +162,8 @@ final class RichNoteTextView: NSTextView {
         adjustingColumn = true
         defer { adjustingColumn = false }
         super.setFrameSize(newSize)
-        let inset = max(MM.Document.margin, (newSize.width - MM.Document.columnWidth) / 2)
-        let desired = NSSize(width: inset, height: firstLineIsTitle ? 32 : 20)
+        let inset = compactMargins ? MM.Layout.spacing : max(MM.Document.margin, (newSize.width - MM.Document.columnWidth) / 2)
+        let desired = NSSize(width: inset, height: compactMargins ? MM.Layout.spacing : firstLineIsTitle ? 32 : 20)
         if textContainerInset != desired { textContainerInset = desired }
         // widthTracksTextView owns the container. Setting both sizes here
         // makes TextKit feed container resizing back into this method.
@@ -248,10 +268,45 @@ final class RichNoteTextView: NSTextView {
     }
 
     override func insertTab(_ sender: Any?) {
-        if !moveTableCell(backward: false) { super.insertTab(sender) }
+        if moveTableCell(backward: false) || indentList(by: 1) { return }
+        super.insertTab(sender)
     }
     override func insertBacktab(_ sender: Any?) {
-        if !moveTableCell(backward: true) { super.insertBacktab(sender) }
+        if moveTableCell(backward: true) || indentList(by: -1) { return }
+        super.insertBacktab(sender)
+    }
+
+    /// Tab on a list line nests it (two spaces per level in the markdown,
+    /// like any note app); Shift-Tab brings it back out. Other lines keep
+    /// the ordinary tab behaviour.
+    @discardableResult
+    func indentList(by delta: Int) -> Bool {
+        guard currentTable == nil, !isTitle(selectedRange()) else { return false }
+        let selection = selectedRange()
+        let ns = string as NSString
+        let range = ns.lineRange(for: selection)
+        let existing = attributedString().attributedSubstring(from: range)
+        let raw = MarkdownRich.markdown(from: existing, firstLineIsTitle: false)
+        let lines = raw.components(separatedBy: "\n")
+        var changed = false
+        let rewritten = lines.enumerated().map { index, line -> String in
+            if index == lines.count - 1, line.isEmpty, raw.hasSuffix("\n") { return "" }
+            let parts = MarkdownRich.block(line)
+            let marker = parts.prefix.trimmingCharacters(in: .whitespaces)
+            guard marker.hasPrefix("-") || marker.hasPrefix("*") || marker.first?.isNumber == true else { return line }
+            let level = parts.prefix.prefix(while: { $0 == " " }).count / 2
+            let next = max(0, min(6, level + delta))
+            guard next != level else { return line }
+            changed = true
+            return String(repeating: "  ", count: next) + marker + " " + parts.body
+        }.joined(separator: "\n")
+        guard changed else { return false }
+        let content = MarkdownRich.attributed(from: rewritten, firstLineIsTitle: false, assets: assets)
+        replace(range, with: content)
+        let caret = min(selection.location + (content.length - existing.length), range.location + content.length)
+        setSelectedRange(NSRange(location: max(range.location, caret), length: 0))
+        typingAttributes = baseAttributes(prefix: MarkdownRich.block(rewritten.components(separatedBy: "\n").first ?? "").prefix)
+        return true
     }
     override func deleteBackward(_ sender: Any?) {
         let selection = selectedRange()

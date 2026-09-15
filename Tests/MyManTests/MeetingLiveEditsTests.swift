@@ -35,13 +35,17 @@ final class MeetingLiveEditsTests: XCTestCase {
             MeetingTurn(start: 0, end: 5, speaker: "Speaker 2", text: "A rough transcript."),
             MeetingTurn(start: 8, end: 12, speaker: "Speaker 2", text: "The next sentence.")
         ], ownerName: "Alex", candidates: SpeakerCandidates(names: ["Jamie"], fromAttendees: true))
+        // One person through a pause is one block; editing it edits both turns.
+        XCTAssertEqual(controller.liveTranscript.rows.count, 1)
         let id = try XCTUnwrap(controller.liveTranscript.rows.first?.id)
         controller.liveTranscript.edit(rowID: id, text: "A corrected transcript.", speakerName: "Morgan")
-        XCTAssertEqual(controller.liveTranscript.rows.map(\.speaker), ["Morgan", "Morgan"])
+        XCTAssertEqual(controller.liveTranscript.rows.map(\.speaker), ["Morgan"])
         XCTAssertEqual(controller.liveTranscript.rows.first?.text, "A corrected transcript.")
         let saved = try XCTUnwrap(db.read { try Meeting.fetchOne($0, key: "edited") })
-        XCTAssertEqual(saved.liveCorrections.count, 2)
+        XCTAssertEqual(saved.liveCorrections.count, 1)
         XCTAssertEqual(saved.liveCorrections.first?.text, "A corrected transcript.")
+        XCTAssertEqual(saved.liveCorrections.first?.start, 0)
+        XCTAssertEqual(saved.liveCorrections.first?.end, 12)
         XCTAssertFalse(controller.liveEditSaveFailed)
     }
 

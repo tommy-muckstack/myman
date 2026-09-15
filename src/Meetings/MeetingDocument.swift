@@ -162,6 +162,7 @@ struct MeetingDocumentView: View {
     private let database: DatabaseQueue?
     private let automaticallySummarize: Bool
     private var db: DatabaseQueue { database ?? Database.shared }
+    @ObservedObject private var transcriptionStatus = MeetingTranscriptionStatus.shared
     @Namespace private var tabNamespace
     /// Transcript tab defaults to the formatted reading view; this flips to
     /// the raw text editor for corrections.
@@ -182,13 +183,25 @@ struct MeetingDocumentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if transcriptionStatus.isPending(meeting.id) {
+                HStack(spacing: MM.Layout.spacing) {
+                    ProgressView().controlSize(.small)
+                    Text("Transcribing your meeting on this Mac… the transcript and notes will appear here when it finishes.")
+                        .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                }
+                .padding(.horizontal, MM.Document.margin)
+                .padding(.bottom, MM.Layout.spacing)
+                .accessibilityLabel("Transcription in progress")
+            }
             MeetingLinkedNotesView(meetingID: meeting.id, database: database)
             if showSlides, !slidePaths.isEmpty { slideCarousel }
             if showTranscript {
                 transcriptEditor
                     .overlay {
                         if transcript.isEmpty {
-                            UtilityEmptyState(icon: .voice, title: "No words just yet", message: meeting.endedAt == nil ? "Your transcript will appear after recording." : "No speech was captured in this recording.")
+                            UtilityEmptyState(icon: .voice, title: transcriptionStatus.isPending(meeting.id) ? "Transcribing…" : "No words just yet",
+                                              message: transcriptionStatus.isPending(meeting.id) ? "Your transcript is being prepared on this Mac."
+                                                : meeting.endedAt == nil ? "Your transcript will appear after recording." : "No speech was captured in this recording.")
                                 .allowsHitTesting(false)
                         }
                     }
@@ -209,7 +222,9 @@ struct MeetingDocumentView: View {
                                    placeholder: "Write your notes…", showsEmptyPlaceholder: false, documentID: "meeting-" + meeting.id)
                 .overlay {
                     if summary.isEmpty, !isSummarizing {
-                        UtilityEmptyState(icon: .calendar, title: "Keep the good bits", message: "Write anything you want to remember.")
+                        UtilityEmptyState(icon: .calendar, title: transcriptionStatus.isPending(meeting.id) ? "Transcribing…" : "Keep the good bits",
+                                          message: transcriptionStatus.isPending(meeting.id)
+                                            ? "Notes are written once the transcript is ready. Your own note is above." : "Write anything you want to remember.")
                             .allowsHitTesting(false)
                     }
                 }
@@ -380,6 +395,23 @@ struct MeetingDocumentView: View {
         Color(red: 0.33, green: 0.68, blue: 0.72),  // teal
     ]
 
+    /// One block per run of speech: the name and the time they STARTED, then
+    /// everything they said until someone else spoke. Pauses inside a run
+    /// never restart the clock.
+    nonisolated static func grouped(_ turns: [TranscriptTurn]) -> [TranscriptTurn] {
+        var blocks: [TranscriptTurn] = []
+        for turn in turns {
+            if let last = blocks.last, last.speaker == turn.speaker, turn.speaker != "Speaker unclear" {
+                let joined = [last.text, turn.text].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }.joined(separator: " ")
+                blocks[blocks.count - 1] = TranscriptTurn(speaker: last.speaker, time: last.time, text: joined)
+            } else {
+                blocks.append(turn)
+            }
+        }
+        return blocks
+    }
+
     nonisolated static func speakerColors(for turns: [TranscriptTurn]) -> [String: Color] {
         var colors: [String: Color] = [:]
         for turn in turns where colors[turn.speaker] == nil {
@@ -390,7 +422,8 @@ struct MeetingDocumentView: View {
 
     /// The clean reading view: bold colored speaker names, quiet timestamps,
     /// plain paragraphs — no markup on screen.
-    private func formattedTranscript(_ turns: [TranscriptTurn]) -> some View {
+    private func formattedTranscript(_ rawTurns: [TranscriptTurn]) -> some View {
+        let turns = Self.grouped(rawTurns)
         let colors = Self.speakerColors(for: turns)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {

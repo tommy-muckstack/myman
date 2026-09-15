@@ -98,6 +98,22 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var rows: [LiveMeetingTranscript.Row] = []
         var edit: (String) -> Void = { _ in }
+        /// Pinned to the newest words until the reader scrolls up on
+        /// purpose; scrolling back to the end re-pins.
+        var followsLatest = true
+        private var observer: NSObjectProtocol?
+
+        func watchUserScrolling(_ scroll: NSScrollView) {
+            observer = NotificationCenter.default.addObserver(
+                forName: NSScrollView.didLiveScrollNotification, object: scroll, queue: .main
+            ) { [weak self, weak scroll] _ in
+                guard let self, let scroll, let text = scroll.documentView else { return }
+                self.followsLatest = LiveTranscriptScrollView.isAtBottom(scroll, of: text)
+            }
+        }
+
+        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             guard let url = link as? URL,
                   let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
@@ -134,6 +150,7 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
         text.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         text.setAccessibilityLabel("Live meeting transcript with speakers and timestamps")
         scroll.documentView = text
+        context.coordinator.watchUserScrolling(scroll)
         return scroll
     }
 
@@ -141,11 +158,17 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
         context.coordinator.edit = edit
         guard context.coordinator.rows != rows, let text = scroll.documentView as? NSTextView else { return }
         context.coordinator.rows = rows
-        Self.update(text, in: scroll, rows: rows)
+        Self.update(text, in: scroll, rows: rows, follow: context.coordinator.followsLatest)
     }
 
-    static func update(_ text: NSTextView, in scroll: NSScrollView, rows: [LiveMeetingTranscript.Row]) {
-        let wasAtBottom = scroll.contentView.bounds.maxY >= text.bounds.height - MM.Layout.padding
+    static func isAtBottom(_ scroll: NSScrollView, of text: NSView) -> Bool {
+        scroll.contentView.bounds.maxY >= text.bounds.height - MM.Layout.padding
+    }
+
+    /// `follow` nil keeps the older rule (follow only when already at the
+    /// end); the live view passes its explicit pin state instead.
+    static func update(_ text: NSTextView, in scroll: NSScrollView, rows: [LiveMeetingTranscript.Row], follow: Bool? = nil) {
+        let wasAtBottom = follow ?? isAtBottom(scroll, of: text)
         let position = scroll.contentView.bounds.origin
         let selection = text.selectedRange()
         let content = NSMutableAttributedString()
@@ -219,6 +242,14 @@ struct LiveTranscriptEditView: View {
                 Button("Use suggested name: \(suggested)") { name = suggested }
                     .font(MM.Fonts.metadata).buttonStyle(.plain).foregroundStyle(MM.Colors.accent).clickable()
             }
+            if !row.callParticipants.isEmpty {
+                VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                    Text("On the call").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                    FlowingPills(names: row.callParticipants, selected: name) { name = $0 }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Names seen on the call window")
+            }
             TextEditor(text: $text)
                 .font(MM.Fonts.body)
                 .scrollContentBackground(.hidden)
@@ -252,5 +283,34 @@ struct LiveTranscriptEditView: View {
         .padding(MM.Layout.paddingLarge)
         .frame(width: 380)
         .background(MM.Colors.background)
+    }
+}
+
+/// Names as tappable pills, wrapping onto new lines as needed.
+struct FlowingPills: View {
+    let names: [String]
+    var selected: String = ""
+    var choose: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: MM.Layout.spacing / 2) {
+                ForEach(names, id: \.self) { name in
+                    let isSelected = LiveMeetingTranscript.sameName(name, selected)
+                    Button { choose(name) } label: {
+                        Text(name)
+                            .font(MM.Fonts.metadata)
+                            .foregroundStyle(isSelected ? MM.Colors.background : MM.Colors.textPrimary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(isSelected ? MM.Colors.accent : MM.Colors.surface))
+                            .overlay(Capsule().strokeBorder(isSelected ? MM.Colors.accent : MM.Colors.border, lineWidth: 1))
+                            .clickable()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Use name \(name)")
+                }
+            }
+        }
     }
 }

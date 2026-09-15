@@ -79,13 +79,19 @@ final class SystemAudioTap {
             return fallback
         }()
 
-        let format = sourceFormat
+        // The tap follows the OUTPUT device. Switching to AirPods or a dock
+        // mid-call changes its rate/channel layout, and resampling the new
+        // stream with the old description makes file time run faster or
+        // slower than the clock (future-dated transcript lines). Keep the
+        // description current on the processing queue that consumes it.
+        installFormatListener()
         status = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, ioQueue) {
             [weak self] _, inputData, _, _, _ in
             guard let self, self.isRunning else { return }
             // Copy out of the realtime callback, process off it.
             let copied = Self.copyBuffers(inputData)
             self.processingQueue.async {
+                let format = self.sourceFormat
                 let mono = Self.mixToMono(copied, format: format)
                 guard !mono.isEmpty else { return }
                 let resampled = AudioCapture.resample(mono, from: format.mSampleRate, to: 16000)
@@ -111,7 +117,37 @@ final class SystemAudioTap {
         teardown()
     }
 
+    private var formatListener: AudioObjectPropertyListenerBlock?
+
+    private func installFormatListener() {
+        guard tapID != kAudioObjectUnknown, formatListener == nil else { return }
+        var address = Self.formatAddress
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self, self.isRunning else { return }
+            let id = self.tapID
+            // Already on processingQueue (listener dispatch queue below): the
+            // HAL read is off the main thread and serialized with consumers.
+            if let format = Self.tapStreamFormat(for: id) { self.sourceFormat = format }
+        }
+        guard AudioObjectAddPropertyListenerBlock(tapID, &address, processingQueue, block) == noErr else { return }
+        formatListener = block
+    }
+
+    private func removeFormatListener() {
+        guard let block = formatListener, tapID != kAudioObjectUnknown else { formatListener = nil; return }
+        var address = Self.formatAddress
+        AudioObjectRemovePropertyListenerBlock(tapID, &address, processingQueue, block)
+        formatListener = nil
+    }
+
+    private static var formatAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: kAudioTapPropertyFormat,
+                                   mScope: kAudioObjectPropertyScopeGlobal,
+                                   mElement: kAudioObjectPropertyElementMain)
+    }
+
     private func teardown() {
+        removeFormatListener()
         if let procID, aggregateID != kAudioObjectUnknown {
             AudioDeviceStop(aggregateID, procID)
             AudioDeviceDestroyIOProcID(aggregateID, procID)

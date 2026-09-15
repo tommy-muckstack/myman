@@ -129,7 +129,10 @@ enum MarkdownRich {
     static func style(_ text: NSMutableAttributedString, title: Bool = false) {
         guard text.length > 0 else { return }
         let whole = NSRange(location: 0, length: text.length)
-        let prefix = (text.attribute(.manBlock, at: 0, effectiveRange: nil) as? String ?? "").trimmingCharacters(in: .whitespaces)
+        let rawPrefix = text.attribute(.manBlock, at: 0, effectiveRange: nil) as? String ?? ""
+        let prefix = rawPrefix.trimmingCharacters(in: .whitespaces)
+        // Two leading spaces per nesting level, as the markdown stores it.
+        let nesting = CGFloat(rawPrefix.prefix(while: { $0 == " " || $0 == "\t" }).count / 2)
         let heading = prefix.hasPrefix("#")
         let size: CGFloat = title ? titleSize : prefix == "#" ? 28 : prefix == "##" ? 24 : prefix == "###" ? 20 : bodySize
         let existingParagraph = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
@@ -143,7 +146,11 @@ enum MarkdownRich {
         paragraph.paragraphSpacing = title ? 24 : MM.Document.paragraphSpacing
         paragraph.paragraphSpacingBefore = heading && !title ? 12 : 0
         if tableCell != nil { paragraph.paragraphSpacing = 0; paragraph.lineSpacing = 3 }
-        if prefix.hasPrefix("-") || prefix.hasPrefix("*") || prefix.first?.isNumber == true || prefix == ">" { paragraph.headIndent = 24 }
+        if prefix.hasPrefix("-") || prefix.hasPrefix("*") || prefix.first?.isNumber == true || prefix == ">" {
+            // The display text keeps its leading spaces, so only wrapped
+            // lines need the extra hang to sit under the first word.
+            paragraph.headIndent = 24 + nesting * 7
+        }
         text.addAttribute(.paragraphStyle, value: paragraph, range: whole)
         text.enumerateAttributes(in: whole) { attributes, range, _ in
             let code = attributes[.manCode] as? String

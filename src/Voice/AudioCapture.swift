@@ -89,7 +89,33 @@ final class AudioCapture: @unchecked Sendable {
         requestedVoiceProcessing = wantVP
         engine = eng
         cacheInputRate(of: eng)
+        observeConfigurationChanges(of: eng)
         if vpEnabled { scheduleIdleRelease() }
+    }
+
+    /// A device swap mid-take (AirPods connecting, a dock unplugged) changes
+    /// the input format and stops the engine. Without this, later drains
+    /// would still resample at the OLD rate — meeting timestamps then run
+    /// ahead of the clock — and the microphone would go silent for the rest
+    /// of the meeting.
+    private func observeConfigurationChanges(of eng: AVAudioEngine) {
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: eng, queue: nil
+        ) { [weak self] _ in
+            Self.engineQueue.async {
+                guard let self, self.engine === eng else { return }
+                self.lock.lock()
+                let active = !self.buffers.isEmpty
+                self.lock.unlock()
+                self.cacheInputRate(of: eng)
+                guard active else { return }
+                // Rebuild: the installed tap still carries the previous
+                // format, so restarting the same graph is not enough.
+                self.discardEngine()
+                do { try self.reconfigureAndRun() }
+                catch { NSLog("My Man [Audio] restart after device change failed: %@", error.localizedDescription) }
+            }
+        }
     }
 
     private func cacheInputRate(of eng: AVAudioEngine) {
