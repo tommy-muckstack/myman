@@ -79,14 +79,13 @@ final class MeetingRecordingTitleTests: XCTestCase {
         XCTAssertNil(CaptureIndex.item("meeting-live", database: queue))
     }
 
-    @MainActor func testIdleAndTranscribingPillsCannotExpand() throws {
+    @MainActor func testIdlePillCannotExpand() throws {
         let (controller, _) = try fixture()
         controller.phase = .idle
         controller.setTitleEditorVisible(true)
         controller.updateRecordingTitle("Unexpected change")
         XCTAssertFalse(controller.titleEditorVisible)
         XCTAssertEqual(controller.recordingTitle, "Calendar meeting")
-        XCTAssertEqual(MeetingController.pillSize(provisional: false, transcribing: true, editingTitle: true), CGSize(width: 216, height: 40))
     }
 
     @MainActor func testRenderRecordingPillAndFocusableEditor() async throws {
@@ -100,7 +99,7 @@ final class MeetingRecordingTitleTests: XCTestCase {
             panel.dismissesOnResign = false
             panel.appearance = NSAppearance(named: .darkAqua)
             panel.isReleasedWhenClosed = false
-            let size = MeetingController.pillSize(provisional: false, transcribing: false, editingTitle: expanded)
+            let size = MeetingController.pillSize(provisional: false, editingTitle: expanded)
             panel.setFrame(NSRect(origin: .zero, size: size), display: false)
             let host = try XCTUnwrap(panel.contentView)
             host.layoutSubtreeIfNeeded()
@@ -141,17 +140,17 @@ final class MeetingRecordingTitleTests: XCTestCase {
         panel.isReleasedWhenClosed = false
         defer { panel.contentView = nil; panel.close() }
         var topPixels: Data?
-        for height in [76.0, 92, 112, 140] {
+        for height in [44.0, 120, 260, 444] {
             // Match the native animation's invariant: top and right edges stay put.
-            panel.setFrame(NSRect(x: 500, y: 600 - height, width: 248, height: height), display: false)
+            panel.setFrame(NSRect(x: 500, y: 600 - height, width: 400, height: height), display: false)
             let host = try XCTUnwrap(panel.contentView); host.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(30)); host.layoutSubtreeIfNeeded()
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap)
             let image = try XCTUnwrap(bitmap.cgImage)
-            let scale = CGFloat(image.width) / 248
+            let scale = CGFloat(image.width) / 400
             // Exclude the lower corners, where the card intentionally unfolds.
-            let controls = try XCTUnwrap(image.cropping(to: CGRect(x: 20 * scale, y: 8 * scale, width: 208 * scale, height: 53 * scale)))
+            let controls = try XCTUnwrap(image.cropping(to: CGRect(x: 28 * scale, y: 8 * scale, width: 358 * scale, height: 24 * scale)))
             let pixels = try XCTUnwrap(NSBitmapImageRep(cgImage: controls).representation(using: .png, properties: [:]))
             if let topPixels { XCTAssertEqual(pixels, topPixels, "Recording controls moved during expansion") }
             else { topPixels = pixels }
@@ -159,4 +158,35 @@ final class MeetingRecordingTitleTests: XCTestCase {
         }
     }
 
+
+    @MainActor func testRenderPopulatedTranscriptAndLinkedNoteTabs() async throws {
+        _ = NSApplication.shared
+        MM.Fonts.registerFonts()
+        let (controller, _) = try fixture()
+        let turns: [MeetingTurn] = (0..<12).map { index in
+            let start = Double(index * 10)
+            return MeetingTurn(start: start, end: start + 5, speaker: index % 2 == 0 ? "You" : "Speaker 2",
+                               text: index % 2 == 0 ? "Let’s review the launch plan and agree on next steps." : "I’ll send the revised proposal by Friday.")
+        }
+        controller.liveTranscript.append(turns, ownerName: "Alex", candidates: SpeakerCandidates(names: ["Jamie"], fromAttendees: true))
+        controller.recordingNote.update("Ask Jamie about the launch timeline.\n\nSend the updated proposal after the call.")
+        XCTAssertTrue(controller.recordingNote.flush())
+        controller.setTitleEditorVisible(true)
+        for showingNote in [false, true] {
+            let window = FloatingPanel(content: MeetingPillView(controller: controller, showingNote: showingNote), becomesKey: true, fixedSize: true)
+            window.isReleasedWhenClosed = false
+            defer { window.contentView = nil; window.close() }
+            window.appearance = NSAppearance(named: .darkAqua)
+            let size = MeetingController.pillSize(provisional: false, editingTitle: true)
+            window.setFrame(NSRect(origin: .zero, size: size), display: false)
+            let host = try XCTUnwrap(window.contentView)
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let path = "/private/tmp/myman-recorder-\(showingNote ? "note" : "transcript").png"
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: path))
+        }
+    }
 }

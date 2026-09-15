@@ -283,6 +283,27 @@ enum Database {
             }
             try db.execute(sql: "CREATE TRIGGER capture_context_exclude AFTER UPDATE OF excluded ON captureItem WHEN new.excluded=1 BEGIN DELETE FROM captureContext WHERE itemID=new.id; END")
         }
+        migrator.registerMigration("v18-recording-notes") { db in
+            // Early local builds used v17-recording-notes before merging
+            // the released capture-context migration. Preserve that data too.
+            if try !db.columns(in: "note").contains(where: { $0.name == "meetingID" }) {
+                try db.alter(table: "note") { t in
+                    t.add(column: "meetingID", .text).references("meeting", onDelete: .setNull)
+                }
+            }
+            try db.create(index: "note_meeting", on: "note", columns: ["meetingID"], unique: true, ifNotExists: true)
+            if try !db.columns(in: "meeting").contains(where: { $0.name == "liveCorrectionsJSON" }) {
+                try db.alter(table: "meeting") { t in
+                    t.add(column: "liveCorrectionsJSON", .text).notNull().defaults(to: "[]")
+                }
+            }
+            try db.create(table: "voiceProfile", ifNotExists: true) { t in
+                t.primaryKey("id", .text)
+                t.column("name", .text).notNull()
+                t.column("embeddingJSON", .text).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+        }
         return migrator
     }
 }

@@ -6,7 +6,7 @@ import GRDB
 import SwiftUI
 import QuartzCore
 
-struct Meeting: Codable, FetchableRecord, PersistableRecord {
+struct Meeting: Codable, FetchableRecord, PersistableRecord, Sendable {
     static let databaseTableName = "meeting"
     var id: String
     var title: String
@@ -23,6 +23,11 @@ struct Meeting: Codable, FetchableRecord, PersistableRecord {
     var participantsJSON: String = "[]"
     var originalTranscript: String = ""
     var analysisJSON: String = ""
+    var liveCorrectionsJSON: String = "[]"
+
+    var liveCorrections: [LiveTranscriptCorrection] {
+        (try? JSONDecoder().decode([LiveTranscriptCorrection].self, from: Data(liveCorrectionsJSON.utf8))) ?? []
+    }
 
     var captureKind: MeetingKind { MeetingKind(rawValue: kind) ?? .meeting }
     var participants: [MeetingParticipant] {
@@ -79,6 +84,7 @@ final class MeetingController: ObservableObject {
     /// True from the first permission callback until `phase` is set, which is
     /// no longer the same instant: bringing the mic up awaits CoreAudio.
     private(set) var isStarting = false
+    var canStartRecording: Bool { phase == .idle && !isStarting }
     /// Meetings whose audio is still being transcribed in the background.
     /// Transcription never occupies the recorder: stopping a meeting returns
     /// the phase to .idle immediately, so a back-to-back call can start while
@@ -86,7 +92,11 @@ final class MeetingController: ObservableObject {
     /// the ASR models aren't safe to share across concurrent transcriptions.
     @Published private(set) var transcribingTitles: [String] = []
     private var transcriptionChain: Task<Void, Never>?
-    var isTranscribing: Bool { !transcribingTitles.isEmpty }
+    private var transcriptionRevision = 0
+    private let transcriptionWorker = MeetingTranscriptionWorker()
+    private let transcriptionRunner: ((TranscriptionJob) async -> Void)?
+    private var isRecoveringTranscripts = false
+    var isTranscribing: Bool { !transcribingTitles.isEmpty || isRecoveringTranscripts }
     /// Quill-style detection capture: recording is already running, but
     /// NOTHING persists unless the user clicks Save. Discard (or the safety
     /// timeout) deletes the audio with no database row, no transcription.
@@ -94,6 +104,10 @@ final class MeetingController: ObservableObject {
     @Published var levels: [Float] = []
     @Published private(set) var recordingTitle = ""
     @Published private(set) var titleEditorVisible = false
+    @Published var stopConfirmationVisible = false
+    let liveTranscript = LiveMeetingTranscript()
+    let recordingNote: MeetingRecordingNote
+    @Published private(set) var liveEditSaveFailed = false
     private var titleSaveTask: Task<Void, Never>?
     private var titleNeedsSaving = false
     private let titleDatabase: DatabaseQueue?
@@ -147,11 +161,34 @@ final class MeetingController: ObservableObject {
 
     /// Supplying an existing take allows previews and title-persistence tests
     /// without starting microphones, process taps, or transcription models.
-    init(recording: Meeting? = nil, titleDatabase: DatabaseQueue? = nil) {
+    init(recording: Meeting? = nil, titleDatabase: DatabaseQueue? = nil,
+         transcriptionRunner: ((TranscriptionJob) async -> Void)? = nil) {
+        self.transcriptionRunner = transcriptionRunner
         self.titleDatabase = titleDatabase
+        recordingNote = MeetingRecordingNote(database: titleDatabase)
         meeting = recording
         recordingTitle = recording?.title ?? ""
-        if let recording { phase = .recording(start: recording.startedAt) }
+        if let recording {
+            phase = .recording(start: recording.startedAt)
+            recordingNote.reset(meetingID: recording.id)
+        }
+        liveTranscript.onEditsChanged = { [weak self] edits in self?.saveLiveEdits(edits) }
+        liveTranscript.onTextCorrected = { text in DictationCleanup.learn(from: text) }
+    }
+
+    private func saveLiveEdits(_ edits: [LiveTranscriptCorrection]) {
+        guard var meeting, !isProvisional,
+              let data = try? JSONEncoder().encode(edits) else { return }
+        meeting.liveCorrectionsJSON = String(decoding: data, as: UTF8.self)
+        self.meeting = meeting
+        do {
+            try (titleDatabase ?? Database.shared).write { db in
+                try db.execute(sql: "UPDATE meeting SET liveCorrectionsJSON = ? WHERE id = ?",
+                               arguments: [meeting.liveCorrectionsJSON, meeting.id])
+                guard db.changesCount > 0 else { throw CocoaError(.fileNoSuchFile) }
+            }
+            liveEditSaveFailed = false
+        } catch { liveEditSaveFailed = true }
     }
 
     func updateRecordingTitle(_ text: String) {
@@ -189,7 +226,8 @@ final class MeetingController: ObservableObject {
     }
 
     func setTitleEditorVisible(_ visible: Bool) {
-        let visible = visible && !isProvisional && !pillShowsTranscribing && phase != .idle
+        guard visible || (!stopConfirmationVisible && liveTranscript.editingRowID == nil) else { return }
+        let visible = visible && !isProvisional && phase != .idle
         guard titleEditorVisible != visible else { return }
         titleEditorVisible = visible
         applyPillFrame(animated: true)
@@ -197,9 +235,30 @@ final class MeetingController: ObservableObject {
 
     func finishTitleEditing() {
         flushRecordingTitle()
+        guard recordingNote.flush() else { return }
         panel?.makeFirstResponder(nil)
         panel?.resignKey()
         setTitleEditorVisible(false)
+    }
+
+    func requestStopRecording() {
+        guard case .recording = phase, !isProvisional else { return }
+        stopConfirmationVisible = true
+    }
+
+    func confirmStopRecording() {
+        guard case .recording = phase, !isProvisional else { return }
+        stopConfirmationVisible = false
+        stop()
+    }
+
+    func startLiveTranscript() {
+        guard case .recording = phase, !isProvisional, let meeting,
+              micWriter != nil || systemWriter != nil else { return }
+        let reader = LiveMeetingTranscriptReader(
+            micURL: micWriter?.url, systemURL: systemWriter?.url,
+            singleRemote: sessionAttendeeNames.fromAttendees && Set(sessionAttendeeNames.names).count == 1)
+        liveTranscript.start(reader: reader, ownerName: meeting.resolvedOwner, candidates: sessionAttendeeNames)
     }
 
     static var recordingsFolder: URL {
@@ -278,6 +337,8 @@ final class MeetingController: ObservableObject {
         try? Database.shared.write { try meeting.insert($0) }
         Analytics.track("meeting_started", ["has_system_audio": tap.isRunning,
                                             "from_detection": true])
+        recordingNote.reset(meetingID: meeting.id)
+        startLiveTranscript()
     }
 
     func discardProvisional() {
@@ -290,6 +351,12 @@ final class MeetingController: ObservableObject {
     /// for both provisional and already-saved meeting rows.
     func discardRecording() {
         guard case .recording = phase else { return }
+        guard recordingNote.discard() else {
+            Toast.show("Couldn’t discard the note. Please try again.", systemImage: "exclamationmark.triangle")
+            return
+        }
+        stopConfirmationVisible = false
+        liveTranscript.stop()
         titleSaveTask?.cancel(); titleSaveTask = nil
         titleNeedsSaving = false; titleEditorVisible = false
         let wasProvisional = isProvisional
@@ -324,7 +391,7 @@ final class MeetingController: ObservableObject {
         }
         resumeMusicIfPaused()
         phase = .idle
-        if isTranscribing { applyPillFrame() } else { dismissPill() }
+        dismissPill()
         Analytics.track("meeting_discarded", ["provisional": wasProvisional])
         Toast.show("Recording cancelled — nothing was saved", systemImage: "xmark.circle")
     }
@@ -343,7 +410,7 @@ final class MeetingController: ObservableObject {
         // nudge and a manual click race. Only the first one may create a row —
         // and since starting the mic suspends, `phase` alone can't hold that
         // line: the second caller would sail past before the first sets it.
-        guard case .idle = phase, !isStarting else { return }
+        guard canStartRecording else { return }
         guard SystemAudioTap.hasPermission() || promptForSystemAudio() else { return }
         isStarting = true
         defer { isStarting = false }
@@ -421,6 +488,10 @@ final class MeetingController: ObservableObject {
             Analytics.track("meeting_started", ["has_system_audio": tap.isRunning])
         }
         phase = .recording(start: started)
+        liveEditSaveFailed = false
+        recordingNote.reset(meetingID: provisional ? nil : id)
+        stopConfirmationVisible = false
+        if !provisional { startLiveTranscript() }
         applyPillFrame()
         levels = Array(repeating: 0, count: 16)
         lastAudibleAt = started
@@ -664,6 +735,17 @@ final class MeetingController: ObservableObject {
     }
 
     private func stop() {
+        if liveEditSaveFailed { saveLiveEdits(liveTranscript.corrections) }
+        guard !liveEditSaveFailed else {
+            Toast.show("Couldn’t save transcript edits. Recording continues so you can retry.", systemImage: "exclamationmark.triangle")
+            return
+        }
+        guard recordingNote.flush() else {
+            Toast.show("Couldn’t save your note. Recording continues so you can retry.", systemImage: "exclamationmark.triangle")
+            return
+        }
+        stopConfirmationVisible = false
+        liveTranscript.stop()
         flushRecordingTitle()
         titleEditorVisible = false
         stopEndWatch()
@@ -685,7 +767,7 @@ final class MeetingController: ObservableObject {
 
         guard var finished = meeting else {
             phase = .idle
-            if isTranscribing { applyPillFrame() } else { dismissPill() }
+            dismissPill()
             return
         }
         finished.endedAt = Date()
@@ -708,12 +790,12 @@ final class MeetingController: ObservableObject {
         sessionAttendeeNames = .none
         phase = .idle
         enqueueTranscription(job)
-        applyPillFrame()
+        dismissPill()
     }
 
     // MARK: Background transcription queue
 
-    private struct TranscriptionJob {
+    struct TranscriptionJob: Sendable {
         var record: Meeting
         let micPath: String?
         let systemPath: String?
@@ -721,26 +803,24 @@ final class MeetingController: ObservableObject {
         let attendees: [(name: String, email: String?)]
     }
 
-    private func enqueueTranscription(_ job: TranscriptionJob) {
+    func enqueueTranscription(_ job: TranscriptionJob) {
+        transcriptionRevision += 1
+        let revision = transcriptionRevision
         transcribingTitles.append(job.record.title)
         Analytics.track("meeting_transcription_queued",
                         ["queue_depth": transcribingTitles.count])
         let previous = transcriptionChain
         let queueTimer = MeetingProcessingTimer()
-        transcriptionChain = Task { @MainActor in
+        transcriptionChain = Task(priority: .utility) { @MainActor in
             await previous?.value
             queueTimer.finish("transcription_queue")
-            await self.runTranscription(job)
+            if let runner = self.transcriptionRunner { await runner(job) }
+            else { await self.runTranscription(job) }
             if let index = self.transcribingTitles.firstIndex(of: job.record.title) {
                 self.transcribingTitles.remove(at: index)
             }
-            // The pill outlives the job only if something else needs it:
-            // another queued transcript, or a recording that started meanwhile.
-            if case .idle = self.phase, !self.isTranscribing {
-                self.dismissPill()
-            } else {
-                self.applyPillFrame()
-            }
+            // Completion never touches the next meeting's recording widget.
+            if self.transcriptionRevision == revision { self.transcriptionChain = nil }
         }
     }
 
@@ -748,24 +828,14 @@ final class MeetingController: ObservableObject {
         var record = job.record
         let totalTimer = MeetingProcessingTimer()
         defer { totalTimer.finish("transcription_total") }
-        // Keep the accuracy engine; reduce scheduling delays around it.
-        // load() falls back to Parakeet on its own when Qwen3 can't load
-        // (download failure, macOS < 15).
-        let modelTimer = MeetingProcessingTimer()
-        if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .qwen3 {
-            await TranscriptionService.shared.load(kind: .qwen3)
-        }
-        modelTimer.finish("speech_model_ready")
-        let processed = await Self.buildTranscriptResult(
-            micPath: job.micPath, systemPath: job.systemPath,
-            candidates: job.candidates)
+        let processed = await transcriptionWorker.process(job)
         record.transcript = processed.transcript
         record.originalTranscript = processed.originalTranscript
         record.kind = processed.kind.rawValue
-        Analytics.track("meeting_transcribed",
-                        ["transcript_chars": record.transcript.count,
-                         "engine": TranscriptionService.shared.kind.rawValue])
-        if record.transcript.isEmpty || Self.isNoiseFragment(record) {
+        let hasNote = (try? await Database.shared.read { [id = record.id] db in
+            try Note.filter(Column("meetingID") == id).fetchCount(db) > 0
+        }) ?? false
+        if (record.transcript.isEmpty || Self.isNoiseFragment(record)) && !hasNote && record.liveCorrections.isEmpty {
             // Nothing was said — or an aborted sliver of a recording that
             // would land in the brain looking like a real meeting. Keep
             // nothing, but say so plainly.
@@ -786,7 +856,11 @@ final class MeetingController: ObservableObject {
                               summary: record.summary, transcript: record.transcript)
             MeetingNotesService.shared.prepare(meetingID: record.id)
         }
-        notifyDone(record)
+        if record.transcript.isEmpty, hasNote || !record.liveCorrections.isEmpty {
+            Toast.show("Meeting and your note saved", duration: 4, position: .bottomRight)
+        } else {
+            notifyDone(record)
+        }
     }
 
     /// The user may already be editing notes while audio is processing.
@@ -873,7 +947,7 @@ final class MeetingController: ObservableObject {
     }
 
     /// A usable first name from one attendee entry. A calendar attendee is
-    /// often a bare email address, and `"michael.bird@amplitude.com"` has no
+    /// often a bare email address, and `"alex.rivera@example.com"` has no
     /// space — taking its "first word" put a raw address in the transcript as
     /// a speaker label. Derive a name from the local part instead, or nothing.
     nonisolated static func firstName(fromAttendee raw: String) -> String? {
@@ -889,7 +963,7 @@ final class MeetingController: ObservableObject {
     }
 
     /// Calendar attendees are the best source of real speaker names. For a
-    /// personal one-on-one titled like "Tommy Neith Weekly", calendars often
+    /// personal one-on-one titled like "Alex Morgan Weekly", calendars often
     /// omit attendees entirely; use the single non-owner name in that exact
     /// title pattern as equally bounded evidence.
     nonisolated static func speakerCandidates(eventTitle: String?, attendees: [String]) -> SpeakerCandidates {
@@ -924,8 +998,8 @@ final class MeetingController: ObservableObject {
     /// Stream the WAV from disk in 60s slices — an hour of audio is ~230MB
     /// decoded, and holding two full meetings' worth in RAM is exactly how
     /// transcription dies on long recordings. Peak memory here is one chunk.
-    private static func transcribeWavFile(atPath path: String) async -> String {
-        await transcribeWavChunks(atPath: path).map(\.text).joined(separator: " ")
+    nonisolated private static func transcribeWavFile(atPath path: String, service: TranscriptionService) async -> String {
+        await transcribeWavChunks(atPath: path, service: service).map(\.text).joined(separator: " ")
     }
 
     /// Max seconds per ASR slice for the ACTIVE engine. Qwen3 is built for
@@ -933,13 +1007,13 @@ final class MeetingController: ObservableObject {
     /// defect dictation hit; see VoiceController.chunkSeconds). Parakeet
     /// handles a minute comfortably. Slices stay 5s under each ceiling so a
     /// pause-seeking cut has room to move the boundary.
-    private static var maxSliceSeconds: Double {
-        TranscriptionService.shared.kind == .qwen3 ? 25 : 55
+    nonisolated private static func maxSliceSeconds(_ service: TranscriptionService) -> Double {
+        service.kind == .qwen3 ? 25 : 55
     }
 
     /// Whole-chunk fallback size for the active engine, same ceilings.
-    private static var chunkSeconds: Int {
-        TranscriptionService.shared.kind == .qwen3 ? 30 : 60
+    nonisolated private static func chunkSeconds(_ service: TranscriptionService) -> Int {
+        service.kind == .qwen3 ? 30 : 60
     }
 
     /// Where to end a slice that must be cut before the speech does: the
@@ -968,12 +1042,12 @@ final class MeetingController: ObservableObject {
 
     /// 60s chunk transcriptions with their start offsets — the coarse
     /// fallback shape when turn detection fails on a track.
-    private static func transcribeWavChunks(atPath path: String)
+    nonisolated private static func transcribeWavChunks(atPath path: String, service: TranscriptionService)
         async -> [(start: Double, text: String)] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
         let headerBytes: UInt64 = 44
-        let seconds = chunkSeconds
+        let seconds = chunkSeconds(service)
         let chunkBytes = 16000 * seconds * 2 // one chunk of mono Int16
         var offset = headerBytes
         var parts: [(start: Double, text: String)] = []
@@ -997,7 +1071,7 @@ final class MeetingController: ObservableObject {
                 }
             }
             let start = Double(offset - headerBytes) / 32000
-            let text = await TranscriptionService.shared.transcribe(samples)
+            let text = await service.transcribe(samples)
             if !text.isEmpty { parts.append((start, text)) }
             if isFinal { break }
             offset += UInt64(consumedBytes)
@@ -1006,7 +1080,7 @@ final class MeetingController: ObservableObject {
     }
 
     /// Seconds of audio in a 16k mono Int16 WAV.
-    private static func wavDuration(atPath path: String) -> Double {
+    nonisolated private static func wavDuration(atPath path: String) -> Double {
         let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? UInt64) ?? 0
         return size > 44 ? Double(size - 44) / 32000 : 0
     }
@@ -1016,11 +1090,11 @@ final class MeetingController: ObservableObject {
     /// back to coarse 60s turns rather than dropping that side of the
     /// conversation. Real failure mode: a quiet mic track losing every one
     /// of the user's turns while the remote track came through fine.
-    private static func turnsWithFallback(atPath path: String, speaker: String)
+    nonisolated private static func turnsWithFallback(atPath path: String, speaker: String, service: TranscriptionService)
         async -> [MeetingTurn] {
         let timer = MeetingProcessingTimer()
         defer { timer.finish(speaker == Self.ownerLabel ? "mic_transcription" : "remote_transcription") }
-        let turns = await transcribeTurns(atPath: path, speaker: speaker)
+        let turns = await transcribeTurns(atPath: path, speaker: speaker, service: service)
         let duration = wavDuration(atPath: path)
         let covered = turns.reduce(0.0) { $0 + Double($1.text.count) }
         // Under ~2 chars of text per second of audio across a multi-minute
@@ -1028,13 +1102,13 @@ final class MeetingController: ObservableObject {
         // one quiet side of a call still produces well above 2).
         let sparse = duration > 120 && covered / duration < 2
         guard turns.isEmpty || sparse else { return turns }
-        let chunks = await transcribeWavChunks(atPath: path)
+        let chunks = await transcribeWavChunks(atPath: path, service: service)
         let chunkChars = chunks.reduce(0) { $0 + $1.text.count }
         guard chunkChars > Int(covered) * 2, chunkChars > 40 else { return turns }
         Analytics.track("meeting_track_fallback",
                         ["speaker": speaker, "turn_chars": Int(covered),
                          "chunk_chars": chunkChars, "duration_s": Int(duration)])
-        let chunkLength = Double(chunkSeconds)
+        let chunkLength = Double(chunkSeconds(service))
         return chunks.map {
             MeetingTurn(start: $0.start, end: $0.start + chunkLength, speaker: speaker, text: $0.text)
         }
@@ -1043,7 +1117,7 @@ final class MeetingController: ObservableObject {
     /// Speech turns in a 16k WAV via energy gating, streamed — frame RMS at
     /// 0.1s, threshold adaptive over the track's noise floor, 1s of silence
     /// closes a turn. Memory cost: one float per frame.
-    private static func speechSegments(atPath path: String) -> [(start: Double, end: Double)] {
+    nonisolated private static func speechSegments(atPath path: String) -> [(start: Double, end: Double)] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
         try? handle.seek(toOffset: 44)
@@ -1121,8 +1195,8 @@ final class MeetingController: ObservableObject {
     }
 
     /// Transcribe each speech turn of one track, tagged with speaker + start.
-    private static func transcribeTurns(atPath path: String, speaker: String,
-                                        segments: [(start: Double, end: Double)]? = nil)
+    nonisolated private static func transcribeTurns(atPath path: String, speaker: String,
+                                        segments: [(start: Double, end: Double)]? = nil, service: TranscriptionService)
         async -> [MeetingTurn] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
@@ -1130,7 +1204,7 @@ final class MeetingController: ObservableObject {
         for segment in segments ?? speechSegments(atPath: path) {
             var offset = segment.start
             while offset < segment.end {
-                let maxSlice = maxSliceSeconds
+                let maxSlice = maxSliceSeconds(service)
                 let hardEnd = min(offset + maxSlice, segment.end) // ASR-safe length
                 let byteStart = 44 + UInt64(offset * 16000) * 2
                 let byteCount = Int((hardEnd - offset) * 16000) * 2
@@ -1151,7 +1225,7 @@ final class MeetingController: ObservableObject {
                         sliceEnd = offset + Double(cut) / 16000
                     }
                 }
-                let text = await TranscriptionService.shared.transcribe(samples)
+                let text = await service.transcribe(samples)
                 if !text.isEmpty {
                     turns.append(MeetingTurn(start: offset, end: sliceEnd, speaker: speaker, text: text))
                 }
@@ -1166,25 +1240,27 @@ final class MeetingController: ObservableObject {
     ///   **Speaker 2** [3:19]: …
     /// Falls back to the old two-block format when turn detection finds
     /// nothing but whole-file transcription would (very quiet audio).
-    static func buildTranscript(micPath: String?, systemPath: String?,
+    nonisolated static func buildTranscript(micPath: String?, systemPath: String?,
                                 candidates: SpeakerCandidates = .none,
                                 overlapDiarization: Bool = true) async -> String {
         await buildTranscriptResult(micPath: micPath, systemPath: systemPath,
                                     candidates: candidates, overlapDiarization: overlapDiarization).transcript
     }
 
-    static func buildTranscriptResult(micPath: String?, systemPath: String?,
+    nonisolated static func buildTranscriptResult(micPath: String?, systemPath: String?,
                                       candidates: SpeakerCandidates = .none,
-                                      overlapDiarization: Bool = true) async -> MeetingTranscriptResult {
+                                      overlapDiarization: Bool = true,
+                                      corrections: [LiveTranscriptCorrection] = [],
+                                      service: TranscriptionService = .shared) async -> MeetingTranscriptResult {
         // The diarizer owns separate models/state. Start it while the ASR
         // processes the tracks, then join before assigning any speaker labels.
-        // ASR slices themselves remain serial on the shared speech engine.
+        // ASR slices themselves remain serial on the supplied speech engine.
         let knownRemote = candidates.fromAttendees && candidates.names.count == 1
         async let diarized = diarizeRemote(path: systemPath, skip: knownRemote || !overlapDiarization)
         async let echo = AudioEchoEvidence.analyze(micPath: micPath, systemPath: systemPath)
         var turns: [MeetingTurn] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
-            turns += await turnsWithFallback(atPath: micPath, speaker: Self.ownerLabel)
+            turns += await turnsWithFallback(atPath: micPath, speaker: Self.ownerLabel, service: service)
         }
         if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
             var sysTurns: [MeetingTurn]
@@ -1196,7 +1272,7 @@ final class MeetingController: ObservableObject {
                 // skip it and label every remote turn with that attendee.
                 // Only ever on attendee-list evidence: a name guessed from an
                 // event title is not enough to put on someone's words.
-                sysTurns = await turnsWithFallback(atPath: systemPath, speaker: only)
+                sysTurns = await turnsWithFallback(atPath: systemPath, speaker: only, service: service)
                 sysTurns = sysTurns.map {
                     MeetingTurn(start: $0.start, end: $0.end, speaker: only, text: $0.text)
                 }
@@ -1208,11 +1284,13 @@ final class MeetingController: ObservableObject {
                     sysTurns = []
                     for interval in Self.speakerIntervals(speech: speechSegments(atPath: systemPath), voices: voices) {
                         sysTurns += await transcribeTurns(atPath: systemPath, speaker: interval.speaker,
-                                                          segments: [(interval.start, interval.end)])
+                                                          segments: [(interval.start, interval.end)], service: service)
                     }
-                    if sysTurns.isEmpty { sysTurns = await turnsWithFallback(atPath: systemPath, speaker: Self.remoteLabel) }
+                    if sysTurns.isEmpty { sysTurns = await turnsWithFallback(atPath: systemPath, speaker: Self.remoteLabel, service: service) }
                 } else {
-                    sysTurns = await turnsWithFallback(atPath: systemPath, speaker: Self.remoteLabel)
+                    let known = voices.first?.speaker
+                    let speaker = known?.hasPrefix("known:") == true ? String(known!.dropFirst(6)) : Self.remoteLabel
+                    sysTurns = await turnsWithFallback(atPath: systemPath, speaker: speaker, service: service)
                 }
             }
             turns += sysTurns
@@ -1225,11 +1303,21 @@ final class MeetingController: ObservableObject {
             let cleaned = MeetingChannelDedupe.clean(mic: turns.filter { $0.speaker == Self.ownerLabel },
                                                     system: turns.filter { $0.speaker != Self.ownerLabel }, echo: await echo)
             turns = (cleaned.mic + cleaned.system).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+            // Apply human edits before automatic naming so channel identity
+            // is still available for matching the microphone and remote audio.
+            if !corrections.isEmpty {
+                turns = await MeetingLiveEdits.apply(corrections, to: turns) { edge in
+                    let path = edge.speaker == Self.ownerLabel ? micPath : systemPath
+                    guard let path else { return [] }
+                    return await transcribeTurns(atPath: path, speaker: edge.speaker,
+                                                 segments: [(edge.start, edge.end)], service: service)
+                }
+            }
             if cleaned.kind == .listening {
                 var labels: [String: String] = [:]
                 turns = turns.map { turn in
                     var copy = turn
-                    if turn.speaker == "Speaker unclear" { return copy }
+                    if turn.speaker == "Speaker unclear" || !MeetingSource.genericSpeaker(turn.speaker) { return copy }
                     if labels[turn.speaker] == nil { labels[turn.speaker] = "Speaker \(labels.count + 1)" }
                     copy.speaker = labels[turn.speaker]!
                     return copy
@@ -1241,18 +1329,24 @@ final class MeetingController: ObservableObject {
         }
         var sections: [String] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
-            let text = await transcribeWavFile(atPath: micPath)
+            let text = await transcribeWavFile(atPath: micPath, service: service)
             if !text.isEmpty {
                 sections.append("\(Self.ownerLabel):\n\(text)")
             }
         }
         if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
-            let text = await transcribeWavFile(atPath: systemPath)
+            let text = await transcribeWavFile(atPath: systemPath, service: service)
             if !text.isEmpty {
                 sections.append("\(Self.remoteLabel):\n\(text)")
             }
         }
         let fallback = sections.joined(separator: "\n\n")
+        if !corrections.isEmpty, !corrections.compactMap(\.text).isEmpty {
+            let edited = await MeetingLiveEdits.apply(corrections, to: []) { _ in [] }
+            let rendered = MeetingSource.render(edited)
+            return MeetingTranscriptResult(transcript: fallback.isEmpty ? rendered : fallback + "\n\nCorrections made during recording:\n\n" + rendered,
+                                           originalTranscript: fallback, kind: .meeting)
+        }
         return MeetingTranscriptResult(transcript: fallback, originalTranscript: fallback, kind: .meeting)
     }
 
@@ -1271,7 +1365,7 @@ final class MeetingController: ObservableObject {
                                              voices: [(speaker: String, start: Double, end: Double)]) -> [MeetingTurn] {
         var names: [String: String] = [:]
         for voice in voices.sorted(by: { $0.start < $1.start }) where names[voice.speaker] == nil {
-            names[voice.speaker] = "Speaker \(names.count + 2)"
+            names[voice.speaker] = voice.speaker.hasPrefix("known:") ? String(voice.speaker.dropFirst(6)) : "Speaker \(names.count + 2)"
         }
         var result: [MeetingTurn] = []
         for segment in speech {
@@ -1435,24 +1529,7 @@ final class MeetingController: ObservableObject {
                     : turn
             }
         }
-        var votes: [String: [String: Int]] = [:]
-        for (index, turn) in turns.enumerated() {
-            let lower = turn.text.lowercased()
-            for name in names {
-                let escaped = NSRegularExpression.escapedPattern(for: name.lowercased())
-                if turn.speaker.hasPrefix("Speaker"),
-                   lower.range(of: "\\b(i'm|i am|this is|it's) \\b" + escaped + "\\b",
-                               options: .regularExpression) != nil {
-                    votes[turn.speaker, default: [:]][name, default: 0] += 3
-                }
-                if lower.range(of: "\\b" + escaped + "[,?]", options: .regularExpression) != nil {
-                    if let next = turns[(index + 1)...].first(where: { $0.speaker != turn.speaker }),
-                       next.speaker.hasPrefix("Speaker") {
-                        votes[next.speaker, default: [:]][name, default: 0] += 1
-                    }
-                }
-            }
-        }
+        let votes = MeetingSpeakerHints.votes(in: turns, names: names)
         var assignment: [String: String] = [:]
         var usedNames: Set<String> = []
         let ranked = votes
@@ -1475,20 +1552,38 @@ final class MeetingController: ObservableObject {
     /// failure): audio on disk + empty transcript. Finish the job at launch —
     /// a recording must never quietly rot into the 30-day sweep.
     func recoverOrphanedTranscriptions() {
+        guard !isRecoveringTranscripts else { return }
+        isRecoveringTranscripts = true
         // Ride the same serial chain as live transcription jobs — the ASR
         // models can't take interleaved calls from two transcriptions.
         let previous = transcriptionChain
-        transcriptionChain = Task { @MainActor in
+        transcriptionRevision += 1
+        let revision = transcriptionRevision
+        transcriptionChain = Task(priority: .utility) { @MainActor in
+            defer {
+                isRecoveringTranscripts = false
+                if transcriptionRevision == revision { transcriptionChain = nil }
+            }
             await previous?.value
             let orphans: [Meeting] = (try? await Database.shared.read { db in
                 try Meeting.filter(Column("transcript") == "").fetchAll(db)
             }) ?? []
             for var orphan in orphans {
-                guard case .idle = phase else { return }
+                guard orphan.id != meeting?.id else { continue }
+                let hasNote = (try? await Database.shared.read { [id = orphan.id] db in
+                    try Note.filter(Column("meetingID") == id).fetchCount(db) > 0
+                }) ?? false
                 let micOK = orphan.micAudioPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
                 let sysOK = orphan.systemAudioPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
                 guard micOK || sysOK else {
-                    // Audio gone — the row is unrecoverable noise.
+                    // A note or human correction remains valuable even if
+                    // the recording was lost. Preserve its meeting link.
+                    if hasNote || !orphan.liveCorrections.isEmpty {
+                        let edited = await MeetingLiveEdits.apply(orphan.liveCorrections, to: []) { _ in [] }
+                        orphan.transcript = MeetingSource.render(edited)
+                        _ = try? await Database.shared.write { [orphan] in try Self.saveTranscription(orphan, in: $0) }
+                        continue
+                    }
                     try? await Database.shared.write { [orphan] in
                         _ = try Meeting.deleteOne($0, key: orphan.id)
                     }
@@ -1498,24 +1593,19 @@ final class MeetingController: ObservableObject {
                    let mtime = try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date {
                     orphan.endedAt = mtime
                 }
-                // Same engine policy as live jobs: accuracy first, with
-                // load()'s own fallback to Parakeet when Qwen3 can't load.
-                if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .qwen3 {
-                    await TranscriptionService.shared.load(kind: .qwen3)
-                }
-                let processed = await Self.buildTranscriptResult(
-                    micPath: orphan.micAudioPath, systemPath: orphan.systemAudioPath,
+                let processed = await transcriptionWorker.process(TranscriptionJob(
+                    record: orphan, micPath: orphan.micAudioPath, systemPath: orphan.systemAudioPath,
                     // Known people, not this meeting's attendee list —
                     // usable as naming hints, never as proof of who spoke.
                     candidates: SpeakerCandidates(
                         names: People.all().prefix(25).compactMap {
                             $0.name.split(separator: " ").first.map(String.init)
                         },
-                        fromAttendees: false))
+                        fromAttendees: false), attendees: []))
                 orphan.transcript = processed.transcript
                 orphan.originalTranscript = processed.originalTranscript
                 orphan.kind = processed.kind.rawValue
-                if orphan.transcript.isEmpty || Self.isNoiseFragment(orphan) {
+                if (orphan.transcript.isEmpty || Self.isNoiseFragment(orphan)) && !hasNote && orphan.liveCorrections.isEmpty {
                     await Self.deleteArtifacts(of: orphan)
                 } else {
                     guard let saved = try? await Database.shared.write({ [orphan] in
@@ -1527,10 +1617,7 @@ final class MeetingController: ObservableObject {
                                       summary: orphan.summary, transcript: orphan.transcript)
                     MeetingNotesService.shared.prepare(meetingID: orphan.id)
                     Analytics.track("meeting_transcription_recovered")
-                    let meetingID = orphan.id
-                    Toast.show("Recovered meeting: \(orphan.title)",
-                               actionLabel: "Open",
-                               action: { MeetingDocumentController.shared.open(meetingID: meetingID) })
+                    Toast.show("Recovered meeting: \(orphan.title)", duration: 4, position: .bottomRight)
                 }
             }
         }
@@ -1568,19 +1655,12 @@ final class MeetingController: ObservableObject {
     /// fittingSize lies pre-layout (collapsed pill, "S" button) and
     /// GeometryReader only reports the space it was GIVEN, so a too-small
     /// panel stays crushed and thrashes. Fixed sizes end the whole saga.
-    static func pillSize(provisional: Bool, transcribing: Bool, editingTitle: Bool = false) -> CGSize {
-        // Height covers header + waveform + action row + text-only Cancel.
+    static func pillSize(provisional: Bool, editingTitle: Bool = false) -> CGSize {
+        // The provisional card includes Cancel; a kept recording reveals
+        // its name editor and Cancel together when expanded on hover.
         if provisional { return CGSize(width: 320, height: 186) }
-        if transcribing { return CGSize(width: 216, height: 40) }
-        if editingTitle { return CGSize(width: 248, height: 140) }
-        return CGSize(width: 248, height: 76)
-    }
-
-    /// The pill shows the transcribing spinner only when nothing is being
-    /// recorded — a new meeting takes the pill over while jobs finish behind it.
-    var pillShowsTranscribing: Bool {
-        if case .idle = phase { return isTranscribing }
-        return false
+        if editingTitle { return CGSize(width: 400, height: 444) }
+        return CGSize(width: 186, height: 44)
     }
 
     var pointerIsInsidePill: Bool { panel?.frame.contains(NSEvent.mouseLocation) == true }
@@ -1590,7 +1670,7 @@ final class MeetingController: ObservableObject {
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         pillFrameRevision += 1
         let revision = pillFrameRevision
-        let size = Self.pillSize(provisional: isProvisional, transcribing: pillShowsTranscribing, editingTitle: titleEditorVisible)
+        let size = Self.pillSize(provisional: isProvisional, editingTitle: titleEditorVisible)
         let visible = screen.visibleFrame
         let frame = NSRect(x: visible.maxX - size.width - 24,
                            y: visible.maxY - size.height - 24,
@@ -1615,13 +1695,15 @@ final class MeetingController: ObservableObject {
         pill.onCancel = { [weak self] in self?.finishTitleEditing() }
         pill.onResignKey = { [weak self] in
             self?.flushRecordingTitle()
+            guard self?.recordingNote.flush() != false else { return }
+            guard self?.stopConfirmationVisible != true else { return }
             self?.setTitleEditorVisible(false)
         }
         pill.onDismiss = { [weak self] in self?.panel = nil }
         panel = pill
         // Top-right, out of the way — a meeting indicator, not a dialog.
         // Frame comes from the fixed size table, never from measurement.
-        let size = Self.pillSize(provisional: isProvisional, transcribing: pillShowsTranscribing)
+        let size = Self.pillSize(provisional: isProvisional)
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
             pill.setFrame(
@@ -1663,21 +1745,10 @@ final class MeetingController: ObservableObject {
     private func notifyDone(_ meeting: Meeting) {
         if meeting.transcript.isEmpty {
             Toast.show("No speech detected — nothing was saved",
-                       systemImage: "waveform.slash")
+                       systemImage: "waveform.slash", duration: 4, position: .bottomRight)
             return
         }
-        let transcript = meeting.transcript
-        let meetingID = meeting.id
-        Toast.show("Meeting transcribed",
-                   actionLabel: "Open",
-                   action: {
-                       MeetingDocumentController.shared.open(meetingID: meetingID)
-                   },
-                   secondaryLabel: "Copy",
-                   secondaryAction: {
-                       NSPasteboard.general.clearContents()
-                       NSPasteboard.general.setString(transcript, forType: .string)
-                   })
+        Toast.show("Transcript ready: \(meeting.title)", duration: 4, position: .bottomRight)
     }
 }
 
@@ -1686,8 +1757,21 @@ struct MeetingPillView: View {
     @State private var now = Date()
     @State private var titleDraft = ""
     @State private var hovering = false
+    @State private var noteFocused = false
+    @State private var showingNote = false
     @State private var collapseTask: Task<Void, Never>?
     @FocusState private var titleFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(controller: MeetingController, showingNote: Bool = false) {
+        self.controller = controller
+        _showingNote = State(initialValue: showingNote)
+    }
+
+    private var fixedSize: CGSize {
+        MeetingController.pillSize(provisional: controller.isProvisional,
+                                   editingTitle: controller.titleEditorVisible)
+    }
     private var isRecording: Bool {
         if case .recording = controller.phase { return true }
         return false
@@ -1701,23 +1785,11 @@ struct MeetingPillView: View {
             Group {
                 if case .recording(let start) = controller.phase, controller.isProvisional {
                     provisionalCard(start: start)
-                } else if isRecording {
-                    VStack(spacing: 0) {
-                        pillRow
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .frame(width: 248, height: 76)
-                        titleEditor
-                            .padding(.horizontal, 14)
-                            .padding(.bottom, 8)
-                            .frame(width: 248, height: 64)
-                            .allowsHitTesting(controller.titleEditorVisible)
-                            .accessibilityHidden(!controller.titleEditorVisible)
-                    }
                 } else {
                     pillRow
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
+                        .frame(width: fixedSize.width, height: fixedSize.height, alignment: .top)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -1744,12 +1816,12 @@ struct MeetingPillView: View {
             collapseTask?.cancel()
             if inside {
                 controller.setTitleEditorVisible(true)
-            } else if !titleFocused {
+            } else if !titleFocused && !noteFocused {
                 // Resizing under the pointer can briefly produce an exit.
                 collapseTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(400))
-                    guard !Task.isCancelled, !hovering, !titleFocused,
-                          !controller.pointerIsInsidePill else { return }
+                    guard !Task.isCancelled, !hovering, !titleFocused, !noteFocused,
+                          !controller.stopConfirmationVisible, !controller.pointerIsInsidePill else { return }
                     controller.setTitleEditorVisible(false)
                 }
             }
@@ -1758,7 +1830,7 @@ struct MeetingPillView: View {
             if !focused {
                 controller.flushRecordingTitle()
                 titleDraft = controller.recordingTitle
-                if !hovering && !controller.pointerIsInsidePill { controller.setTitleEditorVisible(false) }
+                if !hovering && !noteFocused && !controller.pointerIsInsidePill { controller.setTitleEditorVisible(false) }
             }
         }
         .onChange(of: controller.recordingTitle) { _, title in
@@ -1770,8 +1842,18 @@ struct MeetingPillView: View {
                 titleDraft = controller.recordingTitle
             }
         }
+        .onChange(of: controller.stopConfirmationVisible) { _, visible in
+            if !visible && !hovering && !titleFocused && !noteFocused { controller.setTitleEditorVisible(false) }
+        }
+        .confirmationDialog("Stop this meeting?", isPresented: $controller.stopConfirmationVisible,
+                            titleVisibility: .visible) {
+            Button("Stop & transcribe") { controller.confirmStopRecording() }
+            Button("Keep recording", role: .cancel) { }
+        } message: {
+            Text("Recording will end and My Man will prepare the full transcript. Your recording will be saved.")
+        }
         .onKeyPress(.escape) {
-            guard controller.titleEditorVisible else { return .ignored }
+            guard controller.titleEditorVisible, !controller.stopConfirmationVisible else { return .ignored }
             finishEditing()
             return .handled
         }
@@ -1780,6 +1862,7 @@ struct MeetingPillView: View {
     }
 
     private func finishEditing() {
+        guard controller.recordingNote.flush() else { return }
         hovering = false
         titleFocused = false
         controller.finishTitleEditing()
@@ -1831,7 +1914,7 @@ struct MeetingPillView: View {
                     .help("Dismiss — nothing is saved")
             }
             HStack(spacing: 8) {
-                Circle().fill(.red).frame(width: 8, height: 8)
+                MeetingRecordingIndicator()
                 waveform
                 timerText(since: start)
                 Spacer()
@@ -1910,35 +1993,50 @@ struct MeetingPillView: View {
             HStack(spacing: 10) {
             switch controller.phase {
             case .idle:
-                if controller.isTranscribing {
-                    ProgressView().controlSize(.small)
-                    Text(controller.transcribingTitles.count > 1
-                         ? "Transcribing \(controller.transcribingTitles.count) meetings…"
-                         : "Transcribing meeting…")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textSecondary)
-                } else {
-                    EmptyView()
-                }
+                EmptyView()
             case .recording(let start):
-                Circle().fill(.red).frame(width: 8, height: 8)
+                MeetingRecordingIndicator()
                 waveform
                 timerText(since: start)
-                Button {
-                    controller.toggle()
-                } label: {
-                    Text("Stop")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.background)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(MM.Colors.textPrimary))
-                        .clickable(minSize: 26)
+                if controller.titleEditorVisible {
+                    Spacer(minLength: 0)
+                    Button {
+                        controller.requestStopRecording()
+                    } label: {
+                        Text("Stop")
+                            .font(MM.Fonts.secondary)
+                            .foregroundStyle(MM.Colors.background)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(MM.Colors.textPrimary))
+                            .clickable(minSize: 26)
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
-                .buttonStyle(.plain)
             }
             }
-            if isRecording {
+            if isRecording && controller.titleEditorVisible {
+                titleEditor
+                VStack(spacing: MM.Layout.spacing / 2) {
+                    Picker("Recording details", selection: $showingNote) {
+                        Text("Transcript").tag(false)
+                        Text("My note").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    if showingNote {
+                        MeetingRecordingNoteView(draft: controller.recordingNote) { focused in
+                            noteFocused = focused
+                        }
+                    } else {
+                        MeetingLiveTranscriptView(transcript: controller.liveTranscript,
+                                                  saveFailed: controller.liveEditSaveFailed,
+                                                  retry: { controller.liveTranscript.retry() })
+                    }
+                }
+                    .frame(height: 302)
+                    .transition(.opacity)
                 Button {
                     controller.discardRecording()
                 } label: {
@@ -1967,5 +2065,22 @@ struct MeetingPillView: View {
     private func elapsed(since start: Date) -> String {
         let seconds = max(0, Int(now.timeIntervalSince(start)))
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+struct MeetingRecordingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(MM.Colors.danger)
+            .frame(width: 8, height: 8)
+            .scaleEffect(reduceMotion || pulsing ? 1 : 0.85)
+            .opacity(reduceMotion || pulsing ? 1 : 0.55)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 1).repeatForever(autoreverses: true), value: pulsing)
+            .onAppear { pulsing = !reduceMotion }
+            .onChange(of: reduceMotion) { _, value in pulsing = !value }
+            .accessibilityLabel("Recording")
     }
 }

@@ -8,6 +8,13 @@ import SwiftUI
 // delivery survives App Nap where timers can't (a 5-min timer is only a
 // backstop). Reads use a FRESH EKEventStore each time; cached stores go stale.
 
+struct CalendarMeetingSnapshot: Sendable {
+    let id: String
+    let title: String?
+    let joinURL: URL
+    let startsAt: Date
+}
+
 @MainActor
 final class CalendarWatcher {
     /// Fired ~45s before an event with a meeting link: start provisional
@@ -19,6 +26,14 @@ final class CalendarWatcher {
     private var refreshTimer: Timer?
 
     private var began = false
+    private let eventQueue = DispatchQueue(label: "com.muckstack.myman.calendar", qos: .utility)
+    private let loadEvents: @Sendable () -> [CalendarMeetingSnapshot]
+    private var refreshing = false
+    private var refreshPending = false
+
+    init(loadEvents: @escaping @Sendable () -> [CalendarMeetingSnapshot] = { CalendarWatcher.loadUpcomingMeetings() }) {
+        self.loadEvents = loadEvents
+    }
 
     func start() {
         // The onboarding checklist owns the one-shot permission prompt.
@@ -67,30 +82,61 @@ final class CalendarWatcher {
         refresh()
     }
 
-    private func refresh() {
+    func refresh() {
+        // EventKit can block on the calendar daemon for seconds (MYMAN-H).
+        // Keep all EventKit objects on a background queue and only send value
+        // snapshots to the main actor. Collapse notification bursts into one
+        // follow-up read rather than enqueueing an unbounded backlog.
+        guard !refreshing else {
+            refreshPending = true
+            return
+        }
+        refreshing = true
+        eventQueue.async { [weak self, loadEvents] in
+            let events = loadEvents()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.schedule(events, now: Date())
+                self.refreshing = false
+                if self.refreshPending {
+                    self.refreshPending = false
+                    self.refresh()
+                }
+            }
+        }
+    }
+
+    nonisolated private static func loadUpcomingMeetings() -> [CalendarMeetingSnapshot] {
+        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
         // Fresh store per read — cached EKEventStores serve stale events.
         let store = EKEventStore()
         let now = Date()
         let predicate = store.predicateForEvents(
             withStart: now, end: now.addingTimeInterval(12 * 3600), calendars: nil)
-        let events = store.events(matching: predicate)
-
-        for event in events {
+        return store.events(matching: predicate).compactMap { event in
             guard let id = event.eventIdentifier,
-                  !nudgedEventIDs.contains(id),
+                  let startsAt = event.startDate,
+                  !isDeclined(event),
+                  let joinURL = meetingURL(in: event)
+            else { return nil }
+            return CalendarMeetingSnapshot(id: id, title: event.title,
+                                           joinURL: joinURL, startsAt: startsAt)
+        }
+    }
+
+    private func schedule(_ events: [CalendarMeetingSnapshot], now: Date) {
+        for event in events {
+            let id = event.id
+            guard !nudgedEventIDs.contains(id),
                   nudgeTimers[id] == nil,
-                  Self.meetingLink(in: event) != nil,
-                  !Self.isDeclined(event),
-                  event.startDate > now.addingTimeInterval(-120)
+                  event.startsAt > now.addingTimeInterval(-120)
             else { continue }
 
-            guard let startsAt = event.startDate else { continue }
+            let startsAt = event.startsAt
             let nudgeAt = startsAt.addingTimeInterval(-45)
             let delay = nudgeAt.timeIntervalSince(now)
-            // Capture an immutable event snapshot for the timer. EKEvent is
-            // not Sendable and may be invalidated by a calendar refresh.
             let title = event.title
-            let joinURL = Self.meetingURL(in: event)
+            let joinURL = event.joinURL
             if delay <= 0 {
                 nudge(id: id, title: title, joinURL: joinURL, startsAt: startsAt)
             } else {
@@ -107,19 +153,19 @@ final class CalendarWatcher {
     }
 
     /// Zoom/Meet/Teams/Webex/FaceTime link anywhere in the event.
-    static func meetingLink(in event: EKEvent) -> String? {
+    nonisolated static func meetingLink(in event: EKEvent) -> String? {
         meetingURL(in: event) != nil ? "link" : nil
     }
 
     /// The user's own RSVP. A declined invite still sits on the calendar with
     /// its meeting link intact — nudging (or auto-recording!) for a call the
     /// user said no to is pure noise.
-    static func isDeclined(_ event: EKEvent) -> Bool {
+    nonisolated static func isDeclined(_ event: EKEvent) -> Bool {
         event.attendees?.first(where: { $0.isCurrentUser })?.participantStatus == .declined
     }
 
     /// The actual joinable URL, extracted from url/location/notes.
-    static func meetingURL(in event: EKEvent) -> URL? {
+    nonisolated static func meetingURL(in event: EKEvent) -> URL? {
         let haystack = [
             event.url?.absoluteString,
             event.location,
