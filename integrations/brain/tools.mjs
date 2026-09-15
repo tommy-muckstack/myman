@@ -38,7 +38,7 @@ export const tools = {
       state: z.enum(['all', 'open', 'done']).default('all'), ...visualFilters, limit: limit.default(20), offset }).strict(),
   },
   screenshots: {
-    description: 'One-call screenshot retrieval by meeting ID, export path, or description such as Jared demo; or explicit time range. Ambiguous calls return candidates instead of guessing. Filter optional app, tags, exclude_tags, OCR query, and unique (one representative per near-duplicate sequence). Returns file paths, titles, local times, links, heuristic tags/sensitivity hints, and thumbnail references. Screenshots are primary sources for visual/design tasks. Use image size=thumbnail to triage candidates before requesting originals.',
+    description: 'One-call screenshot retrieval by meeting ID, export path, or description such as Jordan demo; or explicit time range. Ambiguous calls return candidates instead of guessing. Filter optional app, tags, exclude_tags, OCR query, and unique (one representative per near-duplicate sequence). Returns file paths, titles, local times, links, heuristic tags/sensitivity hints, and thumbnail references. Screenshots are primary sources for visual/design tasks. Use image size=thumbnail to triage candidates before requesting originals.',
     schema: z.object({ meeting: z.string().trim().min(1).max(500).optional(), after: z.iso.datetime({ offset: true }).optional(), before: z.iso.datetime({ offset: true }).optional(), query: z.string().trim().min(1).max(300).optional(), ...visualFilters, limit: limit.default(50), offset }).strict(),
   },
   meeting_screenshots: {

@@ -10,7 +10,7 @@ import CryptoKit
 // stays the app's working store.
 
 enum Brain {
-    // Home root, tommy-brain style — and unlike ~/Documents, no TCC prompt.
+    // Use the current user’s home folder; unlike ~/Documents, no TCC prompt.
     static var root: URL {
         if let root = VerificationPaths.root { return root.resolvingSymlinksInPath().appendingPathComponent("Brain") }
         return FileManager.default.homeDirectoryForCurrentUser
@@ -55,7 +55,7 @@ enum Brain {
             - `tools/server.mjs` — read-only retrieval over local stdio MCP
             - `tools/app-server.mjs` — permission-controlled app actions over local stdio MCP
 
-            From this folder, run `node tools/cli.mjs --root "$PWD" screenshots --meeting "Jared demo"`.
+            From this folder, run `node tools/cli.mjs --root "$PWD" screenshots --meeting "Jordan demo"`.
             Add `--exclude-tag slide-deck`, `--app Chrome`, `--tag web-app`, or `--unique` as needed.
             For a time range, use `--after 2026-09-01T00:00:00-04:00 --before 2026-09-02T00:00:00-04:00`.
             Run `node tools/cli.mjs --root "$PWD" status` or `--help` to discover other commands.
@@ -80,7 +80,7 @@ enum Brain {
             Canonical, auto-synced record of the user's My Man captures.
             The companion ships here: `node tools/cli.mjs --root "$PWD" --help` (Node.js 22+).
             Discover explicit app actions with `node tools/cli.mjs actions`. Use `invoke` to capture, edit, record or manage content only when requested. Poll job IDs after timeouts instead of repeating mutations. The updated app must be running. Settings → Agents grants start off; the CLI cannot enable them. Delete requires confirm=true. Brain MCP is read-only; app actions use the CLI or separate app-server.mjs MCP. Discover live support first. New workflows include capture compare, word targets, record export --edits, wait, and font quality.
-            Start with `screenshots --meeting "Jared demo" --exclude-tag slide-deck` for visual retrieval.
+            Start with `screenshots --meeting "Jordan demo" --exclude-tag slide-deck` for visual retrieval.
             `--meeting` accepts a meeting ID, export path, or description; ambiguous matches return candidates.
             Use `image '{"path":"screenshots/returned-file.md","size":"thumbnail"}'` for a compact visual preview.
             Screenshots carry explicit meeting links, local timestamps, OCR, and best-effort tags/sensitivity hints.

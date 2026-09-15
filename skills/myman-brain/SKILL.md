@@ -61,7 +61,7 @@ available from existing exports while the app is closed or app actions are disab
 
 Use `myman_brain_status` to check availability. For visual retrieval, prefer
 `myman_brain_screenshots`: `meeting` accepts a call ID/path or description,
-such as "Jared demo". Combine `app`, `tags`, `exclude_tags`, and `unique` as needed.
+such as "Jordan demo". Combine `app`, `tags`, `exclude_tags`, and `unique` as needed.
 Ambiguous calls return candidates rather than selecting one silently. Other
 questions can use collect, search, recent, read, or tasks. The data belongs to the Mac running MyMan, normally in
 `~/MyManBrain`. An empty cloud-computer folder is not the user's Brain.
@@ -94,13 +94,13 @@ returned `path`. Report partial scans, missing/undated exports, and legacy
 coverage instead of presenting them as a complete history.
 
 Examples:
-- “Summarize all my calls with Jared”: collect meetings with participant Jared,
+- “Summarize all my calls with Jordan”: collect meetings with participant Jordan,
   paginate, then read all matching calls. Multiple calls are expected here.
-- “Screenshots from the Jared demo”: call `screenshots` with `meeting: "Jared demo"`.
+- “Screenshots from the Jordan demo”: call `screenshots` with `meeting: "Jordan demo"`.
   To exclude slides, add `exclude_tags: ["slide-deck"]`; inspect returned hints and
   previews rather than assuming a heuristic label is certain. A complete visual
   reference set may include untagged images.
-- “Screenshots from my call with Jared and Zoe”: use `meetings` to resolve the
+- “Screenshots from my call with Jordan and Zoe”: use `meetings` to resolve the
   particular call, then `collect` with `kinds: ["screenshots"]` and `during`
   set to its returned path. `meeting_screenshots` is a convenience equivalent.
   For a singular ambiguous call, distinguish dates/titles or ask which call;

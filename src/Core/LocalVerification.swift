@@ -55,7 +55,7 @@ import GRDB
                 for (id, title) in [(themeA, "Fixture capture design"), (themeB, "Fixture planning")] {
                     try db.execute(sql: "INSERT INTO captureTheme(id,title,signature,pinned) VALUES(?,?,?,1)", arguments: [id, title, "fixture:" + id])
                 }
-                try Meeting(id: meetingID, title: "CLI fixture meeting with Alex", startedAt: Date().addingTimeInterval(-600), endedAt: Date().addingTimeInterval(-300), transcript: "Alex: We reviewed the capture design and agreed to make screenshots easier to find. Tommy: I will review the interface tomorrow.", summary: "## Summary\nReviewed capture design and screenshot retrieval.").insert(db)
+                try Meeting(id: meetingID, title: "CLI fixture meeting with Alex", startedAt: Date().addingTimeInterval(-600), endedAt: Date().addingTimeInterval(-300), transcript: "Alex: We reviewed the capture design and agreed to make screenshots easier to find. Casey: I will review the interface tomorrow.", summary: "## Summary\nReviewed capture design and screenshot retrieval.").insert(db)
             }
             let capture = CaptureController(), meetings = MeetingController(), voice = VoiceController()
             let actions = AgentActions(capture: capture, meetings: meetings, voice: voice)

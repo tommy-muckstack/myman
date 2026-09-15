@@ -6,18 +6,18 @@ import XCTest
 final class MeetingLiveEditsTests: XCTestCase {
     func testAddressedQuestionIsOnlyASuggestionUntilEvidenceAccumulates() {
         let turns = [
-            MeetingTurn(start: 0, end: 4, speaker: "You", text: "Tommy what do you think?"),
+            MeetingTurn(start: 0, end: 4, speaker: "You", text: "Casey what do you think?"),
             MeetingTurn(start: 5, end: 9, speaker: "Speaker 2", text: "I think Friday works.")
         ]
-        let candidates = SpeakerCandidates(names: ["Tommy", "Jamie"], fromAttendees: true)
-        XCTAssertEqual(MeetingSpeakerHints.suggestions(in: turns, names: candidates.names)["Speaker 2"], "Tommy")
+        let candidates = SpeakerCandidates(names: ["Casey", "Jamie"], fromAttendees: true)
+        XCTAssertEqual(MeetingSpeakerHints.suggestions(in: turns, names: candidates.names)["Speaker 2"], "Casey")
         XCTAssertEqual(MeetingController.nameSpeakers(in: turns, candidates: candidates)[1].speaker, "Speaker 2")
         let repeated = turns + [
-            MeetingTurn(start: 10, end: 14, speaker: "You", text: "Tommy, can you send it?"),
+            MeetingTurn(start: 10, end: 14, speaker: "You", text: "Casey, can you send it?"),
             MeetingTurn(start: 15, end: 19, speaker: "Speaker 2", text: "I will send the draft.")
         ]
-        XCTAssertEqual(MeetingController.nameSpeakers(in: repeated, candidates: candidates)[1].speaker, "Tommy")
-        let mention = [MeetingTurn(start: 0, end: 4, speaker: "You", text: "I asked Tommy what he thinks."), turns[1]]
+        XCTAssertEqual(MeetingController.nameSpeakers(in: repeated, candidates: candidates)[1].speaker, "Casey")
+        let mention = [MeetingTurn(start: 0, end: 4, speaker: "You", text: "I asked Casey what he thinks."), turns[1]]
         XCTAssertTrue(MeetingSpeakerHints.suggestions(in: mention, names: candidates.names).isEmpty)
         let overlap = [turns[0], MeetingTurn(start: 3, end: 7, speaker: "Speaker 2", text: "Another voice interrupts.")]
         XCTAssertTrue(MeetingSpeakerHints.suggestions(in: overlap, names: candidates.names).isEmpty)

@@ -16,7 +16,7 @@ final class ScreenshotContextTests: XCTestCase {
         let db = try DatabaseQueue(); try Database.migrator.migrate(db)
         try db.write { db in
             let start = Date(timeIntervalSince1970: 1_789_135_200)
-            try db.execute(sql: "INSERT INTO meeting(id,title,startedAt,endedAt,transcript,summary) VALUES('call','Product demo',?,?,?,?)", arguments: [start, start.addingTimeInterval(3600), "Jared reviews the Job Board", "Product walkthrough"])
+            try db.execute(sql: "INSERT INTO meeting(id,title,startedAt,endedAt,transcript,summary) VALUES('call','Product demo',?,?,?,?)", arguments: [start, start.addingTimeInterval(3600), "Jordan reviews the Job Board", "Product walkthrough"])
             for (id, delta) in [("before", -1), ("during", 100), ("end", 3600)] {
                 try db.execute(sql: "INSERT INTO screenshot(id,path,ocrText,createdAt) VALUES(?,?,?,?)", arguments: [id, "/tmp/\(id).png", "Job Board", start.addingTimeInterval(Double(delta))])
             }

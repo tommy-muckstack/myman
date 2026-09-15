@@ -28,7 +28,7 @@ final class MeetingTranscriptTests: XCTestCase {
     func testDifferentSpeakersAreNeverMerged() {
         let turns = [
             MeetingTurn(start: 10, end: 12, speaker: "You", text: "How about you?"),
-            MeetingTurn(start: 13, end: 20, speaker: "Lauren", text: "Good, thanks."),
+            MeetingTurn(start: 13, end: 20, speaker: "Morgan", text: "Good, thanks."),
         ]
         XCTAssertEqual(MeetingController.mergeConsecutive(turns).count, 2)
     }
@@ -115,10 +115,10 @@ final class MeetingTranscriptTests: XCTestCase {
         let now = Date()
         let events = [
             MeetingController.EventTitleCandidate(
-                title: "1:1 Lauren", start: now.addingTimeInterval(300),
+                title: "1:1 Morgan", start: now.addingTimeInterval(300),
                 isAllDay: false, hasLink: true, declined: false),
         ]
-        XCTAssertEqual(MeetingController.bestEventTitle(events, now: now), "1:1 Lauren")
+        XCTAssertEqual(MeetingController.bestEventTitle(events, now: now), "1:1 Morgan")
     }
 
     // MARK: Formatted transcript rendering
@@ -129,14 +129,14 @@ final class MeetingTranscriptTests: XCTestCase {
         let transcript = """
         **You** [0:12]: Morning, ready to start?
 
-        **Lauren** [0:19]: Yes — one sec, sharing my screen.
+        **Morgan** [0:19]: Yes — one sec, sharing my screen.
         """
         let turns = MeetingDocumentView.parseTurns(transcript)
         XCTAssertEqual(turns?.count, 2)
         XCTAssertEqual(turns?[0].speaker, "You")
         XCTAssertEqual(turns?[0].time, "0:12")
         XCTAssertEqual(turns?[0].text, "Morning, ready to start?")
-        XCTAssertEqual(turns?[1].speaker, "Lauren")
+        XCTAssertEqual(turns?[1].speaker, "Morgan")
     }
 
     /// Old two-block transcripts have no turn markers — the raw editor stays
@@ -148,12 +148,12 @@ final class MeetingTranscriptTests: XCTestCase {
     func testEachSpeakerGetsAStableDistinctColor() {
         let turns = [
             MeetingDocumentView.TranscriptTurn(speaker: "You", time: "0:01", text: "a"),
-            MeetingDocumentView.TranscriptTurn(speaker: "Lauren", time: "0:05", text: "b"),
+            MeetingDocumentView.TranscriptTurn(speaker: "Morgan", time: "0:05", text: "b"),
             MeetingDocumentView.TranscriptTurn(speaker: "You", time: "0:09", text: "c"),
         ]
         let colors = MeetingDocumentView.speakerColors(for: turns)
         XCTAssertEqual(colors.count, 2)
-        XCTAssertNotEqual(colors["You"], colors["Lauren"])
+        XCTAssertNotEqual(colors["You"], colors["Morgan"])
     }
 
     // MARK: Slide thumbnails
@@ -195,20 +195,20 @@ final class MeetingTranscriptTests: XCTestCase {
     // MARK: Speaker identity
 
     func testAnEmailAddressNeverBecomesASpeakerLabel() {
-        XCTAssertEqual(MeetingController.firstName(fromAttendee: "michael.bird@amplitude.com"),
-                       "Michael")
-        XCTAssertEqual(MeetingController.firstName(fromAttendee: "Lauren Comer"), "Lauren")
-        XCTAssertNil(MeetingController.firstName(fromAttendee: "x@y.com"))
+        XCTAssertEqual(MeetingController.firstName(fromAttendee: "alex.rivera@example.com"),
+                       "Alex")
+        XCTAssertEqual(MeetingController.firstName(fromAttendee: "Morgan Taylor"), "Morgan")
+        XCTAssertNil(MeetingController.firstName(fromAttendee: "x@example.com"))
     }
 
     func testAttendeeNamesAreTrustedAndTitleGuessesAreNot() {
         let fromList = MeetingController.speakerCandidates(
-            eventTitle: "Tommy / Lauren Weekly", attendees: ["Lauren Comer"])
-        XCTAssertEqual(fromList.names, ["Lauren"])
+            eventTitle: "Alex / Morgan Weekly", attendees: ["Morgan Taylor"])
+        XCTAssertEqual(fromList.names, ["Morgan"])
         XCTAssertTrue(fromList.fromAttendees)
 
         let fromTitle = MeetingController.speakerCandidates(
-            eventTitle: "\(NSFullUserName()) Lauren Weekly", attendees: [])
+            eventTitle: "\(NSFullUserName()) Morgan Weekly", attendees: [])
         XCTAssertFalse(fromTitle.fromAttendees)
     }
 
@@ -220,13 +220,13 @@ final class MeetingTranscriptTests: XCTestCase {
             MeetingTurn(start: 0, end: 4, speaker: "You", text: "Hello."),
             MeetingTurn(start: 5, end: 9, speaker: MeetingController.remoteLabel, text: "Hi."),
         ]
-        let guessed = SpeakerCandidates(names: ["Lauren"], fromAttendees: false)
+        let guessed = SpeakerCandidates(names: ["Morgan"], fromAttendees: false)
         XCTAssertEqual(MeetingController.nameSpeakers(in: turns, candidates: guessed)[1].speaker,
                        MeetingController.remoteLabel)
 
-        let known = SpeakerCandidates(names: ["Lauren"], fromAttendees: true)
+        let known = SpeakerCandidates(names: ["Morgan"], fromAttendees: true)
         XCTAssertEqual(MeetingController.nameSpeakers(in: turns, candidates: known)[1].speaker,
-                       "Lauren")
+                       "Morgan")
     }
 
     func testNoLabelIsEverThemOrOthers() {
@@ -260,11 +260,11 @@ final class MeetingTranscriptTests: XCTestCase {
         let transcript = """
         **You** [0:04]: Morning.
 
-        **Lauren Comer** [0:09]: Morning.
+        **Morgan Taylor** [0:09]: Morning.
 
         **You** [0:14]: Shall we start?
         """
-        XCTAssertEqual(Brain.speakers(in: transcript), ["You", "Lauren Comer"])
+        XCTAssertEqual(Brain.speakers(in: transcript), ["You", "Morgan Taylor"])
     }
 
     func testParticipantsAlsoWorkOnTheOlderTwoBlockFormat() {
