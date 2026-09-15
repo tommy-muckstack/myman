@@ -125,6 +125,10 @@ verification. Grok Bot must execute on the Mac containing the Brain.
 
 On plugin updates, follow the [Cursor marketplace release policy](docs/cursor-marketplace-release.md); shipping the Mac app does not update the marketplace listing.
 
+Each installation reads that user's own `~/MyManBrain`. The public repository
+contains the app and companion source, not anyone's Brain data or credentials;
+no maintainer account or connection to the maintainer's Mac is needed.
+
 ### Optional private voice replies (Chatterbox beta)
 
 Open the launcher, use the search field, then choose **Chat β**. Text chat is

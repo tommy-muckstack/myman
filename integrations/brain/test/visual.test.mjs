@@ -16,8 +16,8 @@ async function fixture(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const directory of ['meetings', 'screenshots', 'assets/capture-thumbnails', 'tools']) await mkdir(path.join(root, directory), { recursive: true });
   const put = (name, text) => writeFile(path.join(root, name), text);
-  await put('meetings/demo.md', '---\nid: demo-id\nstarted: 2026-09-11T13:00:00Z\nended: 2026-09-11T14:00:00Z\nparticipants:\n  - Jared Lane\n---\n# Jared product demo\nA product review.');
-  const exports = [{ path: 'meetings/demo.md', kind: 'meetings', title: 'Jared product demo', timestamp: '2026-09-11T13:00:00Z' }];
+  await put('meetings/demo.md', '---\nid: demo-id\nstarted: 2026-09-11T13:00:00Z\nended: 2026-09-11T14:00:00Z\nparticipants:\n  - Jordan Rivera\n---\n# Jordan product demo\nA product review.');
+  const exports = [{ path: 'meetings/demo.md', kind: 'meetings', title: 'Jordan product demo', timestamp: '2026-09-11T13:00:00Z' }];
   for (const [id, time, tag, app, sequence] of [['screen', '13:01', 'web-app', 'Google Chrome', 'a'], ['duplicate', '13:02', 'web-app', 'Google Chrome', 'a'], ['deck', '13:03', 'slide-deck', 'Google Chrome', 'b'], ['unknown', '13:04', 'document', null, null], ['outside', '14:00', 'web-app', 'Google Chrome', 'c']]) {
     await put(`screenshots/${id}.md`, `---\nid: ${id}\ncaptured: 2026-09-11T${time}:00Z\nocr_text: |-\n${'  Source OCR\n'.repeat(130)}  Registration price $49\n---\n# Job Board\nWeb app showing repair estimates.`);
     await put(`assets/capture-thumbnails/${id}.png`, png);
@@ -30,7 +30,7 @@ async function fixture(t) {
 
 test('one request resolves meeting descriptions and combines app/tag/sequence filters', async t => {
   const { brain } = await fixture(t);
-  const all = await execute(brain, 'screenshots', { meeting: 'Jared demo' });
+  const all = await execute(brain, 'screenshots', { meeting: 'Jordan demo' });
   assert.equal(all.needs_disambiguation, false); assert.equal(all.total, 4);
   const filtered = await execute(brain, 'screenshots', { meeting: 'demo-id', app: 'Chrome', exclude_tags: ['slide-deck'], unique: true });
   assert.equal(filtered.total, 1);
@@ -40,17 +40,17 @@ test('one request resolves meeting descriptions and combines app/tag/sequence fi
   const searched = await execute(brain, 'screenshots', { meeting: 'meetings/demo.md', query: '$49', tags: ['web-app'] });
   assert.equal(searched.total, 2);
   assert.ok(searched.results.every(r => r.timestamp && r.meetings[0].id === 'demo-id'));
-  const first = await execute(brain, 'screenshots', { meeting: 'Jared demo', limit: 2 });
-  const second = await execute(brain, 'screenshots', { meeting: 'Jared demo', limit: 2, offset: first.next_offset });
+  const first = await execute(brain, 'screenshots', { meeting: 'Jordan demo', limit: 2 });
+  const second = await execute(brain, 'screenshots', { meeting: 'Jordan demo', limit: 2, offset: first.next_offset });
   assert.equal(new Set([...first.results, ...second.results].map(r => r.path)).size, 4);
 });
 
 test('ambiguous calls are returned as candidates and date bounds stay explicit', async t => {
   const { brain, put, catalog } = await fixture(t);
-  await put('meetings/other.md', '---\nid: second\nstarted: 2026-09-10T13:00:00Z\nended: 2026-09-10T14:00:00Z\n---\n# Jared product demo\n');
-  catalog.exports.push({ path: 'meetings/other.md', kind: 'meetings', title: 'Jared product demo', timestamp: '2026-09-10T13:00:00Z' });
+  await put('meetings/other.md', '---\nid: second\nstarted: 2026-09-10T13:00:00Z\nended: 2026-09-10T14:00:00Z\n---\n# Jordan product demo\n');
+  catalog.exports.push({ path: 'meetings/other.md', kind: 'meetings', title: 'Jordan product demo', timestamp: '2026-09-10T13:00:00Z' });
   await put('catalog.json', JSON.stringify(catalog));
-  const result = await execute(brain, 'screenshots', { meeting: 'Jared demo' });
+  const result = await execute(brain, 'screenshots', { meeting: 'Jordan demo' });
   assert.equal(result.needs_disambiguation, true); assert.equal(result.matching_meetings, 2); assert.deepEqual(result.results, []);
   assert.equal((await execute(brain, 'screenshots', { after: '2026-09-11T09:00:00-04:00', before: '2026-09-11T10:00:00-04:00' })).total, 4);
   await assert.rejects(execute(brain, 'screenshots', { meeting: 'demo-id', after: '2026-09-11T13:00:00Z' }), { code: 'INVALID_ARGUMENTS' });
@@ -75,16 +75,16 @@ test('bundled CLI and MCP run from an isolated Brain with no node_modules', { ti
   const { root } = await fixture(t);
   const resources = fileURLToPath(new URL('../../../src/Resources/BrainCompanion/', import.meta.url));
   for (const name of ['cli.mjs', 'server.mjs']) await copyFile(path.join(resources, name), path.join(root, 'tools', name));
-  const run = spawnSync(process.execPath, ['tools/cli.mjs', '--root', root, 'screenshots', '--meeting', 'Jared demo', '--exclude-tag', 'slide-deck', '--unique'], { cwd: root, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, ['tools/cli.mjs', '--root', root, 'screenshots', '--meeting', 'Jordan demo', '--exclude-tag', 'slide-deck', '--unique'], { cwd: root, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr); assert.equal(JSON.parse(run.stdout).total, 2);
-  const meetings = spawnSync(process.execPath, ['tools/cli.mjs', '--root', root, 'meetings', '--participant', 'Jared', '--after', '2026-09-01T00:00:00Z'], { cwd: root, encoding: 'utf8' });
+  const meetings = spawnSync(process.execPath, ['tools/cli.mjs', '--root', root, 'meetings', '--participant', 'Jordan', '--after', '2026-09-01T00:00:00Z'], { cwd: root, encoding: 'utf8' });
   assert.equal(meetings.status, 0, meetings.stderr); assert.equal(JSON.parse(meetings.stdout).total, 1);
   const recordings = spawnSync(process.execPath, ['tools/cli.mjs', '--root', root, 'recordings', '--query', 'pricing'], { cwd: root, encoding: 'utf8' });
   assert.equal(recordings.status, 0, recordings.stderr); assert.equal(JSON.parse(recordings.stdout).total, 0);
   const client = new Client({ name: 'bundled-test', version: '1.0.0' });
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'tools/server.mjs')], env: { ...process.env, MYMAN_BRAIN_ROOT: root }, stderr: 'pipe' });
   t.after(() => client.close()); await client.connect(transport);
-  const shots = await client.callTool({ name: 'myman_brain_screenshots', arguments: { meeting: 'Jared demo', tags: ['web-app'], unique: true } });
+  const shots = await client.callTool({ name: 'myman_brain_screenshots', arguments: { meeting: 'Jordan demo', tags: ['web-app'], unique: true } });
   assert.equal(shots.structuredContent.total, 1);
   const image = await client.callTool({ name: 'myman_brain_image', arguments: { path: shots.structuredContent.results[0].path, size: 'thumbnail' } });
   assert.equal(image.content[1].type, 'image');

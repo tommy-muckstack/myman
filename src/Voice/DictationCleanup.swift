@@ -256,9 +256,9 @@ enum DictationCleanup {
         return previousRow[bChars.count]
     }
 
-    /// Deterministic email assembly: "Tommy at muckstack.com" →
-    /// "tommy@muckstack.com". A stopword guard keeps ordinary "at" phrases
-    /// ("meet me at muckstack.com") untouched.
+    /// Deterministic email assembly: "Alex at example.com" →
+    /// "alex@example.com". A stopword guard keeps ordinary "at" phrases
+    /// ("meet me at example.com") untouched.
     static func assembleEmails(_ text: String) -> String {
         let stopwords: Set<String> = ["me", "us", "is", "are", "was", "were", "be",
                                       "you", "him", "her", "them", "it", "look",
@@ -424,9 +424,9 @@ enum DictationCleanup {
             from context. Write spoken numbers the way a person types them: \
             "twelve hundred" → "1,200", "forty percent" → "40%", "three pm" \
             → "3pm", "march third" → "March 3rd". Spoken emails and URLs \
-            become real ones: "john dot smith at gmail dot com" → \
-            "john.smith@gmail.com", "muckstack dot com slash download" → \
-            "muckstack.com/download".
+            become real ones: "john dot smith at example dot com" → \
+            "john.smith@example.com", "example dot com slash download" → \
+            "example.com/download".
             4. NEVER add, remove, or rephrase actual content. Keep the \
             speaker's words and tone. Output ONLY the cleaned text — no \
             preamble, no quotes.

@@ -59,7 +59,7 @@ test('CLI errors are a single stdout JSON object, and stdin creates the requeste
 });
 test('retrieval aliases preserve time, kind, and descriptor filters',async()=>{
  const recent=await plan(['library','recent','--kind','screenshots','--limit','4']);assert.equal(recent.name,'recent');assert.deepEqual(recent.args,{kind:'screenshots',limit:4});
- const shots=await plan(['screenshots','--meeting','Jared demo','--app','Chrome','--exclude-tag','slide-deck']);assert.deepEqual(shots.args,{meeting:'Jared demo',app:'Chrome',exclude_tags:['slide-deck']});
+ const shots=await plan(['screenshots','--meeting','Jordan demo','--app','Chrome','--exclude-tag','slide-deck']);assert.deepEqual(shots.args,{meeting:'Jordan demo',app:'Chrome',exclude_tags:['slide-deck']});
  const themes=await plan(['theme','list']);assert.equal(themes.name,'collect');assert.deepEqual(themes.args.kinds,['themes']);
 });
 test('every discoverable action is reachable through invoke and carries explicit consent metadata',async()=>{

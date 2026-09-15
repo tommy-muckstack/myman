@@ -11,3 +11,9 @@ ci-cert.p12
 ci-build.keychain-db
 .sparkle_ed_key
 node_modules/
+
+# Personal exports and local app databases do not belong in the source repo.
+MyManBrain/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

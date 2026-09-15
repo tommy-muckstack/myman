@@ -170,20 +170,20 @@ test('CLI returns JSON, uses a root with spaces, and reports JSON errors on stdo
 test('meeting discovery separates participants from mentions and preserves ambiguous calls', async t => {
   const { brain, put } = await fixture(t);
   const call = (date, people, title, body = '') => `---\nstarted: ${date}T09:00:00-04:00\nended: ${date}T10:00:00-04:00\nparticipants:\n${people.map(p => '  - ' + p).join('\n')}\n---\n# ${title}\n${body}`;
-  await put('meetings/a.md', call('2026-09-10', ['Jared Lane <jared@example.com>', 'Zoë Park'], 'Design review', 'Pricing flow'));
-  await put('meetings/b.md', call('2026-09-11', ['Jared Lane', 'Zoë Park'], 'Design review'));
-  await put('meetings/mention.md', call('2026-09-11', ['Alex'], 'Other call', 'We mentioned Jared and Zoe.'));
-  const candidates = await execute(brain, 'meetings', { participants: ['jared', 'zoe'], limit: 1 });
+  await put('meetings/a.md', call('2026-09-10', ['Jordan Rivera <jordan@example.com>', 'Renée Taylor'], 'Design review', 'Pricing flow'));
+  await put('meetings/b.md', call('2026-09-11', ['Jordan Rivera', 'Renée Taylor'], 'Design review'));
+  await put('meetings/mention.md', call('2026-09-11', ['Alex'], 'Other call', 'We mentioned Jordan and Renee.'));
+  const candidates = await execute(brain, 'meetings', { participants: ['jordan', 'renee'], limit: 1 });
   assert.equal(candidates.total, 2);
   assert.equal(candidates.next_offset, 1);
   assert.equal(candidates.results[0].path, 'meetings/b.md');
-  const next = await execute(brain, 'meetings', { participants: ['jared', 'zoe'], offset: candidates.next_offset });
+  const next = await execute(brain, 'meetings', { participants: ['jordan', 'renee'], offset: candidates.next_offset });
   assert.equal(next.results[0].started_at, '2026-09-10T13:00:00.000Z');
   assert.equal(next.results[0].interval_available, true);
-  assert.equal((await execute(brain, 'meetings', { participants: ['Jar'] })).total, 0);
-  assert.equal((await execute(brain, 'meetings', { participants: ['jared@example.com'] })).total, 1);
-  assert.equal((await execute(brain, 'meetings', { participants: ['Jared'], query: 'pricing', started_after: '2026-09-10T00:00:00-04:00', started_before: '2026-09-11T00:00:00-04:00' })).total, 1);
-  const mentions = await execute(brain, 'meetings', { query: 'Jared' });
+  assert.equal((await execute(brain, 'meetings', { participants: ['Jor'] })).total, 0);
+  assert.equal((await execute(brain, 'meetings', { participants: ['jordan@example.com'] })).total, 1);
+  assert.equal((await execute(brain, 'meetings', { participants: ['Jordan'], query: 'pricing', started_after: '2026-09-10T00:00:00-04:00', started_before: '2026-09-11T00:00:00-04:00' })).total, 1);
+  const mentions = await execute(brain, 'meetings', { query: 'Jordan' });
   assert.equal(mentions.total, 3);
   assert.equal(mentions.results.at(-1).matched_in, 'meeting_content');
 });
@@ -258,7 +258,7 @@ test('collect combines time, kinds, phrases, alternatives, and full-evidence pag
   const during = await execute(brain, 'collect', { kinds: ['notes', 'screenshots'], during: 'meetings/window.md' });
   assert.equal(during.total, 2);
   assert.equal(during.relationship, 'captured_during_meeting');
-  await assert.rejects(execute(brain, 'collect', { participants: ['Jared'] }), { code: 'INVALID_ARGUMENTS' });
+  await assert.rejects(execute(brain, 'collect', { participants: ['Jordan'] }), { code: 'INVALID_ARGUMENTS' });
   await assert.rejects(execute(brain, 'collect', { during: 'meetings/window.md', after: '2026-09-02T14:00:00Z' }), { code: 'INVALID_ARGUMENTS' });
   await assert.rejects(execute(brain, 'collect', { theme: 'pricing' }), { code: 'CATALOG_REQUIRED' });
 });

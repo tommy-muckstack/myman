@@ -167,7 +167,7 @@ Saved screenshots, finalized recordings and MP4 exports include an `attachment` 
 myman note create --title "Follow-ups" --body-file - --json < body.md
 myman note append --id note-ID --body "Another point" --json
 myman note update --id note-ID --body-file body.md --expected-updated-at ISO8601 --json
-myman library search --query "Jared" --kind meetings --json
+myman library search --query "Jordan" --kind meetings --json
 myman library recent --kind screenshots --limit 20 --json
 myman latest --kind screenshots --json
 myman library read --id shot-ID --json

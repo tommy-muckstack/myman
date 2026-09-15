@@ -37,9 +37,9 @@ server under `~/MyManBrain/tools/`. Node.js 22+ is required; no clone or npm
 install is needed for these bundled files.
 
 ```bash
-node ~/MyManBrain/tools/cli.mjs screenshots --meeting "Jared demo" --exclude-tag slide-deck --unique
+node ~/MyManBrain/tools/cli.mjs screenshots --meeting "Jordan demo" --exclude-tag slide-deck --unique
 node ~/MyManBrain/tools/cli.mjs screenshots --after "2026-09-11T09:00:00-04:00" --before "2026-09-11T10:00:00-04:00" --app Chrome --tag web-app
-node ~/MyManBrain/tools/cli.mjs meetings --participant Jared --after "2026-09-01T00:00:00-04:00"
+node ~/MyManBrain/tools/cli.mjs meetings --participant Jordan --after "2026-09-01T00:00:00-04:00"
 node ~/MyManBrain/tools/cli.mjs recordings --query "pricing"
 node ~/MyManBrain/tools/cli.mjs status
 node ~/MyManBrain/tools/cli.mjs --help
@@ -156,7 +156,7 @@ keywords, quoted phrases, saved Themes, and pinning, then read full evidence:
 
 ```bash
 # All calls with a person; paginate and read each call to summarize them.
-node integrations/brain/cli.mjs collect '{"kinds":["meetings"],"participants":["Jared"]}'
+node integrations/brain/cli.mjs collect '{"kinds":["meetings"],"participants":["Jordan"]}'
 
 # Evidence for themes across calls and screenshots in a specific local week.
 node integrations/brain/cli.mjs collect '{"kinds":["meetings","screenshots"],"after":"2026-09-07T00:00:00-04:00","before":"2026-09-14T00:00:00-04:00"}'
@@ -176,10 +176,10 @@ a saved Theme uses its latest member time. For tasks, choose
 `date_field: task_completed` or `task_due` to filter completion or due dates. File modification times never
 establish time-based relationships. Undated items are reported separately.
 
-For the common “screenshots from the Jared demo” request, use `screenshots` with
-`meeting: "Jared demo"`. The tool resolves the call and collects its screenshots
+For the common “screenshots from the Jordan demo” request, use `screenshots` with
+`meeting: "Jordan demo"`. The tool resolves the call and collects its screenshots
 in one request. For precise participant selection, first use `meetings` with
-`participants: ["Jared","Zoe"]` and optional topic/date filters. Resolve a
+`participants: ["Jordan","Casey"]` and optional topic/date filters. Resolve a
 singular ambiguous call from returned titles/dates. Then call `collect` with
 `kinds: ["screenshots"]` and `during: "<returned meeting path>"`; the same
 operation can collect notes, dictation, or other captures during that interval.
