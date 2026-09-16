@@ -246,7 +246,7 @@ enum DictationCleanup {
         ))))
     }
 
-    private static func editDistance(_ a: String, _ b: String) -> Int {
+    static func editDistance(_ a: String, _ b: String) -> Int {
         let aChars = Array(a), bChars = Array(b)
         var previousRow = Array(0...bChars.count)
         for (i, charA) in aChars.enumerated() {

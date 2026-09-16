@@ -22,6 +22,44 @@ enum MeetingVocabulary {
         "Statsig", "Optimizely", "FullStory", "Hotjar", "Pendo", "Appcues", "WalkMe", "Gong", "Chorus",
     ]
 
+    /// Two-word phrases the meeting says clearly several times repair a
+    /// one-off near-miss that differs by a single short token: three
+    /// "generative UI"s and a "legacy UI" make the lone "generative AI" a
+    /// recognition slip, not a different idea. Both readings frequent, or
+    /// no clear anchor word, and nothing changes — the app never guesses
+    /// between "client" and "Claude" or "cameras" and "Canvas".
+    static func corroboratedPhrases(in texts: [String]) -> [String: String] {
+        var counts: [String: (canonical: String, count: Int)] = [:]
+        for text in texts {
+            let tokens = text.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" && $0 != "’" }).map(String.init)
+            guard tokens.count >= 2 else { continue }
+            for index in 0..<(tokens.count - 1) {
+                let phrase = tokens[index] + " " + tokens[index + 1]
+                let key = phrase.lowercased()
+                counts[key, default: (phrase, 0)].count += 1
+            }
+        }
+        let established = counts.filter { $0.value.count >= 2 }
+        var aliases: [String: String] = [:]
+        for (rareKey, rare) in counts where rare.count == 1 {
+            let rareParts = rareKey.split(separator: " ").map(String.init)
+            var matches: [String] = []
+            for (key, entry) in established {
+                let parts = key.split(separator: " ").map(String.init)
+                let anchorFirst = parts[0] == rareParts[0] && parts[0].count >= 5 && parts[1] != rareParts[1]
+                let anchorSecond = parts[1] == rareParts[1] && parts[1].count >= 5 && parts[0] != rareParts[0]
+                guard anchorFirst || anchorSecond else { continue }
+                let (heard, said) = anchorFirst ? (rareParts[1], parts[1]) : (rareParts[0], parts[0])
+                guard heard.count == said.count, said.count <= 3 || said.count >= 5,
+                      DictationCleanup.editDistance(heard, said) <= 1 else { continue }
+                matches.append(entry.canonical)
+            }
+            // One clear reading only; competing candidates mean no repair.
+            if matches.count == 1 { aliases[rare.canonical] = matches[0] }
+        }
+        return aliases
+    }
+
     /// Capitalized words in a title that look like names, products or
     /// companies — not the ordinary words around them.
     static func properNouns(in title: String) -> [String] {
