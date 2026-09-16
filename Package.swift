@@ -29,6 +29,7 @@ let package = Package(
                 .copy("Resources/Fonts"),
                 .copy("Resources/BrainCompanion"),
                 .copy("Resources/FontWorkbench"),
+                .copy("Resources/Sounds"),
             ]
         ),
         .testTarget(
