@@ -129,6 +129,10 @@ final class SettingsStore: ObservableObject {
     @Published var dictationTone: DictationTone {
         didSet { UserDefaults.standard.set(dictationTone.rawValue, forKey: "dictationTone") }
     }
+    /// The noise a screenshot makes when it lands.
+    @Published var captureSound: CaptureSound {
+        didSet { UserDefaults.standard.set(captureSound.rawValue, forKey: "captureSound") }
+    }
     /// Noise suppression + AGC on the dictation mic. OFF by default: the only
     /// way macOS offers it is a voice-processing unit, and an active one puts
     /// the whole machine in voice-chat mode — every other app's audio ducks
@@ -170,6 +174,7 @@ final class SettingsStore: ObservableObject {
         autoRecordMeetings = UserDefaults.standard.bool(forKey: "autoRecordMeetings")
         cursorEffects = UserDefaults.standard.object(forKey: "cursorEffects") as? Bool ?? true
         dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
+        captureSound = CaptureSound(rawValue: UserDefaults.standard.string(forKey: "captureSound") ?? "") ?? .bloop
         enhanceMicrophone = UserDefaults.standard.bool(forKey: "enhanceMicrophone")
         theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "")
         screenshotFolderPath = UserDefaults.standard.string(forKey: "screenshotFolder")
@@ -354,6 +359,16 @@ struct SettingsPanelView: View {
             settingSection("Meetings") {
                 Toggle("Auto record when meeting detected", isOn: $store.autoRecordMeetings)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+            }
+            Divider().overlay(MM.Colors.border)
+            settingSection("Screenshot sound") {
+                Picker("Screenshot sound", selection: $store.captureSound) {
+                    ForEach(CaptureSound.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                .onChange(of: store.captureSound) { _, sound in CaptureSoundPlayer.shared.play(sound) }
+                Text("Plays when a screenshot is captured. Pick one to hear it.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Screen Recording") {

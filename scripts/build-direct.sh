@@ -31,8 +31,8 @@ APP_NAME="My Man"
 EXEC_NAME="MyMan"
 SLUG="myman"
 BUNDLE_ID="com.muckstack.myman"
-VERSION="${RELEASE_VERSION:-1.1.70}"
-BUILD_NUMBER="${RELEASE_BUILD:-82}"
+VERSION="${RELEASE_VERSION:-1.1.71}"
+BUILD_NUMBER="${RELEASE_BUILD:-83}"
 TEAM_ID="${APPLE_TEAM_ID:-K8NAZ76CBQ}"
 NOTARY_PROFILE="mumbls-notary"
 SPARKLE_ACCOUNT="myman"
@@ -257,17 +257,27 @@ codesign --force --deep --timestamp --options runtime \
 echo "==> Verifying signature..."
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
+# Apple's upload occasionally dies mid-transfer (abortedUpload /
+# deadlineExceeded, seen twice on 1.1.70); the same file goes through on the
+# next try. Retry the submission before giving up on the release.
 notarize() {
     local path="$1"
-    if [[ -n "${APPLE_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
-        xcrun notarytool submit "$path" \
-            --apple-id "$APPLE_ID" \
-            --team-id "$TEAM_ID" \
-            --password "$APPLE_APP_PASSWORD" \
-            --wait
-    else
-        xcrun notarytool submit "$path" --keychain-profile "$NOTARY_PROFILE" --wait
-    fi
+    local attempt
+    for attempt in 1 2 3; do
+        if [[ -n "${APPLE_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
+            xcrun notarytool submit "$path" \
+                --apple-id "$APPLE_ID" \
+                --team-id "$TEAM_ID" \
+                --password "$APPLE_APP_PASSWORD" \
+                --wait && return 0
+        else
+            xcrun notarytool submit "$path" --keychain-profile "$NOTARY_PROFILE" --wait && return 0
+        fi
+        echo "==> Notarization attempt $attempt failed; retrying in 20s..."
+        sleep 20
+    done
+    echo "ERROR: notarization failed after 3 attempts"
+    return 1
 }
 
 if $SKIP_NOTARIZE; then

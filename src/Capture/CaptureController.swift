@@ -155,6 +155,7 @@ final class CaptureController: SelectionOverlayDelegate {
         }
 
         Analytics.track("screenshot_captured")
+        CaptureSoundPlayer.shared.play()
         showThumbnail(image: image, fileURL: url)
     }
 

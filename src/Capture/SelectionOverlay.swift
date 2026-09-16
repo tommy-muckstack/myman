@@ -254,13 +254,20 @@ final class SelectionOverlayView: NSView {
                 width: abs(current.x - start.x), height: abs(current.y - start.y)
             ).intersection(bounds)
 
+            // Dim everything OUTSIDE the selection. The frozen screenshot is
+            // painted in this same layer, so punching the selection out with
+            // a clear blend erased it and the window's transparency showed the
+            // LIVE screen inside the rectangle — motion under a "frozen" pick.
+            // Dark enough that the pick reads as a spotlight on the frozen frame.
             context.saveGState()
-            context.setFillColor(NSColor.black.withAlphaComponent(0.4).cgColor)
-            context.fill(bounds)
-            if !selection.isEmpty {
-                // Cut out the selection to show the frozen screenshot beneath.
-                context.setBlendMode(.clear)
-                context.fill(selection)
+            context.setFillColor(NSColor.black.withAlphaComponent(0.65).cgColor)
+            if selection.isEmpty {
+                context.fill(bounds)
+            } else {
+                context.addRect(bounds)
+                context.addRect(selection)
+                context.clip(using: .evenOdd)
+                context.fill(bounds)
             }
             context.restoreGState()
 
