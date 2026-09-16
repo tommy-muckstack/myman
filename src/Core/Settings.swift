@@ -126,6 +126,12 @@ final class SettingsStore: ObservableObject {
     @Published var cursorEffects: Bool {
         didSet { UserDefaults.standard.set(cursorEffects, forKey: "cursorEffects") }
     }
+    /// Record without the system cursor and log its path instead, so
+    /// Polish can draw a smoothed, resized one. Off by default: a raw
+    /// recording that is never polished should still show the cursor.
+    @Published var recordCursorSeparately: Bool {
+        didSet { UserDefaults.standard.set(recordCursorSeparately, forKey: "recordCursorSeparately") }
+    }
     @Published var dictationTone: DictationTone {
         didSet { UserDefaults.standard.set(dictationTone.rawValue, forKey: "dictationTone") }
     }
@@ -173,6 +179,7 @@ final class SettingsStore: ObservableObject {
         }
         autoRecordMeetings = UserDefaults.standard.bool(forKey: "autoRecordMeetings")
         cursorEffects = UserDefaults.standard.object(forKey: "cursorEffects") as? Bool ?? true
+        recordCursorSeparately = UserDefaults.standard.bool(forKey: "recordCursorSeparately")
         dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
         captureSound = CaptureSound(rawValue: UserDefaults.standard.string(forKey: "captureSound") ?? "") ?? .bloop
         enhanceMicrophone = UserDefaults.standard.bool(forKey: "enhanceMicrophone")
@@ -374,6 +381,10 @@ struct SettingsPanelView: View {
             settingSection("Screen Recording") {
                 Toggle("Cursor trail and click ripple", isOn: $store.cursorEffects)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                Toggle("Record the cursor separately so Polish can smooth and resize it", isOn: $store.recordCursorSeparately)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                Text("Off: the cursor is baked into the recording. On: the raw recording has no cursor; Polish draws one.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Screenshots") {

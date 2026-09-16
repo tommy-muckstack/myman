@@ -1,5 +1,7 @@
 import XCTest
 import AVFoundation
+import Carbon.HIToolbox
+import CoreImage
 import AppKit
 @testable import MyMan
 
@@ -92,5 +94,65 @@ final class RecordingPolishTests: XCTestCase {
             XCTAssertTrue(adapter.append(buffer, withPresentationTime: CMTime(value: Int64(index), timescale: 10)))
         }
         input.markAsFinished(); await writer.finishWriting(); XCTAssertEqual(writer.status, .completed)
+    }
+}
+
+final class RecordingPolishStudioTests: XCTestCase {
+    func testCursorTrackSmoothsJitterAndStopsAtTheEnds() {
+        let samples = (0..<30).map { i in CursorSample(t: Double(i) / 60, x: 0.5 + (i % 2 == 0 ? 0.02 : -0.02), y: 0.5) }
+        let track = CursorTrack(separate: true, samples: samples)
+        let smoothed = try! XCTUnwrap(track.position(at: 0.25, smoothed: true))
+        XCTAssertEqual(smoothed.x, 0.5, accuracy: 0.006, "jitter averages out")
+        let raw = try! XCTUnwrap(track.position(at: 0.25, smoothed: false))
+        XCTAssertEqual(abs(raw.x - 0.5), 0.02, accuracy: 0.0001, "nearest sample keeps the jitter")
+        XCTAssertNil(track.position(at: 5, smoothed: true), "nothing after the last sample")
+    }
+
+    func testOnlyShortcutsAndNavigationKeysAreLoggedNeverTyping() {
+        XCTAssertEqual(KeystrokeRecorder.label(keyCode: UInt32(kVK_ANSI_S), modifiers: [.command]), "⌘S")
+        XCTAssertEqual(KeystrokeRecorder.label(keyCode: UInt32(kVK_ANSI_S), modifiers: [.command, .shift]), "⇧⌘S")
+        XCTAssertEqual(KeystrokeRecorder.label(keyCode: UInt32(kVK_Escape), modifiers: []), "esc")
+        XCTAssertEqual(KeystrokeRecorder.label(keyCode: UInt32(kVK_Return), modifiers: [.option]), "⌥⏎")
+        XCTAssertNil(KeystrokeRecorder.label(keyCode: UInt32(kVK_ANSI_S), modifiers: []), "plain typing is never recorded")
+        XCTAssertNil(KeystrokeRecorder.label(keyCode: UInt32(kVK_ANSI_S), modifiers: [.shift]), "capital letters are typing too")
+    }
+
+    @MainActor func testCursorRecorderNormalizesAndSidecarsRoundTrip() {
+        let recorder = CursorTrackRecorder(regionAppKit: CGRect(x: 0, y: 0, width: 200, height: 100), startedAt: Date(timeIntervalSince1970: 0), separate: true)
+        recorder.record(CGPoint(x: 50, y: 75), at: Date(timeIntervalSince1970: 1))
+        recorder.record(CGPoint(x: 500, y: 75), at: Date(timeIntervalSince1970: 2))
+        let track = recorder.stop()
+        XCTAssertEqual(track.samples, [CursorSample(t: 1, x: 0.25, y: 0.25)])
+        let movie = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sidecar-\(UUID().uuidString).mov")
+        RecordingSidecars.save(cursor: track, for: movie)
+        RecordingSidecars.save(keys: [RecordedKeystroke(t: 1, label: "⌘S")], for: movie)
+        XCTAssertEqual(RecordingSidecars.loadCursor(for: movie), track)
+        XCTAssertEqual(RecordingSidecars.loadKeys(for: movie).map(\.label), ["⌘S"])
+        try? FileManager.default.removeItem(at: RecordingSidecars.cursorURL(for: movie))
+        try? FileManager.default.removeItem(at: RecordingSidecars.keysURL(for: movie))
+    }
+
+    @MainActor func testRendererDrawsCursorKeystrokesAndBlurWithoutChangingTheFrame() {
+        var options = PolishOptions()
+        options.backdrop = .none; options.drawCursor = true; options.cursorSize = 2; options.showKeystrokes = true; options.zoomScale = 2
+        let cursor = CursorTrack(separate: true, samples: [CursorSample(t: 0, x: 0.5, y: 0.5), CursorSample(t: 2, x: 0.5, y: 0.5)])
+        let renderer = RecordingPolish.Renderer(size: CGSize(width: 320, height: 200), options: options,
+                                                clicks: [RecordedClick(time: 1, x: 0.5, y: 0.5)], cursor: cursor,
+                                                keystrokes: [RecordedKeystroke(t: 0.2, label: "⌘S")])
+        let source = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let context = CIContext()
+        for time in [0.3, 0.75, 1.0] {
+            let output = renderer.render(source, at: time)
+            XCTAssertEqual(output.extent.size, CGSize(width: 320, height: 200), "time \(time)")
+            let cg = try! XCTUnwrap(context.createCGImage(output, from: output.extent))
+            let bitmap = NSBitmapImageRep(cgImage: cg)
+            let corner = try! XCTUnwrap(bitmap.colorAt(x: 2, y: 2)?.usingColorSpace(.sRGB))
+            XCTAssertGreaterThan(corner.blueComponent, 0.8, "the frame itself survives at time \(time)")
+        }
+        // At 0.3s the keystroke pill sits near the bottom centre: darker than the blue frame.
+        let withPill = renderer.render(source, at: 0.3)
+        let cg = try! XCTUnwrap(context.createCGImage(withPill, from: withPill.extent))
+        let pill = try! XCTUnwrap(NSBitmapImageRep(cgImage: cg).colorAt(x: 160, y: 200 - Int(200 * 0.06) - 6)?.usingColorSpace(.sRGB))
+        XCTAssertLessThan(pill.blueComponent, 0.7)
     }
 }

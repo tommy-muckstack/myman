@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import AVFoundation
 import CoreImage
 import CoreImage.CIFilterBuiltins
@@ -128,6 +129,13 @@ struct PolishOptions: Equatable {
     var zoomScale: CGFloat = 1.8
     var cornerRadius: CGFloat = 18
     var paddingFraction: CGFloat = 0.06
+    /// Draw the cursor from the sampled track (only sensible when the movie
+    /// was recorded without the system cursor).
+    var drawCursor = false
+    var smoothCursor = true
+    var cursorSize: CGFloat = 1.6
+    var showKeystrokes = false
+    var motionBlur = true
 
     var hasBackdrop: Bool { backdrop != .none }
 }
@@ -160,11 +168,28 @@ enum RecordingPolish {
         private let backdrop: CIImage?
         private let shadow: CIImage?
         private let mask: CIImage?
+        private let cursor: CursorTrack?
+        private let cursorImage: CIImage?
+        private let cursorHotspot: CGPoint
+        private let keystrokes: [RecordedKeystroke]
+        private var keyPills: [String: CIImage] = [:]
+        private let lock = NSLock()
+        static let keystrokeLife = 1.3
 
-        init(size: CGSize, options: PolishOptions, clicks: [RecordedClick]) {
+        init(size: CGSize, options: PolishOptions, clicks: [RecordedClick], cursor: CursorTrack? = nil, keystrokes: [RecordedKeystroke] = []) {
             self.frame = RecordingPolish.frame(for: size, options: options)
             self.options = options
             self.windows = options.zoomOnClicks ? ZoomTimeline.windows(for: clicks) : []
+            self.cursor = options.drawCursor ? cursor : nil
+            self.keystrokes = options.showKeystrokes ? keystrokes : []
+            let arrow = NSCursor.arrow
+            if options.drawCursor, let cg = arrow.image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                // Size relative to the video, not the screen: 1× reads like the
+                // system cursor on a 1440-wide capture.
+                let base = max(0.8, size.width / 1440) * options.cursorSize
+                cursorImage = CIImage(cgImage: cg).transformed(by: CGAffineTransform(scaleX: base, y: base))
+                cursorHotspot = CGPoint(x: arrow.hotSpot.x * base, y: arrow.hotSpot.y * base)
+            } else { cursorImage = nil; cursorHotspot = .zero }
             let outputRect = CGRect(origin: .zero, size: frame.output)
             if options.hasBackdrop {
                 backdrop = Self.backdropImage(options: options, size: frame.output)
@@ -183,6 +208,13 @@ enum RecordingPolish {
         func render(_ image: CIImage, at time: Double) -> CIImage {
             let bounds = image.extent
             var output = image.transformed(by: CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
+            // The cursor goes on BEFORE zooming so it magnifies with the frame.
+            if let cursor, let cursorImage, let p = cursor.position(at: time, smoothed: options.smoothCursor) {
+                let tip = CGPoint(x: p.x * bounds.width, y: (1 - p.y) * bounds.height)
+                let placed = cursorImage.transformed(by: CGAffineTransform(
+                    translationX: tip.x - cursorHotspot.x, y: tip.y - (cursorImage.extent.height - cursorHotspot.y)))
+                output = placed.composited(over: output).cropped(to: CGRect(origin: .zero, size: bounds.size))
+            }
             let zoom = ZoomTimeline.zoom(at: time, windows: windows, scale: options.zoomScale)
             if zoom.scale > 1.001 {
                 // Fractions are top-left; Core Image is bottom-left.
@@ -191,11 +223,50 @@ enum RecordingPolish {
                     .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
                     .transformed(by: CGAffineTransform(scaleX: zoom.scale, y: zoom.scale))
                     .cropped(to: CGRect(origin: .zero, size: bounds.size))
+                if options.motionBlur {
+                    // Blur only while the zoom is moving, in proportion to how fast.
+                    let ahead = ZoomTimeline.zoom(at: time + 1 / 60, windows: windows, scale: options.zoomScale)
+                    let velocity = abs(ahead.scale - zoom.scale) * 60
+                    if velocity > 0.05 {
+                        let centre = CIVector(x: zoom.x * bounds.width, y: (1 - zoom.y) * bounds.height)
+                        output = output.applyingFilter("CIZoomBlur", parameters: [kCIInputCenterKey: centre, kCIInputAmountKey: min(18, velocity * 6)])
+                            .cropped(to: CGRect(origin: .zero, size: bounds.size))
+                    }
+                }
+            }
+            for key in keystrokes where time >= key.t && time < key.t + Self.keystrokeLife {
+                let pill = pillImage(for: key.label, width: bounds.width)
+                let age = time - key.t
+                let alpha = age > Self.keystrokeLife - 0.3 ? (Self.keystrokeLife - age) / 0.3 : 1
+                let placed = pill
+                    .applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(alpha))])
+                    .transformed(by: CGAffineTransform(translationX: (bounds.width - pill.extent.width) / 2, y: bounds.height * 0.06))
+                output = placed.composited(over: output).cropped(to: CGRect(origin: .zero, size: bounds.size))
             }
             guard let backdrop, let mask, let shadow else { return output }
             let card = output.transformed(by: CGAffineTransform(translationX: frame.padding, y: frame.padding))
                 .applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: mask])
             return card.composited(over: shadow.composited(over: backdrop)).cropped(to: CGRect(origin: .zero, size: frame.output))
+        }
+
+        /// A dark pill with the chord in it; built once per distinct label.
+        private func pillImage(for label: String, width: CGFloat) -> CIImage {
+            lock.lock(); defer { lock.unlock() }
+            if let cached = keyPills[label] { return cached }
+            let fontSize = max(14, min(34, width / 40))
+            let font = NSFont(name: "Gellix-SemiBold", size: fontSize) ?? .systemFont(ofSize: fontSize, weight: .semibold)
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+            let measured = (label as NSString).size(withAttributes: attributes)
+            let size = CGSize(width: ceil(measured.width + fontSize * 1.4), height: ceil(measured.height + fontSize * 0.7))
+            let image = NSImage(size: size, flipped: false) { rect in
+                NSColor.black.withAlphaComponent(0.78).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+                (label as NSString).draw(at: CGPoint(x: (rect.width - measured.width) / 2, y: (rect.height - measured.height) / 2), withAttributes: attributes)
+                return true
+            }
+            let result = image.cgImage(forProposedRect: nil, context: nil, hints: nil).map { CIImage(cgImage: $0) } ?? CIImage.empty()
+            keyPills[label] = result
+            return result
         }
 
         private static func backdropImage(options: PolishOptions, size: CGSize) -> CIImage {
@@ -226,6 +297,7 @@ enum RecordingPolish {
     /// re-rendered through `Renderer` and encoded with the Mac's hardware
     /// encoder when HEVC is available.
     static func export(source: URL, to destination: URL, options: PolishOptions, clicks: [RecordedClick],
+                       cursor: CursorTrack? = nil, keystrokes: [RecordedKeystroke] = [],
                        progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws {
         let asset = AVURLAsset(url: source)
         let duration = try await asset.load(.duration).seconds
@@ -233,7 +305,7 @@ enum RecordingPolish {
         let natural = try await track.load(.naturalSize), transform = try await track.load(.preferredTransform)
         let oriented = CGRect(origin: .zero, size: natural).applying(transform)
         let size = CGSize(width: abs(oriented.width), height: abs(oriented.height))
-        let renderer = Renderer(size: size, options: options, clicks: clicks)
+        let renderer = Renderer(size: size, options: options, clicks: clicks, cursor: cursor, keystrokes: keystrokes)
         let composition = AVMutableVideoComposition(asset: asset) { request in
             request.finish(with: renderer.render(request.sourceImage, at: request.compositionTime.seconds), context: nil)
         }
@@ -260,5 +332,147 @@ enum RecordingPolish {
             throw AgentError("EXPORT_FAILED", exporter.error?.localizedDescription ?? "Video export failed.")
         }
         progress(1)
+    }
+}
+
+// MARK: - Cursor track and keystrokes (the rest of Studio Mode)
+
+struct CursorSample: Codable, Equatable, Sendable {
+    var t: Double
+    var x: Double
+    var y: Double
+}
+
+/// Cursor positions sampled through the recording. `separate` records
+/// whether the movie itself was captured WITHOUT the system cursor, which
+/// is what lets Polish draw a smoothed, resized one instead.
+struct CursorTrack: Codable, Equatable, Sendable {
+    var separate: Bool
+    var samples: [CursorSample]
+
+    /// The cursor at `time`: a short weighted average of nearby samples
+    /// when smoothing, the nearest sample otherwise. Nil before the first
+    /// sample or after the last.
+    func position(at time: Double, smoothed: Bool, window: Double = 0.07) -> CGPoint? {
+        guard let first = samples.first, let last = samples.last, time >= first.t - 0.05, time <= last.t + 0.05 else { return nil }
+        if smoothed {
+            var wx = 0.0, wy = 0.0, total = 0.0
+            for sample in samples where abs(sample.t - time) <= window {
+                let weight = 1 - abs(sample.t - time) / window
+                wx += sample.x * weight; wy += sample.y * weight; total += weight
+            }
+            if total > 0 { return CGPoint(x: wx / total, y: wy / total) }
+        }
+        let nearest = samples.min { abs($0.t - time) < abs($1.t - time) }!
+        return CGPoint(x: nearest.x, y: nearest.y)
+    }
+}
+
+struct RecordedKeystroke: Codable, Equatable, Sendable {
+    var t: Double
+    var label: String
+}
+
+enum RecordingSidecars {
+    static func cursorURL(for movie: URL) -> URL { movie.appendingPathExtension("cursor.json") }
+    static func keysURL(for movie: URL) -> URL { movie.appendingPathExtension("keys.json") }
+
+    static func save(cursor: CursorTrack, for movie: URL) {
+        guard !cursor.samples.isEmpty, let data = try? JSONEncoder().encode(cursor) else { return }
+        try? data.write(to: cursorURL(for: movie), options: .atomic)
+    }
+    static func loadCursor(for movie: URL) -> CursorTrack? {
+        guard let data = try? Data(contentsOf: cursorURL(for: movie)), let track = try? JSONDecoder().decode(CursorTrack.self, from: data) else { return nil }
+        return CursorTrack(separate: track.separate, samples: track.samples.filter { $0.t.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }.sorted { $0.t < $1.t })
+    }
+    static func save(keys: [RecordedKeystroke], for movie: URL) {
+        guard !keys.isEmpty, let data = try? JSONEncoder().encode(keys) else { return }
+        try? data.write(to: keysURL(for: movie), options: .atomic)
+    }
+    static func loadKeys(for movie: URL) -> [RecordedKeystroke] {
+        guard let data = try? Data(contentsOf: keysURL(for: movie)), let keys = try? JSONDecoder().decode([RecordedKeystroke].self, from: data) else { return [] }
+        return keys.filter { $0.t.isFinite && !$0.label.isEmpty }.sorted { $0.t < $1.t }
+    }
+}
+
+/// Samples the cursor at 60 Hz while a recording runs.
+@MainActor
+final class CursorTrackRecorder {
+    private(set) var samples: [CursorSample] = []
+    private var timer: Timer?
+    private let region: CGRect
+    private let startedAt: Date
+    let separate: Bool
+
+    init(regionAppKit: CGRect, startedAt: Date, separate: Bool) {
+        region = regionAppKit; self.startedAt = startedAt; self.separate = separate
+        timer = Timer.scheduledTimer(withTimeInterval: 1 / 60, repeats: true) { [weak self] _ in
+            let location = NSEvent.mouseLocation
+            Task { @MainActor in self?.record(location) }
+        }
+    }
+
+    func record(_ location: CGPoint, at date: Date = Date()) {
+        guard region.width > 0, region.height > 0 else { return }
+        let x = (location.x - region.minX) / region.width, y = 1 - (location.y - region.minY) / region.height
+        guard (0...1).contains(x), (0...1).contains(y) else { return }
+        samples.append(CursorSample(t: date.timeIntervalSince(startedAt), x: x, y: y))
+    }
+
+    func stop() -> CursorTrack {
+        timer?.invalidate(); timer = nil
+        return CursorTrack(separate: separate, samples: samples)
+    }
+}
+
+/// Logs keyboard shortcuts while a recording runs. Only chords with ⌘, ⌃
+/// or ⌥ and navigation keys are kept — never what someone types.
+@MainActor
+final class KeystrokeRecorder {
+    private(set) var keys: [RecordedKeystroke] = []
+    private var monitor: Any?
+    private let startedAt: Date
+
+    static var isAvailable: Bool { AXIsProcessTrusted() }
+
+    init(startedAt: Date) {
+        self.startedAt = startedAt
+        guard Self.isAvailable else { return }
+        monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let label = KeystrokeRecorder.label(keyCode: UInt32(event.keyCode), modifiers: event.modifierFlags)
+            Task { @MainActor in if let label { self?.record(label) } }
+        }
+    }
+
+    func record(_ label: String, at date: Date = Date()) {
+        keys.append(RecordedKeystroke(t: date.timeIntervalSince(startedAt), label: label))
+    }
+
+    func stop() -> [RecordedKeystroke] {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        return keys
+    }
+
+    nonisolated private static let navigationKeys: [UInt32: String] = [
+        UInt32(kVK_Return): "⏎", UInt32(kVK_Escape): "esc", UInt32(kVK_Tab): "⇥", UInt32(kVK_Delete): "⌫",
+        UInt32(kVK_ForwardDelete): "⌦", UInt32(kVK_LeftArrow): "←", UInt32(kVK_RightArrow): "→",
+        UInt32(kVK_UpArrow): "↑", UInt32(kVK_DownArrow): "↓", UInt32(kVK_Space): "space",
+    ]
+
+    /// "⇧⌘S", "⌘V", "esc"; nil for plain typing.
+    nonisolated static func label(keyCode: UInt32, modifiers: NSEvent.ModifierFlags) -> String? {
+        let flags = modifiers.intersection([.command, .control, .option, .shift])
+        let chord = flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
+        let navigation = navigationKeys[keyCode]
+        guard chord || navigation != nil else { return nil }
+        var parts = ""
+        if flags.contains(.control) { parts += "⌃" }
+        if flags.contains(.option) { parts += "⌥" }
+        if flags.contains(.shift) { parts += "⇧" }
+        if flags.contains(.command) { parts += "⌘" }
+        let name = navigation ?? HotkeyCombo.keyName(keyCode)
+        guard !name.hasPrefix("key") else { return nil }
+        return parts + name
     }
 }
