@@ -157,6 +157,10 @@ struct EditorView: View {
 
     private var toolbar: some View {
         HStack(spacing: 6) {
+            // The tools scroll sideways when the window is narrow; the
+            // actions on the right keep their size and never overlap.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
             toolButton(.select)
             drawToolsGroup
             toolButton(.pixelate)
@@ -276,9 +280,14 @@ struct EditorView: View {
             }
 
             colorGroup
+                }
+                .padding(.vertical, 2)
+            }
+            .layoutPriority(0)
 
-            Spacer()
+            Spacer(minLength: 8)
 
+            HStack(spacing: 6) {
             if model.didCopyText {
                 Text("Copied")
                     .font(MM.Fonts.hint)
@@ -341,6 +350,9 @@ struct EditorView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("s", modifiers: .command)
             .help("Save (⌘S)")
+            }
+            .fixedSize()
+            .layoutPriority(1)
         }
         .padding(.horizontal, MM.Layout.padding)
         // One fixed row height: every control centers on the same axis, and

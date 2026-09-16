@@ -34,6 +34,9 @@ final class EditorWindowController {
 
         let target = idealSize(for: image.size)
         window.setContentSize(target)
+        // Below this the toolbar's actions would have to overlap; the tool
+        // row scrolls, the actions never shrink.
+        window.contentMinSize = NSSize(width: 640, height: 360)
         window.center()
         windows.append(window)
 
