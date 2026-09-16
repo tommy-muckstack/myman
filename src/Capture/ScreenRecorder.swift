@@ -31,6 +31,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     @Published private(set) var isRecording = false
     @Published private(set) var startedAt: Date?
+    /// Clicks inside the recorded area, for "Polish recording" zooms.
+    private var clickRecorder: ClickRecorder?
     /// True from tile-click to file-saved — covers the async spin-up window
     /// so meeting detection can never mistake our own mic for a call.
     private(set) var isBusy = false
@@ -348,6 +350,10 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 }
                 self.activeRegion = regionAppKit
                 WebcamBubble.shared.preferredRegion = regionAppKit
+                if !resuming, windowID == nil, let started = self.startedAt {
+                    let region = regionAppKit ?? (NSScreen.main?.frame ?? .zero)
+                    self.clickRecorder = ClickRecorder(regionAppKit: region, startedAt: started)
+                }
                 if windowID == nil, SettingsStore.shared.cursorEffects {
                     CursorEffects.shared.show(regionAppKit: regionAppKit)
                 }
@@ -450,6 +456,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         dismissPill(); borderPanel?.orderOut(nil); borderPanel = nil; activeRegion = nil; activeWindowID = nil
         WebcamBubble.shared.preferredRegion = nil; WebcamBubble.shared.turnOff(); WebcamBubble.shared.resetPosition()
         CursorEffects.shared.hide(); micLevelTimer?.invalidate(); micLevelTimer = nil; microphoneLevel = 0
+        _ = clickRecorder?.stop(); clickRecorder = nil
         if #available(macOS 15.0, *), let output = recordingOutput as? SCRecordingOutput {
             startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
         }
@@ -507,13 +514,12 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 try await Database.shared.write { try record.insert($0) }
                 if segmentURLs.count > 1 { for segment in segmentURLs { try? FileManager.default.removeItem(at: segment) } }
                 segmentURLs = []; lastSavedRecord = record
+                if let clicks = clickRecorder?.stop() { ClickLog.save(clicks, for: final); clickRecorder = nil }
                 finishSession(state: "finalized", record: record)
                 transcribeAndSync(record)
                 Analytics.track("screen_recording_saved", ["duration_s": duration])
-                Toast.show("Recording saved", actionLabel: "Open", action: { NSWorkspace.shared.open(final) }, secondaryLabel: "Copy", secondaryAction: {
-                    let item = NSPasteboardItem(); item.setString(final.path, forType: .string); item.setString(final.absoluteString, forType: .fileURL)
-                    NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([item])
-                })
+                Toast.show("Recording saved", actionLabel: "Polish", action: { RecordingPolishController.shared.open(movie: final) },
+                           secondaryLabel: "Open", secondaryAction: { NSWorkspace.shared.open(final) })
             } catch {
                 // A failed stop that leaves a live stream must remain stoppable.
                 if stream != nil {
