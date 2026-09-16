@@ -33,6 +33,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     @Published private(set) var startedAt: Date?
     /// Clicks inside the recorded area, for "Polish recording" zooms.
     private var clickRecorder: ClickRecorder?
+    private var cursorRecorder: CursorTrackRecorder?
+    private var keystrokeRecorder: KeystrokeRecorder?
     /// True from tile-click to file-saved — covers the async spin-up window
     /// so meeting detection can never mistake our own mic for a call.
     private(set) var isBusy = false
@@ -271,7 +273,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // looks soft after sharing or re-encoding.
                 config.captureResolution = .best
                 config.queueDepth = 8
-                config.showsCursor = true
+                config.showsCursor = !SettingsStore.shared.recordCursorSeparately
                 config.capturesAudio = agentSystemAudio ?? true
                 // The mic is deliberately NOT SCK's job: captureMicrophone
                 // echo-cancels the mic against system audio, leaving
@@ -353,6 +355,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 if !resuming, windowID == nil, let started = self.startedAt {
                     let region = regionAppKit ?? (NSScreen.main?.frame ?? .zero)
                     self.clickRecorder = ClickRecorder(regionAppKit: region, startedAt: started)
+                    self.cursorRecorder = CursorTrackRecorder(regionAppKit: region, startedAt: started,
+                                                              separate: SettingsStore.shared.recordCursorSeparately)
+                    self.keystrokeRecorder = KeystrokeRecorder(startedAt: started)
                 }
                 if windowID == nil, SettingsStore.shared.cursorEffects {
                     CursorEffects.shared.show(regionAppKit: regionAppKit)
@@ -457,6 +462,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
         WebcamBubble.shared.preferredRegion = nil; WebcamBubble.shared.turnOff(); WebcamBubble.shared.resetPosition()
         CursorEffects.shared.hide(); micLevelTimer?.invalidate(); micLevelTimer = nil; microphoneLevel = 0
         _ = clickRecorder?.stop(); clickRecorder = nil
+        _ = cursorRecorder?.stop(); cursorRecorder = nil
+        _ = keystrokeRecorder?.stop(); keystrokeRecorder = nil
         if #available(macOS 15.0, *), let output = recordingOutput as? SCRecordingOutput {
             startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
         }
@@ -515,6 +522,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 if segmentURLs.count > 1 { for segment in segmentURLs { try? FileManager.default.removeItem(at: segment) } }
                 segmentURLs = []; lastSavedRecord = record
                 if let clicks = clickRecorder?.stop() { ClickLog.save(clicks, for: final); clickRecorder = nil }
+                if let track = cursorRecorder?.stop() { RecordingSidecars.save(cursor: track, for: final); cursorRecorder = nil }
+                if let keys = keystrokeRecorder?.stop() { RecordingSidecars.save(keys: keys, for: final); keystrokeRecorder = nil }
                 finishSession(state: "finalized", record: record)
                 transcribeAndSync(record)
                 Analytics.track("screen_recording_saved", ["duration_s": duration])

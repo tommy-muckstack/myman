@@ -37,6 +37,8 @@ struct RecordingPolishView: View {
     @State private var trimStart: Double = 0
     @State private var trimEnd: Double = 0
     @State private var clicks: [RecordedClick] = []
+    @State private var cursor: CursorTrack?
+    @State private var keystrokes: [RecordedKeystroke] = []
     @State private var exporting = false
     @State private var progress: Double = 0
     @State private var error: String?
@@ -85,6 +87,27 @@ struct RecordingPolishView: View {
                     }
                 }
             }
+            section("Cursor and keys") {
+                if let cursor, cursor.separate {
+                    Toggle("Draw a smooth cursor", isOn: $options.drawCursor)
+                        .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                    if options.drawCursor {
+                        HStack(spacing: MM.Layout.spacing) {
+                            Toggle("Smooth movement", isOn: $options.smoothCursor).font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                            Text("Size").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                            Slider(value: Binding(get: { Double(options.cursorSize) }, set: { options.cursorSize = CGFloat($0) }), in: 1...3)
+                            Text(String(format: "%.1f×", options.cursorSize)).font(MM.Fonts.metadata.monospacedDigit()).foregroundStyle(MM.Colors.textSecondary).frame(width: 36)
+                        }
+                    }
+                } else {
+                    Text("Cursor smoothing needs “Record the cursor separately” in Settings → Screen Recording before recording.")
+                        .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                }
+                Toggle(keystrokes.isEmpty ? "Show keyboard shortcuts — none were recorded" : "Show keyboard shortcuts (\(keystrokes.count) recorded)", isOn: $options.showKeystrokes)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).disabled(keystrokes.isEmpty)
+                Toggle("Motion blur while zooming", isOn: $options.motionBlur)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).disabled(!options.zoomOnClicks)
+            }
             if let error { Text(error).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.danger) }
             HStack {
                 Text("The original recording is kept. Export writes a new .mp4 beside it.")
@@ -104,6 +127,10 @@ struct RecordingPolishView: View {
             trimEnd = duration
             clicks = ClickLog.load(for: movie)
             if clicks.isEmpty { options.zoomOnClicks = false }
+            cursor = RecordingSidecars.loadCursor(for: movie)
+            options.drawCursor = cursor?.separate == true
+            keystrokes = RecordingSidecars.loadKeys(for: movie)
+            options.showKeystrokes = !keystrokes.isEmpty
         }
     }
 
@@ -128,13 +155,14 @@ struct RecordingPolishView: View {
         chosen.trimStart = trimStart
         chosen.trimEnd = trimEnd
         let destination = RecordingPolish.outputURL(for: movie)
-        let source = movie, clicks = clicks
+        let source = movie, clicks = clicks, cursor = cursor, keystrokes = keystrokes
         Task { @MainActor in
             do {
-                try await RecordingPolish.export(source: source, to: destination, options: chosen, clicks: clicks) { value in
+                try await RecordingPolish.export(source: source, to: destination, options: chosen, clicks: clicks, cursor: cursor, keystrokes: keystrokes) { value in
                     Task { @MainActor in progress = value }
                 }
                 Analytics.track("recording_polished", ["backdrop": chosen.backdrop.rawValue, "zoom": chosen.zoomOnClicks,
+                                                       "cursor": chosen.drawCursor, "keys": chosen.showKeystrokes, "blur": chosen.motionBlur,
                                                        "trimmed": chosen.trimStart > 0 || (chosen.trimEnd ?? 0) < duration])
                 Toast.show("Polished recording saved", actionLabel: "Open", action: { NSWorkspace.shared.open(destination) },
                            secondaryLabel: "Show in Finder", secondaryAction: { NSWorkspace.shared.activateFileViewerSelecting([destination]) })
