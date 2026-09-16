@@ -10,7 +10,7 @@ enum ActionItemExtractor {
                         progress: @escaping MeetingNotesService.Progress = { _ in }) async -> String {
         let meeting = Meeting(id: "", title: "", startedAt: meetingDate, transcript: transcript)
         let result = await GroundedMeetingNotes.generate(meeting, progress: progress)
-        return result.markdown.components(separatedBy: "## Action items\n\n").dropFirst().first ?? ""
+        return result.markdown.components(separatedBy: "## Follow-ups\n\n").dropFirst().first ?? ""
     }
 }
 
@@ -66,6 +66,17 @@ struct TranscriptIndex {
 /// Resolving it here — against the meeting's own date, not today's — is what
 /// makes an action item actionable a week later.
 enum DueDate {
+    /// "Month-long", "a couple of weeks", "over the next month" describe how
+    /// long something takes, not when it is due. Q-labels alone ("Q4") name
+    /// a period, not a deadline.
+    static func isDuration(_ text: String) -> Bool {
+        let lower = " " + MeetingSource.normalized(text) + " "
+        let markers = [" long ", " over the next ", " for the next ", " a couple of ", " a few ", " a month ", " a week ", " weeks ", " months ",
+                       " days ", " hours ", " throughout ", " during ", " span ", " period "]
+        if markers.contains(where: lower.contains) { return !lower.contains(" by ") && !lower.contains(" before ") && !lower.contains(" end of ") }
+        return lower.range(of: #"^ q[1-4] (\d{4} )?$"#, options: .regularExpression) != nil
+    }
+
     static func isTemporalExpression(_ text: String) -> Bool {
         let pattern = #"(?i)\b(?:today|tomorrow|tonight|this (?:morning|afternoon|evening)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|(?:next|this|end of) (?:week|month)|eow|eom)\b|\b(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{1,2}\b|\b(?:by|in|before) (?:january|february|march|april|may|june|july|august|september|october|november|december)\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b"#
         return text.range(of: pattern, options: .regularExpression) != nil
