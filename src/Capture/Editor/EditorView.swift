@@ -16,7 +16,7 @@ struct CustomBackdropPicker: View {
 }
 
 enum EditorTool: String, CaseIterable, Identifiable {
-    case select, arrow, box, highlight, text, pixelate, crop, ocr
+    case select, box, filledBox, ellipse, line, arrow, text, pixelate, highlight, counter, pen, crop, ocr
     var id: String { rawValue }
 
     /// SF Symbol name, or nil when the tool uses an MMIcon instead.
@@ -25,9 +25,14 @@ enum EditorTool: String, CaseIterable, Identifiable {
         case .select: return nil
         case .arrow: return "arrow.up.right"
         case .box: return "rectangle"
+        case .filledBox: return "rectangle.fill"
+        case .ellipse: return "circle"
+        case .line: return "line.diagonal"
         case .highlight: return "highlighter"
         case .text: return "textformat"
         case .pixelate: return "eye.slash"
+        case .counter: return "1.circle.fill"
+        case .pen: return "scribble.variable"
         case .crop: return "crop"
         case .ocr: return "text.viewfinder"
         }
@@ -41,7 +46,12 @@ enum EditorTool: String, CaseIterable, Identifiable {
         switch self {
         case .select: return "Select — click and drag existing annotations"
         case .arrow: return "Arrow — drag to point at something"
-        case .box: return "Box — drag to frame something"
+        case .box: return "Rectangle — drag to frame something"
+        case .filledBox: return "Filled rectangle — drag to cover something"
+        case .ellipse: return "Ellipse — drag to circle something"
+        case .line: return "Line — drag to draw a straight line"
+        case .counter: return "Counter — click to drop a numbered badge"
+        case .pen: return "Pen — draw freehand"
         case .highlight: return "Highlight — drag to mark something"
         case .text: return "Text — click to type"
         case .pixelate: return "Hide — drag to pixelate sensitive info"
@@ -75,7 +85,8 @@ struct EditorView: View {
     @State private var showCustomBackdrop = false
     /// What the collapsed draw chip shows while a non-draw tool is active.
     @State private var lastDrawTool: EditorTool = .arrow
-    private static let drawTools: [EditorTool] = [.arrow, .box, .highlight, .text]
+    private static let drawTools: [EditorTool] = [.box, .filledBox, .ellipse, .line, .arrow, .text, .highlight, .counter, .pen]
+    @State private var penPoints: [CGPoint] = []
 
     var onDone: () -> Void = {}
     var onSaved: (NSImage, URL) -> Void = { _, _ in }
@@ -151,6 +162,7 @@ struct EditorView: View {
             toolButton(.pixelate)
             toolButton(.crop)
             toolButton(.ocr)
+            strokeWidthGroup
 
             Divider().frame(height: 18).overlay(MM.Colors.border).padding(.horizontal, 6)
 
@@ -372,24 +384,36 @@ struct EditorView: View {
         .help(help)
     }
 
-    /// Arrow/box/highlight/text collapse to the active (or last-used) tool.
+    /// Every drawing tool, always visible: one click to any of them.
     @ViewBuilder private var drawToolsGroup: some View {
-        if expandedGroup == .draw {
-            ForEach(Self.drawTools) { t in
-                toolButton(t)
-                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+        ForEach(Self.drawTools) { t in toolButton(t) }
+    }
+
+    /// Line weight for new strokes, as a small menu next to the color.
+    private var strokeWidthGroup: some View {
+        Menu {
+            ForEach(EditorModel.strokeWidths, id: \.self) { width in
+                Button {
+                    model.strokeWidth = width
+                    if let id = selectedAnnotation { model.annotationStrokeWidths[id] = width }
+                } label: {
+                    Label(Self.strokeName(width), systemImage: model.strokeWidth == width ? "checkmark" : "")
+                }
             }
-        } else {
-            let active = Self.drawTools.contains(tool) ? tool : lastDrawTool
-            groupChip(help: "Draw — arrow, box, highlight, text",
-                      isActive: Self.drawTools.contains(tool),
-                      action: { expand(.draw) }) {
-                Image(systemName: active.symbol ?? "arrow.up.right")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Self.drawTools.contains(tool)
-                                     ? MM.Colors.textPrimary : MM.Colors.textSecondary)
+        } label: {
+            HStack(spacing: 4) {
+                Capsule().fill(MM.Colors.textPrimary).frame(width: 16, height: max(1.5, min(6, model.strokeWidth * 0.8)))
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(MM.Colors.textTertiary)
             }
+            .padding(.horizontal, 6).frame(height: 26).clickable(minSize: 30)
         }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("Line width — \(Self.strokeName(model.strokeWidth))")
+        .accessibilityLabel("Line width")
+    }
+
+    private static func strokeName(_ width: CGFloat) -> String {
+        switch width { case 2: "Thin"; case 3: "Regular"; case 5: "Bold"; default: "Heavy" }
     }
 
     /// Backdrop chips collapse to the current backdrop's swatch.
@@ -759,8 +783,40 @@ struct EditorView: View {
                                 width: rect.width * scale, height: rect.height * scale)
             context.stroke(
                 Path(roundedRect: scaled, cornerRadius: 3),
-                with: .color(color), style: .init(lineWidth: 3)
+                with: .color(color), style: .init(lineWidth: model.strokeWidth(for: annotation.id) * scale)
             )
+
+        case .filledBox(_, let rect):
+            let scaled = CGRect(x: rect.origin.x * scale, y: rect.origin.y * scale,
+                                width: rect.width * scale, height: rect.height * scale)
+            context.fill(Path(roundedRect: scaled, cornerRadius: 3), with: .color(color))
+
+        case .ellipse(_, let rect):
+            let scaled = CGRect(x: rect.origin.x * scale, y: rect.origin.y * scale,
+                                width: rect.width * scale, height: rect.height * scale)
+            context.stroke(Path(ellipseIn: scaled), with: .color(color),
+                           style: .init(lineWidth: model.strokeWidth(for: annotation.id) * scale))
+
+        case .line(_, let from, let to):
+            var path = Path()
+            path.move(to: CGPoint(x: from.x * scale, y: from.y * scale))
+            path.addLine(to: CGPoint(x: to.x * scale, y: to.y * scale))
+            context.stroke(path, with: .color(color),
+                           style: .init(lineWidth: model.strokeWidth(for: annotation.id) * scale, lineCap: .round))
+
+        case .pen(_, let points):
+            guard let first = points.first else { break }
+            var path = Path()
+            path.move(to: CGPoint(x: first.x * scale, y: first.y * scale))
+            for p in points.dropFirst() { path.addLine(to: CGPoint(x: p.x * scale, y: p.y * scale)) }
+            context.stroke(path, with: .color(color),
+                           style: .init(lineWidth: model.strokeWidth(for: annotation.id) * scale, lineCap: .round, lineJoin: .round))
+
+        case .counter(_, let center, let number):
+            let radius = model.counterRadius * scale
+            let c = CGPoint(x: center.x * scale, y: center.y * scale)
+            context.fill(Path(ellipseIn: CGRect(x: c.x - radius, y: c.y - radius, width: radius * 2, height: radius * 2)), with: .color(color))
+            context.draw(Text("\(number)").font(MM.Fonts.gellix(radius * 1.2, .semiBold)).foregroundColor(.white), at: c, anchor: .center)
 
         case .text(let id, let string, let origin):
             if pendingText?.id == id { break }
@@ -852,12 +908,16 @@ struct EditorView: View {
                     model.resize(id, handle: handle, to: point)
                 case .drawing:
                     dragCurrent = point
+                    if tool == .pen {
+                        if penPoints.isEmpty { penPoints = [start] }
+                        if let last = penPoints.last, hypot(point.x - last.x, point.y - last.y) >= 1.5 / scale { penPoints.append(point) }
+                    }
                 case .undecided:
                     break
                 }
             }
             .onEnded { _ in
-                defer { dragMode = .undecided; dragStart = nil; dragCurrent = nil }
+                defer { dragMode = .undecided; dragStart = nil; dragCurrent = nil; penPoints = [] }
 
                 switch dragMode {
                 case .moving(let id, _), .resizing(let id, _):
@@ -880,6 +940,12 @@ struct EditorView: View {
                         return
                     case .ocr:
                         return // Live Text owns selection in this mode
+                    case .counter:
+                        // A click, not a drag: drop the next number here.
+                        let badge = previewAnnotation(from: start, to: end)
+                        model.add(badge)
+                        selectedAnnotation = badge.id
+                        return
                     default:
                         break
                     }
@@ -901,6 +967,16 @@ struct EditorView: View {
             return .arrow(id: UUID(), from: start, to: end)
         case .box:
             return .box(id: UUID(), rect: rect(from: start, to: end))
+        case .filledBox:
+            return .filledBox(id: UUID(), rect: rect(from: start, to: end))
+        case .ellipse:
+            return .ellipse(id: UUID(), rect: rect(from: start, to: end))
+        case .line:
+            return .line(id: UUID(), from: start, to: end)
+        case .counter:
+            return .counter(id: UUID(), center: start, number: model.nextCounterNumber)
+        case .pen:
+            return .pen(id: UUID(), points: penPoints.isEmpty ? [start, end] : penPoints)
         case .highlight:
             return .highlight(id: UUID(), rect: rect(from: start, to: end))
         case .pixelate:
