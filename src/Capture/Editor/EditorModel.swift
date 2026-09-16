@@ -15,12 +15,41 @@ enum Annotation: Identifiable, Equatable {
     case pixelate(id: UUID, rect: CGRect)
     /// Overlaid photo; the NSImage lives in EditorModel.overlayImages[id].
     case image(id: UUID, rect: CGRect)
+    case filledBox(id: UUID, rect: CGRect)
+    case ellipse(id: UUID, rect: CGRect)
+    case line(id: UUID, from: CGPoint, to: CGPoint)
+    /// A numbered badge: 1, 2, 3… in the order they were placed.
+    case counter(id: UUID, center: CGPoint, number: Int)
+    /// Freehand stroke through the points, in image coordinates.
+    case pen(id: UUID, points: [CGPoint])
 
     var id: UUID {
         switch self {
         case .arrow(let id, _, _), .box(let id, _), .highlight(let id, _),
-             .text(let id, _, _), .pixelate(let id, _), .image(let id, _):
+             .text(let id, _, _), .pixelate(let id, _), .image(let id, _),
+             .filledBox(let id, _), .ellipse(let id, _), .line(let id, _, _),
+             .counter(let id, _, _), .pen(let id, _):
             return id
+        }
+    }
+
+    /// Rectangle-shaped annotations share their geometry handling.
+    var rect: CGRect? {
+        switch self {
+        case .box(_, let r), .highlight(_, let r), .pixelate(_, let r), .image(_, let r), .filledBox(_, let r), .ellipse(_, let r): return r
+        default: return nil
+        }
+    }
+
+    func withRect(_ r: CGRect) -> Annotation {
+        switch self {
+        case .box(let id, _): return .box(id: id, rect: r)
+        case .highlight(let id, _): return .highlight(id: id, rect: r)
+        case .pixelate(let id, _): return .pixelate(id: id, rect: r)
+        case .image(let id, _): return .image(id: id, rect: r)
+        case .filledBox(let id, _): return .filledBox(id: id, rect: r)
+        case .ellipse(let id, _): return .ellipse(id: id, rect: r)
+        default: return self
         }
     }
 }
@@ -96,6 +125,16 @@ final class EditorModel: ObservableObject {
 
     /// Applied consistently to new arrows, boxes, text, and highlights.
     @Published var annotationColor = NSColor(red: 1.0, green: 0.22, blue: 0.36, alpha: 1)
+    /// Line weight for new strokes (arrow, line, box, ellipse, pen), image points.
+    @Published var strokeWidth: CGFloat = 3
+    var annotationStrokeWidths: [UUID: CGFloat] = [:]
+    static let strokeWidths: [CGFloat] = [2, 3, 5, 8]
+    func strokeWidth(for id: UUID) -> CGFloat { annotationStrokeWidths[id] ?? 3 }
+    /// The badge radius, in image points; counters read at any zoom.
+    var counterRadius: CGFloat { max(11, annotationFontSize * 0.8) }
+    var nextCounterNumber: Int {
+        annotations.compactMap { if case .counter(_, _, let n) = $0 { n } else { nil } }.max().map { $0 + 1 } ?? 1
+    }
 
     /// Corner rounding on the image: the user's choice, or a minimum of 12
     /// whenever a backdrop is on (a hard-corner shot on a gradient looks wrong).
@@ -129,6 +168,7 @@ final class EditorModel: ObservableObject {
 
     func add(_ annotation: Annotation) {
         annotations.append(annotation)
+        annotationStrokeWidths[annotation.id] = strokeWidth
         if case .pixelate(let id, let rect) = annotation {
             pixelatePreviews[id] = Self.pixelated(image, in: rect)
         }
@@ -247,8 +287,19 @@ final class EditorModel: ObservableObject {
         case .arrow(_, let from, let to):
             return CGRect(x: min(from.x, to.x), y: min(from.y, to.y),
                           width: abs(to.x - from.x), height: abs(to.y - from.y))
-        case .box(_, let rect), .highlight(_, let rect), .pixelate(_, let rect), .image(_, let rect):
+        case .box(_, let rect), .highlight(_, let rect), .pixelate(_, let rect), .image(_, let rect),
+             .filledBox(_, let rect), .ellipse(_, let rect):
             return rect
+        case .line(_, let from, let to):
+            return CGRect(x: min(from.x, to.x), y: min(from.y, to.y),
+                          width: abs(to.x - from.x), height: abs(to.y - from.y))
+        case .counter(_, let center, _):
+            return CGRect(x: center.x - counterRadius, y: center.y - counterRadius, width: counterRadius * 2, height: counterRadius * 2)
+        case .pen(_, let points):
+            guard let first = points.first else { return .zero }
+            var r = CGRect(origin: first, size: .zero)
+            for p in points { r = r.union(CGRect(origin: p, size: .zero)) }
+            return r
         case .text(_, let string, let origin):
             // Measured with AppKit metrics but DRAWN by SwiftUI — the two can
             // disagree, so the grab box is padded generously: full line height
@@ -271,11 +322,15 @@ final class EditorModel: ObservableObject {
     func hitTest(_ point: CGPoint, tolerance: CGFloat, selected: UUID? = nil) -> UUID? {
         for annotation in annotations.reversed() {
             switch annotation {
-            case .arrow(_, let from, let to):
+            case .arrow(_, let from, let to), .line(_, let from, let to):
                 if distance(from: point, toSegment: (from, to)) <= tolerance {
                     return annotation.id
                 }
-            case .box, .highlight, .text, .pixelate, .image:
+            case .pen(_, let points):
+                if zip(points, points.dropFirst()).contains(where: { distance(from: point, toSegment: $0) <= tolerance }) {
+                    return annotation.id
+                }
+            case .box, .highlight, .text, .pixelate, .image, .filledBox, .ellipse, .counter:
                 if bounds(of: annotation).insetBy(dx: -tolerance, dy: -tolerance)
                     .contains(point) {
                     return annotation.id
@@ -296,14 +351,14 @@ final class EditorModel: ObservableObject {
 
     func handles(for annotation: Annotation) -> [(handle: ResizeHandle, point: CGPoint)] {
         switch annotation {
-        case .arrow(_, let from, let to):
+        case .arrow(_, let from, let to), .line(_, let from, let to):
             return [(.arrowStart, from), (.arrowEnd, to)]
-        case .box(_, let r), .highlight(_, let r), .pixelate(_, let r), .image(_, let r):
+        case .box(_, let r), .highlight(_, let r), .pixelate(_, let r), .image(_, let r), .filledBox(_, let r), .ellipse(_, let r):
             return [(.topLeft, CGPoint(x: r.minX, y: r.minY)), (.top, CGPoint(x: r.midX, y: r.minY)),
                     (.topRight, CGPoint(x: r.maxX, y: r.minY)), (.right, CGPoint(x: r.maxX, y: r.midY)),
                     (.bottomRight, CGPoint(x: r.maxX, y: r.maxY)), (.bottom, CGPoint(x: r.midX, y: r.maxY)),
                     (.bottomLeft, CGPoint(x: r.minX, y: r.maxY)), (.left, CGPoint(x: r.minX, y: r.midY))]
-        case .text:
+        case .text, .counter, .pen:
             return []
         }
     }
@@ -343,11 +398,12 @@ final class EditorModel: ObservableObject {
         case .arrow(let id, let from, let to):
             if handle == .arrowStart { annotations[index] = .arrow(id: id, from: point, to: to) }
             if handle == .arrowEnd { annotations[index] = .arrow(id: id, from: from, to: point) }
-        case .box(let id, let r): annotations[index] = .box(id: id, rect: resized(r))
-        case .highlight(let id, let r): annotations[index] = .highlight(id: id, rect: resized(r))
-        case .pixelate(let id, let r): annotations[index] = .pixelate(id: id, rect: resized(r))
-        case .image(let id, let r): annotations[index] = .image(id: id, rect: resized(r))
-        case .text: break
+        case .line(let id, let from, let to):
+            if handle == .arrowStart { annotations[index] = .line(id: id, from: point, to: to) }
+            if handle == .arrowEnd { annotations[index] = .line(id: id, from: from, to: point) }
+        case .text, .counter, .pen: break
+        default:
+            if let r = annotations[index].rect { annotations[index] = annotations[index].withRect(resized(r)) }
         }
     }
 
@@ -373,6 +429,17 @@ final class EditorModel: ObservableObject {
                 id: id, string: string,
                 origin: CGPoint(x: origin.x + delta.dx, y: origin.y + delta.dy)
             )
+        case .filledBox(let id, let rect):
+            annotations[index] = .filledBox(id: id, rect: rect.offsetBy(dx: delta.dx, dy: delta.dy))
+        case .ellipse(let id, let rect):
+            annotations[index] = .ellipse(id: id, rect: rect.offsetBy(dx: delta.dx, dy: delta.dy))
+        case .line(let id, let from, let to):
+            annotations[index] = .line(id: id, from: CGPoint(x: from.x + delta.dx, y: from.y + delta.dy),
+                                       to: CGPoint(x: to.x + delta.dx, y: to.y + delta.dy))
+        case .counter(let id, let center, let number):
+            annotations[index] = .counter(id: id, center: CGPoint(x: center.x + delta.dx, y: center.y + delta.dy), number: number)
+        case .pen(let id, let points):
+            annotations[index] = .pen(id: id, points: points.map { CGPoint(x: $0.x + delta.dx, y: $0.y + delta.dy) })
         }
     }
 
@@ -571,15 +638,53 @@ final class EditorModel: ObservableObject {
                 overlayImages[id]?.draw(in: flip(rect))
 
             case .box(_, let rect):
-                ctx.setStrokeColor(color.cgColor)
-                ctx.setLineWidth(3)
+                let width = strokeWidth(for: annotation.id)
                 let path = NSBezierPath(roundedRect: flip(rect), xRadius: 3, yRadius: 3)
-                path.lineWidth = 3
+                path.lineWidth = width
                 color.setStroke()
                 path.stroke()
 
+            case .filledBox(_, let rect):
+                color.setFill()
+                NSBezierPath(roundedRect: flip(rect), xRadius: 3, yRadius: 3).fill()
+
+            case .ellipse(_, let rect):
+                let path = NSBezierPath(ovalIn: flip(rect))
+                path.lineWidth = strokeWidth(for: annotation.id)
+                color.setStroke()
+                path.stroke()
+
+            case .line(_, let from, let to):
+                let path = NSBezierPath()
+                path.move(to: flip(from)); path.line(to: flip(to))
+                path.lineWidth = strokeWidth(for: annotation.id); path.lineCapStyle = .round
+                color.setStroke()
+                path.stroke()
+
+            case .pen(_, let points):
+                guard let first = points.first else { break }
+                let path = NSBezierPath()
+                path.move(to: flip(first))
+                for p in points.dropFirst() { path.line(to: flip(p)) }
+                path.lineWidth = strokeWidth(for: annotation.id); path.lineCapStyle = .round; path.lineJoinStyle = .round
+                color.setStroke()
+                path.stroke()
+
+            case .counter(_, let center, let number):
+                let radius = counterRadius
+                let c = flip(center)
+                color.setFill()
+                NSBezierPath(ovalIn: CGRect(x: c.x - radius, y: c.y - radius, width: radius * 2, height: radius * 2)).fill()
+                let label = "\(number)" as NSString
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: NSFont(name: "Gellix-SemiBold", size: radius * 1.2) ?? NSFont.boldSystemFont(ofSize: radius * 1.2),
+                    .foregroundColor: NSColor.white,
+                ]
+                let size = label.size(withAttributes: attributes)
+                label.draw(at: CGPoint(x: c.x - size.width / 2, y: c.y - size.height / 2), withAttributes: attributes)
+
             case .arrow(_, let from, let to):
-                drawArrow(from: flip(from), to: flip(to), in: ctx, color: color)
+                drawArrow(from: flip(from), to: flip(to), in: ctx, color: color, width: strokeWidth(for: annotation.id))
 
             case .text(_, let string, let origin):
                 let attributes: [NSAttributedString.Key: Any] = [
@@ -599,15 +704,15 @@ final class EditorModel: ObservableObject {
         return NSImage(cgImage: output, size: canvasSize)
     }
 
-    private func drawArrow(from: CGPoint, to: CGPoint, in ctx: CGContext, color: NSColor) {
+    private func drawArrow(from: CGPoint, to: CGPoint, in ctx: CGContext, color: NSColor, width: CGFloat = 3) {
         ctx.saveGState()
         ctx.setStrokeColor(color.cgColor)
         ctx.setFillColor(color.cgColor)
-        ctx.setLineWidth(3)
+        ctx.setLineWidth(width)
         ctx.setLineCap(.round)
 
         let angle = atan2(to.y - from.y, to.x - from.x)
-        let headLength: CGFloat = 14
+        let headLength: CGFloat = 14 * max(1, width / 3)
         let lineEnd = CGPoint(
             x: to.x - cos(angle) * headLength * 0.6,
             y: to.y - sin(angle) * headLength * 0.6
