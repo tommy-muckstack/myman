@@ -19,8 +19,17 @@ final class SelectionOverlayCoordinator {
     /// Guards hideAll() so the crosshair-cursor pop can never run twice — an
     /// unbalanced NSCursor.pop() corrupts the cursor stack.
     private(set) var isShowing = false
+    /// Esc must work even when no overlay panel managed to become key (a
+    /// menu-bar app's non-activating panels sometimes don't), so it is
+    /// watched with event monitors rather than only in keyDown.
+    private var keyMonitors: [Any] = []
+    /// Nothing picked within this long and the overlay leaves on its own,
+    /// so a forgotten or stuck selection never traps the screen.
+    let idleTimeout: TimeInterval
+    private var idleTimer: Timer?
 
-    init(frozenCapture: CompositeCapture?) {
+    init(frozenCapture: CompositeCapture?, idleTimeout: TimeInterval = 10) {
+        self.idleTimeout = idleTimeout
         for screen in NSScreen.screens {
             childWindows.append(
                 SelectionOverlayWindow(screen: screen, coordinator: self, frozenCapture: frozenCapture)
@@ -41,19 +50,49 @@ final class SelectionOverlayCoordinator {
         (pointerWindow ?? childWindows.first)?.makeKey()
         isShowing = true
         NSCursor.crosshair.push()
+        installEscapeMonitors()
+        restartIdleTimer()
     }
 
     func hideAll() {
         guard isShowing else { return }
         isShowing = false
+        idleTimer?.invalidate(); idleTimer = nil
+        for monitor in keyMonitors { NSEvent.removeMonitor(monitor) }
+        keyMonitors = []
         for window in childWindows {
             window.orderOut(nil)
         }
         NSCursor.pop()
     }
 
+    private func installEscapeMonitors() {
+        let isEscape: (NSEvent) -> Bool = { $0.type == .keyDown && $0.keyCode == 53 }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            guard let self, self.isShowing, isEscape(event) else { return event }
+            self.handleCancel()
+            return nil
+        }) { keyMonitors.append(local) }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            guard let self, self.isShowing, isEscape(event) else { return }
+            self.handleCancel()
+        }) { keyMonitors.append(global) }
+    }
+
+    private func restartIdleTimer() {
+        idleTimer?.invalidate()
+        guard idleTimeout > 0 else { return }
+        idleTimer = Timer.scheduledTimer(withTimeInterval: idleTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isShowing, self.selectionStart == nil else { return }
+                self.handleCancel()
+            }
+        }
+    }
+
     func handleSelectionStart(at point: CGPoint) {
         selectionStart = point
+        idleTimer?.invalidate(); idleTimer = nil
         updateAll(current: point)
     }
 

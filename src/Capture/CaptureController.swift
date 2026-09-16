@@ -30,10 +30,18 @@ final class CaptureController: SelectionOverlayDelegate {
         SettingsStore.shared.screenshotFolderURL
     }
 
+    private var isStartingCapture = false
+
     func beginRegionCapture() {
         if NSWorkspace.shared.isVoiceOverEnabled { CaptureChooser.shared.open(); return }
-        guard overlay?.isShowing != true else { return }
+        guard !isStartingCapture else { return }
+        // A second press while an overlay is up means "start over": it
+        // recovers a selection that stopped taking input instead of being
+        // silently ignored until something else dismisses it.
+        if overlay?.isShowing == true { selectionOverlayDidCancel() }
+        isStartingCapture = true
         Task { @MainActor in
+            defer { isStartingCapture = false }
             let engine = CaptureEngine.shared
             guard await engine.authorizeInteractively() else {
                 showPermissionAlert()

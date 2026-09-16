@@ -63,7 +63,7 @@ struct EditorView: View {
     @State private var scanning = false
     @State private var showTranslate = false
     @State private var ocrForTranslate = ""
-    private enum DragMode { case undecided, drawing, moving(UUID, last: CGPoint) }
+    private enum DragMode { case undecided, drawing, moving(UUID, last: CGPoint), resizing(UUID, EditorModel.ResizeHandle) }
     @State private var dragMode: DragMode = .undecided
     @State private var selectedAnnotation: UUID?
 
@@ -604,7 +604,10 @@ struct EditorView: View {
                         switch phase {
                         case .active(let location):
                             let point = CGPoint(x: location.x / scale, y: location.y / scale)
-                            if tool == .select || model.hitTest(
+                            if let selected = selectedAnnotation,
+                               let handle = model.handle(at: point, for: selected, tolerance: 8 / scale) {
+                                Self.resizeCursor(for: handle).set()
+                            } else if tool == .select || model.hitTest(
                                 point, tolerance: 10 / scale, selected: selectedAnnotation) != nil {
                                 if model.hitTest(point, tolerance: 10 / scale,
                                                  selected: selectedAnnotation) != nil {
@@ -676,7 +679,9 @@ struct EditorView: View {
             for annotation in model.annotations {
                 draw(annotation, in: &context, scale: scale, color: color)
             }
-            // Selection halo — a quiet dashed outline you can grab.
+            // Selection halo — a quiet dashed outline you can grab — and the
+            // handles that resize it. The body still drags; the handles win
+            // only where they sit.
             if let selected = model.annotations.first(where: { $0.id == selectedAnnotation }) {
                 let b = model.bounds(of: selected)
                 let scaled = CGRect(x: b.origin.x * scale - 5, y: b.origin.y * scale - 5,
@@ -686,6 +691,12 @@ struct EditorView: View {
                     with: .color(.gray.opacity(0.7)),
                     style: .init(lineWidth: 1, dash: [4, 3])
                 )
+                for handle in model.handles(for: selected) {
+                    let center = CGPoint(x: handle.point.x * scale, y: handle.point.y * scale)
+                    let knob = Path(ellipseIn: CGRect(x: center.x - 4.5, y: center.y - 4.5, width: 9, height: 9))
+                    context.fill(knob, with: .color(.white))
+                    context.stroke(knob, with: .color(.gray.opacity(0.9)), style: .init(lineWidth: 1))
+                }
             }
             // Live preview of the in-flight drag
             if case .drawing = dragMode, let start = dragStart, let current = dragCurrent {
@@ -817,7 +828,10 @@ struct EditorView: View {
                 // Decide once, on the first tick: pressing an existing
                 // annotation moves it; pressing empty canvas draws.
                 if case .undecided = dragMode {
-                    if tool != .ocr,
+                    if tool != .ocr, let selected = selectedAnnotation,
+                       let handle = model.handle(at: start, for: selected, tolerance: 8 / scale) {
+                        dragMode = .resizing(selected, handle)
+                    } else if tool != .ocr,
                        let hit = model.hitTest(start, tolerance: 10 / scale, selected: selectedAnnotation) {
                         dragMode = .moving(hit, last: start)
                         selectedAnnotation = hit
@@ -833,6 +847,9 @@ struct EditorView: View {
                     NSCursor.closedHand.set()
                     model.move(id, by: CGVector(dx: point.x - last.x, dy: point.y - last.y))
                     dragMode = .moving(id, last: point)
+                case .resizing(let id, let handle):
+                    Self.resizeCursor(for: handle).set()
+                    model.resize(id, handle: handle, to: point)
                 case .drawing:
                     dragCurrent = point
                 case .undecided:
@@ -843,7 +860,7 @@ struct EditorView: View {
                 defer { dragMode = .undecided; dragStart = nil; dragCurrent = nil }
 
                 switch dragMode {
-                case .moving(let id, _):
+                case .moving(let id, _), .resizing(let id, _):
                     model.refreshPixelateIfNeeded(id)
 
                 case .drawing:
@@ -889,6 +906,12 @@ struct EditorView: View {
         case .pixelate:
             return .pixelate(id: UUID(), rect: rect(from: start, to: end))
         }
+    }
+
+    private static func resizeCursor(for handle: EditorModel.ResizeHandle) -> NSCursor {
+        if handle.isHorizontal { return .resizeLeftRight }
+        if handle.isVertical { return .resizeUpDown }
+        return .crosshair
     }
 
     private func rect(from a: CGPoint, to b: CGPoint) -> CGRect {
