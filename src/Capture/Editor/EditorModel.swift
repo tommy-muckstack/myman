@@ -285,6 +285,72 @@ final class EditorModel: ObservableObject {
         return nil
     }
 
+    /// Grab points on a selected annotation: eight around a rectangle, the
+    /// two ends of an arrow. Text resizes through its font size, not handles.
+    enum ResizeHandle: CaseIterable, Sendable {
+        case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left, arrowStart, arrowEnd
+        var isCorner: Bool { [.topLeft, .topRight, .bottomRight, .bottomLeft].contains(self) }
+        var isVertical: Bool { self == .top || self == .bottom }
+        var isHorizontal: Bool { self == .left || self == .right }
+    }
+
+    func handles(for annotation: Annotation) -> [(handle: ResizeHandle, point: CGPoint)] {
+        switch annotation {
+        case .arrow(_, let from, let to):
+            return [(.arrowStart, from), (.arrowEnd, to)]
+        case .box(_, let r), .highlight(_, let r), .pixelate(_, let r), .image(_, let r):
+            return [(.topLeft, CGPoint(x: r.minX, y: r.minY)), (.top, CGPoint(x: r.midX, y: r.minY)),
+                    (.topRight, CGPoint(x: r.maxX, y: r.minY)), (.right, CGPoint(x: r.maxX, y: r.midY)),
+                    (.bottomRight, CGPoint(x: r.maxX, y: r.maxY)), (.bottom, CGPoint(x: r.midX, y: r.maxY)),
+                    (.bottomLeft, CGPoint(x: r.minX, y: r.maxY)), (.left, CGPoint(x: r.minX, y: r.midY))]
+        case .text:
+            return []
+        }
+    }
+
+    /// The handle under the point, if the point is within `tolerance`
+    /// (image points) of one. Handles win over the body so a corner grab
+    /// resizes instead of moving.
+    func handle(at point: CGPoint, for id: UUID, tolerance: CGFloat) -> ResizeHandle? {
+        guard let annotation = annotations.first(where: { $0.id == id }) else { return nil }
+        return handles(for: annotation)
+            .map { ($0.handle, hypot($0.point.x - point.x, $0.point.y - point.y)) }
+            .filter { $0.1 <= tolerance }
+            .min { $0.1 < $1.1 }?.0
+    }
+
+    /// Drag a handle to `point`. Rectangles keep at least 4 points a side and
+    /// never flip inside out; arrows simply move that end.
+    func resize(_ id: UUID, handle: ResizeHandle, to point: CGPoint) {
+        guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+        func resized(_ r: CGRect) -> CGRect {
+            var minX = r.minX, minY = r.minY, maxX = r.maxX, maxY = r.maxY
+            let minSide: CGFloat = 4
+            switch handle {
+            case .topLeft: minX = min(point.x, maxX - minSide); minY = min(point.y, maxY - minSide)
+            case .top: minY = min(point.y, maxY - minSide)
+            case .topRight: maxX = max(point.x, minX + minSide); minY = min(point.y, maxY - minSide)
+            case .right: maxX = max(point.x, minX + minSide)
+            case .bottomRight: maxX = max(point.x, minX + minSide); maxY = max(point.y, minY + minSide)
+            case .bottom: maxY = max(point.y, minY + minSide)
+            case .bottomLeft: minX = min(point.x, maxX - minSide); maxY = max(point.y, minY + minSide)
+            case .left: minX = min(point.x, maxX - minSide)
+            case .arrowStart, .arrowEnd: break
+            }
+            return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        }
+        switch annotations[index] {
+        case .arrow(let id, let from, let to):
+            if handle == .arrowStart { annotations[index] = .arrow(id: id, from: point, to: to) }
+            if handle == .arrowEnd { annotations[index] = .arrow(id: id, from: from, to: point) }
+        case .box(let id, let r): annotations[index] = .box(id: id, rect: resized(r))
+        case .highlight(let id, let r): annotations[index] = .highlight(id: id, rect: resized(r))
+        case .pixelate(let id, let r): annotations[index] = .pixelate(id: id, rect: resized(r))
+        case .image(let id, let r): annotations[index] = .image(id: id, rect: resized(r))
+        case .text: break
+        }
+    }
+
     func move(_ id: UUID, by delta: CGVector) {
         guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
         switch annotations[index] {
