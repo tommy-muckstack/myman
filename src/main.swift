@@ -7,7 +7,7 @@ import SwiftUI
 // every surface is a floating panel. No Dock icon, no main window.
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var agentDefaultsObserver: NSObjectProtocol?
     private let launchedAt = Date()
@@ -22,6 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     private var agentActions: AgentActions?
     private var agentBridge: AgentBridge?
     private var updater: SPUStandardUpdaterController?
+    private lazy var updateCoordinator = AppUpdateCoordinator(isBusy: { [weak self] in
+        guard let self else { return true }
+        if case .idle = self.voice.phase {} else { return true }
+        return self.meetings.isStarting || self.meetings.phase != .idle || self.meetings.isTranscribing
+            || !MeetingNotesService.shared.stages.isEmpty
+            || ScreenRecorder.shared.isBusy || ScreenRecorder.shared.isTranscribing
+    })
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar apps get NO working ⌘C/⌘V/⌘A unless a main menu exists to
@@ -52,10 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         // Sparkle needs a real .app bundle; skip in bare-binary dev runs.
         if Bundle.main.bundleURL.pathExtension == "app" {
             updater = SPUStandardUpdaterController(
-                startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
-            // Check immediately at every launch — with SUAutomaticallyUpdate
-            // (release builds), new versions download + install silently.
-            updater?.updater.checkForUpdatesInBackground()
+                startingUpdater: true, updaterDelegate: updateCoordinator, userDriverDelegate: nil)
+            // Download at launch and hourly; offer restart once capture work is idle.
+            if updater?.updater.automaticallyChecksForUpdates == true {
+                updater?.updater.checkForUpdatesInBackground()
+            }
+            updateCoordinator.startMonitoring()
         }
 
         launcher = LauncherPanelController(
@@ -208,24 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         updater?.checkForUpdates(nil)
     }
 
-    /// A recorder must NEVER be restarted by its own updater. Update checks
-    /// (and therefore silent installs) wait until nothing is being captured.
-    nonisolated func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
-        let busy = MainActor.assumeIsolated {
-            var capturing = false
-            if case .idle = self.voice.phase {} else { capturing = true }
-            if case .idle = self.meetings.phase {} else { capturing = true }
-            // A restart mid-transcription is recoverable at next launch, but
-            // never worth it — the background queue counts as busy too.
-            if self.meetings.isTranscribing { capturing = true }
-            if ScreenRecorder.shared.isRecording { capturing = true }
-            return capturing
-        }
-        if busy {
-            throw NSError(domain: "com.muckstack.myman", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Recording in progress — update deferred",
-            ])
-        }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        updateCoordinator.shouldCancelTermination() ? .terminateCancel : .terminateNow
     }
 
     private func launcherActions() -> [LauncherAction] {
