@@ -380,7 +380,10 @@ final class VoiceController: ObservableObject {
                 delivery.state = "uncertain"
                 delivery.reason = "Could not update recovery history. Your text is on the clipboard; inspect the destination before pasting."
             }
-            if delivery.state != "verified" {
+            // Missing read-back confirmation is routine, not a reason to
+            // interrupt dictation. Keep it in history; alert only when
+            // insertion was interrupted or text fell back to the clipboard.
+            if delivery.state == "clipboard" || delivery.state == "uncertain" {
                 Toast.show(delivery.reason, actionLabel: "Review", action: { WorkflowCenter.shared.open(tab: "dictation") }, duration: 12)
             }
             TaskExtractor.run(text: text, source: .dictation)
