@@ -59,6 +59,15 @@ Architecture, migration decisions and verification are documented in the
 [product audit](docs/product-architecture-audit.md) and
 [implementation notes](docs/retrieval-implementation.md).
 
+## Updating and stopping recordings
+
+Update checks and downloads remain available during capture. Only installation
+and restart wait for active work; completed dictation does not block them. A ready
+update explains the actual activity, with **Cancel Recording…** for a live take
+or unfinished screen selection. The app and menu-bar menus also offer cancellation.
+Discarding a live take requires confirmation, including its meeting note when
+applicable. Background transcription is identified separately from recording.
+
 ## Writing notes and checklists
 
 Enter a new note title and press Return to open its document, with the cursor

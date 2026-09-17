@@ -29,6 +29,7 @@ final class VoiceController: ObservableObject {
 
     private let audio = AudioCapture.shared
     private var session: UUID?
+    var activeRecordingID: UUID? { if case .recording = phase { return session }; return nil }
     private var panel: FloatingPanel?
     private var levelTimer: Timer?
     private var hasDetectedSpeech = false

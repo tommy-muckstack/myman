@@ -327,7 +327,8 @@ final class AgentActions {
                     "meeting": ["session_id": meetings.activeCaptureMeetingID as Any? ?? NSNull(), "phase": String(describing: meetings.phase), "processing": meetings.isTranscribing],
                     "dictation": ["phase": voicePhase, "session_id": voice.agentSessionID as Any? ?? NSNull()],
                     "permissions": ["screen_recording": CGPreflightScreenCaptureAccess(), "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized],
-                    "note_processing": MeetingNotesService.shared.stages] as [String: Any]
+                    "note_processing": MeetingNotesService.shared.stages,
+                    "update_blockers": AppUpdateActivity.current(voice: voice, meetings: meetings).reasons] as [String: Any]
         case "app.open": openSurface(args["surface"] as! String); return ["opened": true]
         case "screens.list": return NSScreen.screens.map { screen in ["id": String((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0), "selector": "id:" + String((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0), "name": screen.localizedName, "frame": [screen.frame.minX, screen.frame.minY, screen.frame.width, screen.frame.height], "scale": screen.backingScaleFactor] as [String: Any] }
         case "screenshot.capture", "screenshot.capture_markup":

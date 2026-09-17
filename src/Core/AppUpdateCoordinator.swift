@@ -9,6 +9,11 @@ final class AppUpdateCoordinator: NSObject, SPUUpdaterDelegate {
     private let isBusy: () -> Bool
     private let present: Presenter
     private let dismiss: () -> Void
+    private let blockingReason: () -> String
+    private let canCancelRecording: () -> Bool
+    private let manageRecording: () -> Void
+    private let presentBlocked: (String, String, Bool, @escaping () -> Void, @escaping () -> Void) -> Void
+    private var blockedReason: String?
     private var timer: Timer?
     private var install: (() -> Void)?
     private var deferredRelaunch: (() -> Void)?
@@ -19,8 +24,18 @@ final class AppUpdateCoordinator: NSObject, SPUUpdaterDelegate {
 
     init(isBusy: @escaping () -> Bool,
          present: Presenter? = nil,
-         dismiss: (() -> Void)? = nil) {
+         dismiss: (() -> Void)? = nil,
+         blockingReason: @escaping () -> String = { "Work is still in progress." },
+         canCancelRecording: @escaping () -> Bool = { false },
+         manageRecording: @escaping () -> Void = {},
+         presentBlocked: ((String, String, Bool, @escaping () -> Void, @escaping () -> Void) -> Void)? = nil) {
         self.isBusy = isBusy
+        self.blockingReason = blockingReason
+        self.canCancelRecording = canCancelRecording
+        self.manageRecording = manageRecording
+        self.presentBlocked = presentBlocked ?? { version, reason, canCancel, manage, later in
+            UpdateReadyPrompt.showBlocked(version: version, reason: reason, canCancel: canCancel, manage: manage, later: later)
+        }
         self.present = present ?? { UpdateReadyPrompt.show(version: $0, install: $1, later: $2) }
         self.dismiss = dismiss ?? { UpdateReadyPrompt.dismiss() }
     }
@@ -43,7 +58,22 @@ final class AppUpdateCoordinator: NSObject, SPUUpdaterDelegate {
     }
 
     func refresh(now: Date = Date()) {
-        guard !isBusy() else { hidePrompt(); return }
+        if isBusy() {
+            guard install != nil, now >= remindAfter else { hidePrompt(); return }
+            let reason = blockingReason()
+            let key = reason + String(canCancelRecording())
+            guard blockedReason != key else { return }
+            hidePrompt()
+            isPresented = true
+            blockedReason = key
+            presentBlocked(version, reason, canCancelRecording(), { [weak self] in
+                guard let self, self.install != nil, self.isPresented, self.blockedReason == key else { return }
+                self.manageRecording()
+                self.refresh()
+            }, { [weak self] in self?.remindLater() })
+            return
+        }
+        if blockedReason != nil { hidePrompt() }
         if let resume = deferredRelaunch {
             deferredRelaunch = nil
             resume()
@@ -58,7 +88,7 @@ final class AppUpdateCoordinator: NSObject, SPUUpdaterDelegate {
         guard !isRestarting, let install else { return }
         hidePrompt()
         // Recording may have started since the prompt was shown.
-        guard !isBusy() else { return }
+        guard !isBusy() else { refresh(); return }
         isRestarting = true
         install()
     }
@@ -96,15 +126,13 @@ final class AppUpdateCoordinator: NSObject, SPUUpdaterDelegate {
     private func hidePrompt() {
         guard isPresented else { return }
         isPresented = false
+        blockedReason = nil
         dismiss()
     }
 
-    nonisolated func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
-        if MainActor.assumeIsolated({ isBusy() }) {
-            throw NSError(domain: "com.muckstack.myman", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "Recording or transcription in progress — update deferred"])
-        }
-    }
+    // Checking/downloading updates never interrupts recording. Only the
+    // install/relaunch callbacks below protect active work; blocking checks
+    // produced a dead-end "recording" error even for completed dictation.
 
     nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                             immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
@@ -153,6 +181,23 @@ private enum UpdateReadyPrompt {
                                         .priority: NSAccessibilityPriorityLevel.medium.rawValue])
     }
 
+    static func showBlocked(version: String, reason: String, canCancel: Bool,
+                            manage: @escaping () -> Void, later: @escaping () -> Void) {
+        dismiss()
+        guard let screen = NSScreen.main else { return }
+        let view = UpdateBlockedView(version: version, reason: reason, canCancel: canCancel, manage: manage, later: later)
+        let window = FloatingPanel(content: view, becomesKey: true, fixedSize: true)
+        window.dismissesOnResign = false
+        window.onCancel = later
+        let size = NSSize(width: 420, height: 180)
+        let visible = screen.visibleFrame
+        window.setFrame(NSRect(x: visible.maxX - size.width - MM.Layout.paddingLarge,
+                               y: visible.minY + MM.Layout.paddingLarge,
+                               width: size.width, height: size.height), display: true)
+        panel = window
+        window.orderFrontRegardless()
+    }
+
     static func dismiss() {
         panel?.orderOut(nil)
         panel = nil
@@ -182,5 +227,72 @@ struct UpdateReadyView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: MM.Layout.radius).fill(MM.Colors.background))
         .overlay(RoundedRectangle(cornerRadius: MM.Layout.radius).strokeBorder(MM.Colors.border, lineWidth: 1))
+    }
+}
+
+struct UpdateBlockedView: View {
+    let version: String
+    let reason: String
+    let canCancel: Bool
+    var manage: () -> Void
+    var later: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.padding) {
+            Text("My Man \(version) is ready")
+                .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary)
+            Text(reason + ". Updates can download now; restart waits until this finishes.")
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Later", action: later).buttonStyle(.plain).clickable()
+                Spacer()
+                Button(canCancel ? "Cancel Recording…" : "Workflows & Recovery…", action: manage)
+                    .buttonStyle(.plain).clickable()
+            }.font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary)
+        }
+        .padding(MM.Layout.paddingLarge)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: MM.Layout.radius).fill(MM.Colors.background))
+        .overlay(RoundedRectangle(cornerRadius: MM.Layout.radius).strokeBorder(MM.Colors.border, lineWidth: 1))
+    }
+}
+
+struct AppUpdateActivity {
+    let reasons: [String]
+    let canCancelRecording: Bool
+    var isBusy: Bool { !reasons.isEmpty }
+    var description: String { reasons.joined(separator: " · ") }
+
+    init(voice: VoiceController.Phase, voiceStarting: Bool = false,
+         meetingStarting: Bool = false, meetingRecording: Bool = false, meetingProcessing: Bool = false,
+         screenBusy: Bool = false, screenRecording: Bool = false, screenProcessing: Bool = false, screenSelecting: Bool = false,
+         notesProcessing: Bool = false) {
+        var reasons: [String] = []
+        var canCancel = meetingRecording || screenRecording || screenSelecting
+        switch voice {
+        case .idle, .done: if voiceStarting { reasons.append("Starting dictation") }
+        case .recording: reasons.append("Dictation is recording"); canCancel = true
+        case .preparing: reasons.append("Preparing dictation")
+        case .transcribing: reasons.append("Transcribing dictation")
+        }
+        if meetingRecording { reasons.append("A meeting is recording") }
+        else if meetingStarting { reasons.append("Starting a meeting recording") }
+        if meetingProcessing { reasons.append("Transcribing a saved meeting") }
+        if screenRecording { reasons.append("A screen recording is active") }
+        else if screenBusy { reasons.append("Preparing or saving a screen recording") }
+        if screenProcessing { reasons.append("Transcribing a saved screen recording") }
+        if notesProcessing { reasons.append("Generating meeting notes") }
+        self.reasons = reasons
+        canCancelRecording = canCancel
+    }
+
+    @MainActor static func current(voice: VoiceController, meetings: MeetingController) -> Self {
+        Self(voice: voice.phase, voiceStarting: voice.starting,
+             meetingStarting: meetings.isStarting, meetingRecording: meetings.phase != .idle,
+             meetingProcessing: meetings.isTranscribing,
+             screenBusy: ScreenRecorder.shared.isBusy, screenRecording: ScreenRecorder.shared.isRecording,
+             screenProcessing: ScreenRecorder.shared.isTranscribing, screenSelecting: ScreenRecorder.shared.hasPendingSelection,
+             notesProcessing: !MeetingNotesService.shared.stages.isEmpty)
     }
 }

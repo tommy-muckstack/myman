@@ -22,13 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var agentActions: AgentActions?
     private var agentBridge: AgentBridge?
     private var updater: SPUStandardUpdaterController?
-    private lazy var updateCoordinator = AppUpdateCoordinator(isBusy: { [weak self] in
-        guard let self else { return true }
-        if case .idle = self.voice.phase {} else { return true }
-        return self.meetings.isStarting || self.meetings.phase != .idle || self.meetings.isTranscribing
-            || !MeetingNotesService.shared.stages.isEmpty
-            || ScreenRecorder.shared.isBusy || ScreenRecorder.shared.isTranscribing
-    })
+    private var updateActivity: AppUpdateActivity { .current(voice: voice, meetings: meetings) }
+    private lazy var updateCoordinator = AppUpdateCoordinator(
+        isBusy: { [weak self] in self?.updateActivity.isBusy ?? false },
+        blockingReason: { [weak self] in self?.updateActivity.description ?? "" },
+        canCancelRecording: { [weak self] in self?.updateActivity.canCancelRecording ?? false },
+        manageRecording: { [weak self] in
+            guard let self else { return }
+            if self.updateActivity.canCancelRecording { self.cancelActiveRecording() }
+            else { self.showWorkflows() }
+        })
+
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar apps get NO working ⌘C/⌘V/⌘A unless a main menu exists to
@@ -217,6 +221,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launcher.open()
     }
 
+    @objc private func cancelActiveRecording() {
+        guard updateActivity.canCancelRecording else {
+            Toast.show("No recording is active", systemImage: "checkmark.circle")
+            return
+        }
+        let voiceID = voice.activeRecordingID
+        let meetingPhase = meetings.phase
+        let screenStartedAt = ScreenRecorder.shared.startedAt
+        if voiceID == nil, meetingPhase == .idle, !ScreenRecorder.shared.isRecording, ScreenRecorder.shared.hasPendingSelection {
+            ScreenRecorder.shared.cancelPendingSelection()
+            updateCoordinator.refresh()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Cancel active recording?"
+        alert.informativeText = meetingPhase == .idle
+            ? "The current unsaved recording will be discarded. Previously saved recordings and notes are kept."
+            : "The current recording and its meeting note will be discarded. Other saved recordings and notes are kept."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Keep Recording")
+        alert.addButton(withTitle: "Cancel Recording").hasDestructiveAction = true
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+        Task { @MainActor in
+            if let voiceID, voice.activeRecordingID == voiceID { voice.dismiss() }
+            // The phase carries the start timestamp, including provisional
+            // recordings whose committed capture ID is intentionally hidden.
+            if meetingPhase != .idle, meetings.phase == meetingPhase { meetings.discardRecording() }
+            do {
+                if let screenStartedAt, ScreenRecorder.shared.startedAt == screenStartedAt, ScreenRecorder.shared.isRecording {
+                    try await ScreenRecorder.shared.cancelForAgent()
+                }
+            } catch {
+                Toast.show("Couldn’t cancel the screen recording. Try Stop in its recording controls.", systemImage: "exclamationmark.triangle")
+            }
+            ScreenRecorder.shared.cancelPendingSelection()
+            updateCoordinator.refresh()
+        }
+    }
+
     @objc private func checkForUpdates() {
         updater?.checkForUpdates(nil)
     }
@@ -295,6 +338,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let update = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         update.target = self
         app.addItem(update)
+        let cancelRecording = NSMenuItem(title: "Cancel Recording…", action: #selector(cancelActiveRecording), keyEquivalent: "")
+        cancelRecording.target = self
+        app.addItem(cancelRecording)
         app.addItem(.separator())
         app.addItem(withTitle: "Hide My Man", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: "Quit My Man", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -347,6 +393,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         meeting.keyEquivalentModifierMask = [.option, .shift]
         meeting.target = self
         menu.addItem(meeting)
+        let cancelRecording = NSMenuItem(title: "Cancel Recording…", action: #selector(cancelActiveRecording), keyEquivalent: "")
+        cancelRecording.target = self
+        menu.addItem(cancelRecording)
         let workflows = NSMenuItem(title: "Workflows and Recovery…", action: #selector(showWorkflows), keyEquivalent: "")
         workflows.target = self
         menu.addItem(workflows)
