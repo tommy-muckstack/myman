@@ -7,9 +7,11 @@ protocol LiveMeetingTranscriptReading: Sendable {
     func prepare() async throws
     func next() async throws -> [MeetingTurn]
     func rememberVoice(name: String, start: Double, end: Double) async throws
+    func savedTurns() async -> [MeetingTurn]
 }
 
 extension LiveMeetingTranscriptReading {
+    func savedTurns() async -> [MeetingTurn] { [] }
     func rememberVoice(name: String, start: Double, end: Double) async throws {
         throw CocoaError(.featureUnsupported)
     }
@@ -34,17 +36,25 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
     private var diarizer: DiarizerManager?
     private var speakerNames: [String: String] = [:]
     private var unknownSpeakerCount = 0
+    private let checkpointURL: URL?
+    private let wallDuration: Double?
+    private var checkpoint: MeetingTranscriptCheckpoint
+    private var restoredCheckpoint = false
 
     private let micLag: Double
 
     init(micURL: URL?, systemURL: URL?, singleRemote: Bool, profileDatabase: DatabaseQueue? = nil,
-         startedAt: Date? = nil, micLag: Double = 0) {
+         startedAt: Date? = nil, micLag: Double = 0, checkpointURL: URL? = nil,
+         wallDuration: Double? = nil) {
         self.micURL = micURL
         self.systemURL = systemURL
         self.singleRemote = singleRemote
         self.profileDatabase = profileDatabase
         self.startedAt = startedAt
         self.micLag = micLag
+        self.checkpointURL = checkpointURL
+        self.wallDuration = wallDuration
+        self.checkpoint = MeetingTranscriptCheckpoint(micPath: micURL?.path, systemPath: systemURL?.path)
     }
 
     /// A track cannot legitimately hold more audio than time has passed.
@@ -57,7 +67,7 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
     }
 
     private func align(_ turns: [MeetingTurn], track: String, fileSeconds: Double) -> [MeetingTurn] {
-        let wall = startedAt.map { Date().timeIntervalSince($0) }
+        let wall = wallDuration ?? startedAt.map { Date().timeIntervalSince($0) }
         let scale = Self.wallClockScale(fileSeconds: fileSeconds, wallSeconds: wall)
         if track == "mic" { micScale = scale } else { systemScale = scale }
         if scale < 1, driftReported.insert(track).inserted {
@@ -70,6 +80,18 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
     }
 
     func prepare() async throws {
+        if !restoredCheckpoint {
+            if let checkpointURL, let saved = try MeetingTranscriptCheckpoint.load(
+                at: checkpointURL, micPath: micURL?.path, systemPath: systemURL?.path) {
+                checkpoint = saved
+                micOffset = saved.micOffset
+                systemOffset = saved.systemOffset
+                // Fresh diarizer state cannot establish continuity with old
+                // anonymous voice IDs. Allocate new labels after a restart.
+                unknownSpeakerCount = saved.unknownSpeakerCount
+            }
+            restoredCheckpoint = true
+        }
         guard asr == nil else { return }
         let models = try await AsrModels.downloadAndLoad()
         try Task.checkCancellation()
@@ -92,17 +114,29 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
         }
     }
 
-    func next() async throws -> [MeetingTurn] {
+    func savedTurns() async -> [MeetingTurn] { checkpoint.turns }
+
+    func hasUnreadAudio() -> Bool {
+        micOffset < MeetingTranscriptCheckpoint.samples(at: micURL?.path)
+            || systemOffset < MeetingTranscriptCheckpoint.samples(at: systemURL?.path)
+    }
+
+    func next() async throws -> [MeetingTurn] { try await next(final: false) }
+
+    func next(final: Bool) async throws -> [MeetingTurn] {
         try Task.checkCancellation()
+        let oldMic = micOffset, oldSystem = systemOffset
+        var committed = false
+        defer { if !committed { micOffset = oldMic; systemOffset = oldSystem } }
         var mic: [MeetingTurn] = []
         var remote: [MeetingTurn] = []
-        if let micURL, let chunk = try Self.readChunk(at: micURL, offset: micOffset) {
+        if let micURL, let chunk = try Self.readChunk(at: micURL, offset: micOffset, final: final) {
             mic = try await decode(chunk, speaker: MeetingController.ownerLabel)
             micOffset += chunk.samples.count
             mic = align(mic, track: "mic", fileSeconds: Double(micOffset) / 16000)
         }
         try Task.checkCancellation()
-        if let systemURL, let chunk = try Self.readChunk(at: systemURL, offset: systemOffset) {
+        if let systemURL, let chunk = try Self.readChunk(at: systemURL, offset: systemOffset, final: final) {
             if singleRemote {
                 remote = try await decode(chunk, speaker: MeetingController.remoteLabel)
             } else if Self.hasSpeech(chunk.samples), let diarizer {
@@ -131,8 +165,19 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
         }
         // Suppress microphone copies of the remote speech using the same
         // conservative textual evidence as the final transcript.
-        let cleaned = MeetingChannelDedupe.clean(mic: mic, system: remote)
-        return (cleaned.mic + cleaned.system).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        let batch = (mic + remote).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        try Task.checkCancellation()
+        var saved = checkpoint
+        saved.micOffset = micOffset
+        saved.systemOffset = systemOffset
+        saved.unknownSpeakerCount = unknownSpeakerCount
+        saved.turns += batch
+        if micOffset != oldMic || systemOffset != oldSystem, let checkpointURL {
+            try saved.save(to: checkpointURL)
+        }
+        checkpoint = saved
+        committed = true
+        return batch
     }
 
     struct Chunk: Sendable {
@@ -168,12 +213,12 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
     /// Our writer's header is finalized only on stop. Read raw PCM after the
     /// fixed header using the actual file length, leaving partial samples and
     /// short tails for the next read. Memory stays below twelve seconds/track.
-    static func readChunk(at url: URL, offset: Int) throws -> Chunk? {
+    static func readChunk(at url: URL, offset: Int, final: Bool = false) throws -> Chunk? {
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }
         try file.seek(toOffset: 44 + UInt64(offset) * 2)
         let data = try file.read(upToCount: 12 * 16000 * 2) ?? Data()
-        guard data.count >= 4 * 16000 * 2 else { return nil }
+        guard data.count >= (final ? 2 : 4 * 16000 * 2) else { return nil }
         var samples = data.withUnsafeBytes { raw in
             raw.bindMemory(to: Int16.self).map { Float(Int16(littleEndian: $0)) / 32767 }
         }
@@ -210,14 +255,22 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
         try Task.checkCancellation()
         guard Self.hasSpeech(chunk.samples), let asr else { return [] }
         var state = TdtDecoderState.make()
-        let result = try await asr.transcribe(chunk.samples, decoderState: &state)
+        // Speaker splits and the final tail can be shorter than the model's
+        // minimum input. Pad silence without changing the source timestamps.
+        let minimum = ASRConstants.minimumRequiredSamples(forSampleRate: 16000)
+        let input = chunk.samples + [Float](repeating: 0, count: max(0, minimum - chunk.samples.count))
+        let result = try await asr.transcribe(input, decoderState: &state)
         try Task.checkCancellation()
-        let text = DictationCleanup.applyVocabulary(
-            TranscriptionService.discardTaskHallucination(result.text),
-            terms: DictationCleanup.vocabulary()).trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = TranscriptionService.discardTaskHallucination(result.text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
-        return [MeetingTurn(start: Double(chunk.offset) / 16000,
-                            end: Double(chunk.offset + chunk.samples.count) / 16000,
+        let duration = Double(chunk.samples.count) / 16000
+        let timings = (result.tokenTimings ?? []).filter { $0.token.contains(where: { $0.isLetter || $0.isNumber }) }
+        let audible = MeetingController.audibleBounds(chunk.samples)
+        let first = max(0, min(duration, timings.first?.startTime ?? audible?.start ?? 0))
+        let last = max(first, min(duration, timings.last?.endTime ?? audible?.end ?? duration))
+        return [MeetingTurn(start: Double(chunk.offset) / 16000 + first,
+                            end: Double(chunk.offset) / 16000 + last,
                             speaker: speaker, text: text)]
     }
 }
@@ -260,6 +313,12 @@ final class LiveMeetingTranscript: ObservableObject {
     private var learningTask: Task<Void, Never>?
     private var task: Task<Void, Never>?
     private var generation = UUID()
+    var onProgress: ([MeetingTurn]) -> Void = { _ in }
+    private let automaticRetryDelays: [Double]
+
+    init(automaticRetryDelays: [Double] = [2, 4]) {
+        self.automaticRetryDelays = automaticRetryDelays
+    }
 
     func start(reader: any LiveMeetingTranscriptReading, ownerName: String, candidates: SpeakerCandidates) {
         stop()
@@ -283,17 +342,44 @@ final class LiveMeetingTranscript: ObservableObject {
         status = .preparing
         task = Task { [weak self] in
             do {
-                try await reader.prepare()
+                for attempt in 0...(self?.automaticRetryDelays.count ?? 0) {
+                    do { try await reader.prepare(); break }
+                    catch is CancellationError { throw CancellationError() }
+                    catch {
+                        guard let self, attempt < self.automaticRetryDelays.count else { throw error }
+                        try await Task.sleep(for: .seconds(self.automaticRetryDelays[attempt]))
+                    }
+                }
                 try Task.checkCancellation()
                 guard self?.generation == generation else { return }
+                let saved = await reader.savedTurns()
+                try Task.checkCancellation()
+                guard self?.generation == generation else { return }
+                if self?.turns.isEmpty == true {
+                    self?.append(saved, ownerName: self?.ownerName ?? "", candidates: self?.candidates ?? .none)
+                }
                 self?.status = .live
+                var failures = 0
                 while !Task.isCancelled, self?.generation == generation {
-                    let next = try await reader.next()
+                    let next: [MeetingTurn]
+                    do {
+                        next = try await reader.next()
+                        failures = 0
+                    } catch is CancellationError { throw CancellationError() }
+                    catch {
+                        failures += 1
+                        guard let self, failures <= self.automaticRetryDelays.count else { throw error }
+                        self.status = .preparing
+                        try await Task.sleep(for: .seconds(self.automaticRetryDelays[failures - 1]))
+                        continue
+                    }
                     try Task.checkCancellation()
                     guard let self, self.generation == generation else { return }
+                    self.status = .live
                     // Names can arrive mid-meeting (calendar refresh, the
                     // call window): always label with the latest evidence.
                     self.append(next, ownerName: self.ownerName, candidates: self.candidates)
+                    if !next.isEmpty { self.onProgress(await reader.savedTurns()) }
                     try await Task.sleep(for: .seconds(1))
                 }
             } catch is CancellationError {
@@ -305,7 +391,8 @@ final class LiveMeetingTranscript: ObservableObject {
         }
     }
 
-    func stop() {
+    @discardableResult func stop() -> Task<Void, Never>? {
+        let finishing = task
         task?.cancel()
         learningTask?.cancel()
         learningTask = nil
@@ -322,6 +409,7 @@ final class LiveMeetingTranscript: ObservableObject {
         editingRowID = nil
         rows = []
         status = .waiting
+        return finishing
     }
 
     /// New speaker evidence for a meeting already in progress.

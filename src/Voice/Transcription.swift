@@ -115,7 +115,9 @@ final class ParakeetEngine {
         do {
             // Fresh decoder state per utterance — recordings are independent.
             var decoderState = TdtDecoderState.make()
-            let result = try await manager.transcribe(samples, decoderState: &decoderState)
+            let minimum = ASRConstants.minimumRequiredSamples(forSampleRate: 16000)
+            let input = samples + [Float](repeating: 0, count: max(0, minimum - samples.count))
+            let result = try await manager.transcribe(input, decoderState: &decoderState)
             return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             NSLog("My Man [Parakeet] transcription failed: \(error)")

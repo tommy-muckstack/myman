@@ -22,7 +22,7 @@ set -euo pipefail
 #   APPLE_APP_PASSWORD / SPARKLE_ED_PRIVATE_KEY / BLOB_READ_WRITE_TOKEN /
 #   RELEASE_VERSION / RELEASE_BUILD
 #
-# Usage: ./scripts/build-direct.sh [--skip-notarize]
+# Usage: ./scripts/build-direct.sh [--skip-notarize] [--no-upload]
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
@@ -31,12 +31,13 @@ APP_NAME="My Man"
 EXEC_NAME="MyMan"
 SLUG="myman"
 BUNDLE_ID="com.muckstack.myman"
-VERSION="${RELEASE_VERSION:-1.1.77}"
-BUILD_NUMBER="${RELEASE_BUILD:-89}"
+VERSION="${RELEASE_VERSION:-1.1.78}"
+BUILD_NUMBER="${RELEASE_BUILD:-90}"
 TEAM_ID="${APPLE_TEAM_ID:-K8NAZ76CBQ}"
 NOTARY_PROFILE="mumbls-notary"
 SPARKLE_ACCOUNT="myman"
 SKIP_NOTARIZE=false
+NO_UPLOAD=false
 
 SPARKLE_PUBLIC_KEY="dfceyA2qSn17riGZ9phwSp+bUA3uC67gIGdPqlHoi/A="
 BLOB_HOST="https://ihvfw4x5q9iy9zx1.public.blob.vercel-storage.com"
@@ -45,6 +46,7 @@ APPCAST_URL="$BLOB_HOST/$SLUG-appcast.xml"
 for arg in "$@"; do
     case "$arg" in
         --skip-notarize) SKIP_NOTARIZE=true ;;
+        --no-upload) NO_UPLOAD=true ;;
     esac
 done
 
@@ -393,7 +395,9 @@ APPCAST
     # A pulled VERCEL_OIDC_TOKEN hijacks `vercel blob put`; force the rw token.
     unset VERCEL_OIDC_TOKEN BLOB_STORE_ID
 
-    if [[ -n "${BLOB_READ_WRITE_TOKEN:-}" ]]; then
+    if $NO_UPLOAD; then
+        echo "==> Upload deferred (--no-upload); signed appcast and DMG are ready locally"
+    elif [[ -n "${BLOB_READ_WRITE_TOKEN:-}" ]]; then
         echo "==> Uploading to Vercel Blob..."
         npx --yes vercel@51.6.1 blob put "$DMG_PATH" --pathname "$VERSIONED_DMG_NAME" \
             --access public --allow-overwrite true --content-type application/x-apple-diskimage \

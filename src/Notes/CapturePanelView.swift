@@ -7,6 +7,7 @@ struct CapturePanelView: View {
     @ObservedObject var store: NotesStore
     @State private var draft: String
     @State private var editing: Note?
+    @State private var saveFailed = false
     @FocusState private var focused: Bool
 
     var onDismiss: () -> Void
@@ -22,6 +23,7 @@ struct CapturePanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             inputField
+            if saveFailed { Text("Couldn’t save. Your draft is still here; press Return to try again.").font(MM.Fonts.hint).padding(.horizontal, MM.Layout.padding) }
             if !store.results.isEmpty {
                 Divider().overlay(MM.Colors.border)
                 resultsList
@@ -57,7 +59,7 @@ struct CapturePanelView: View {
             .focused($focused)
             .overlay(alignment: .topLeading) {
                 if draft.isEmpty {
-                    UtilityEmptyState(icon: .note, title: editing == nil ? "Room for a thought" : "A fresh start", message: "Start typing. Press Return to keep it.")
+                    UtilityEmptyState(icon: .note, title: editing == nil ? "Room for a thought" : "A fresh start", message: "Give it a title. Press Return to start writing.")
                         .allowsHitTesting(false)
                 }
             }
@@ -96,7 +98,7 @@ struct CapturePanelView: View {
 
     private var footer: some View {
         HStack(spacing: MM.Layout.spacing) {
-            Text(editing == nil ? "⏎ save" : "⏎ update")
+            Text(editing == nil ? "⏎ start writing" : "⏎ open note")
                 .opacity(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
             Text("⇧⏎ newline")
             Text("esc dismiss")
@@ -119,13 +121,21 @@ struct CapturePanelView: View {
     }
 
     private func commit() {
+        let saved: Note
         if let note = editing {
-            store.update(note, body: draft)
+            guard store.update(note, body: draft) else { saveFailed = true; return }
+            var updated = note
+            updated.body = draft
+            updated.title = Note.deriveTitle(from: draft)
+            saved = updated
         } else {
-            guard store.save(body: draft) != nil else { return }
+            guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard let note = store.save(body: draft, continueWriting: true) else { saveFailed = true; return }
+            saved = note
         }
         resetToCapture()
         onDismiss()
+        NoteDocumentController.shared.open(saved, focusAtEnd: true)
     }
 
     private func beginEditing(_ note: Note) {

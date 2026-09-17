@@ -59,6 +59,56 @@ Architecture, migration decisions and verification are documented in the
 [product audit](docs/product-architecture-audit.md) and
 [implementation notes](docs/retrieval-implementation.md).
 
+## Writing notes and checklists
+
+Enter a new note title and press Return to open its document, with the cursor
+ready on the next line. New notes opened from the library are saved as documents
+before editing, and a failed save keeps the capture draft available.
+
+Type `[]` or `[ ]` at the start of a body line to create a checkbox (also works
+after a bullet). Click the box to check/uncheck it; completed text is struck
+through, while the saved file uses ordinary `- [ ]` / `- [x]` Markdown. Return
+continues the list with an unchecked item. Tab indents bullets and checkboxes by
+32 points; Shift-Tab outdents. Nested levels, inline formatting, and explicit
+strikethrough survive saving, reopening, and undo.
+
+## Meeting reliability and transcript fidelity (2026-09-17)
+
+Meeting transcription now checkpoints small audio slices during capture and resumes
+from the saved offsets after interruption. Finalization uses Parakeet rather than
+the stateful Qwen decoder implicated in a Core ML IOSurface exception. Automatic
+retries stop after three persisted attempts; **Retry transcription**, **Regenerate
+transcript**, and **Regenerate notes** keep failed recordings and prior content
+available. Capture close saves `ended` immediately. Draft notes run asynchronously
+and cache exact source windows; model deadlines fall back to extractive notes.
+
+Meeting vocabulary no longer fuzzy-matches ordinary words against product/person
+names. Only explicit spelling aliases are applied (for example, Shop Monkey →
+Shopmonkey); the original recognition stays archived. Exports flag unmentioned
+hotwords occurring at least three times and more than twice per 1,000 words in
+`flagged_hotwords`, without rewriting those mentions.
+
+An explicit `Owner <> Remote` title identifying the owner supplies two-person
+speaker evidence. Exports include `status: transcribing` / `complete`,
+`call_started_at`, `call_start_offset_seconds`, and `timestamp_origin:
+recording_start`. Solo warm-up is omitted from the finished two-person transcript;
+the original transcript retains it. Timestamps use recognizer word timing.
+
+Notes include timestamp ranges, an overview of at most three sentences, verbatim
+**Quotes**, and fixed **Next steps** with owners/dates or “None agreed.” `CI:`
+interviews also extract questions and answers. `meetingInterviewKeywords` can
+configure detection. An explicitly linked local `file://…md` prep file in the
+calendar description supplies a conservative list of unmatched questions to
+review; remote prep documents are not fetched automatically.
+
+The screenshot selection dimension label now draws with a concrete Core Text font,
+removing the NSString font-substitution path implicated in a nil-font exception.
+Regression coverage includes retry exhaustion, crash checkpoints, late model
+responses, concurrent edits, vocabulary bias, speaker identity, quotes and export
+metadata. The opt-in `MeetingRecoveryIntegrationTests` reprocess a copied recording
+and leave the live library untouched. Private recordings/transcripts are not test
+fixtures in this repository.
+
 ## Requirements
 
 macOS 14.2+ (screen recording and translation need macOS 15+). Apple Silicon and Intel.

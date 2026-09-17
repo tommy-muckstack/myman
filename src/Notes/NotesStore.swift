@@ -40,11 +40,13 @@ final class NotesStore: ObservableObject {
     }
 
     @discardableResult
-    func save(body: String, source: String = "quick_capture") -> Note? {
+    func save(body: String, source: String = "quick_capture", continueWriting: Bool = false) -> Note? {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let note = Note(body: trimmed)
-        try? db.write { try note.insert($0) }
+        let note = Note(body: trimmed + (continueWriting ? "\n" : ""))
+        do { try db.write { try note.insert($0) } }
+        catch { return nil }
+        guard syncExports else { return note }
         Analytics.track("note_created", ["source": source, "chars": trimmed.count])
         Brain.syncNote(id: note.id, title: note.title, body: note.body,
                        createdAt: note.createdAt, updatedAt: note.updatedAt)

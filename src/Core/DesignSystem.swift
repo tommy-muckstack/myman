@@ -88,6 +88,7 @@ enum MM {
     }
 
     enum Document {
+        static let listIndent: CGFloat = 32
         static let columnWidth: CGFloat = 680
         static let margin: CGFloat = 40
         static let titleSize: CGFloat = 34

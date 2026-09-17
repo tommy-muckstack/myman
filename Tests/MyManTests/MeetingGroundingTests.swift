@@ -111,9 +111,9 @@ final class MeetingGroundingTests: XCTestCase {
         XCTAssertEqual(fixed.corrections, ["Stonebot → StoneBot"])
         XCTAssertTrue(fixed.text.contains("StoneBot"))
         XCTAssertTrue(source.contains("Stonebot"))
-        let multiword = MeetingVocabulary.correct("Ask Jamie Lee about Stone Bot.", terms: ["Jamie Lee", "StoneBot"])
+        let multiword = MeetingVocabulary.correct("Ask Jamie Lee about Stone Bot.", terms: ["Jamie Lee", "StoneBot"], aliases: ["Stone Bot": "StoneBot"])
         XCTAssertEqual(multiword.text, "Ask Jamie Lee about StoneBot.")
-        XCTAssertEqual(multiword.corrections, ["Stone Bot. → StoneBot."])
+        XCTAssertEqual(multiword.corrections, ["Stone Bot → StoneBot"])
         XCTAssertFalse(MeetingSource.isBackchannel("language"))
     }
 

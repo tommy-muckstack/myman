@@ -1,10 +1,13 @@
 import AppKit
+import SwiftUI
 
 extension NSAttributedString.Key {
     static let manBold = Self("man.bold")
     static let manItalic = Self("man.italic")
     static let manCode = Self("man.code")
     static let manBlock = Self("man.block")
+    /// Original inline strike before a completed checkbox added its decoration.
+    static let manChecklistStrike = Self("man.checklistStrike")
 }
 
 /// Markdown remains the storage format. Structure is explicit metadata,
@@ -14,6 +17,7 @@ enum MarkdownRich {
     static let titleSize = MM.Document.titleSize
     static let headingSize: CGFloat = 24
     static let bulletPrefix = "•  "
+    static let listIndent = MM.Document.listIndent
 
     static func bodyFont(bold: Bool) -> NSFont { font(bold: bold, italic: false, title: false) }
     static var titleFont: NSFont { font(bold: false, italic: false, title: true) }
@@ -34,7 +38,6 @@ enum MarkdownRich {
         let ns = line as NSString
         let prefix = ns.substring(with: match.range)
         let trimmed = prefix.trimmingCharacters(in: .whitespaces)
-        let indent = String(prefix.prefix(while: { $0 == " " || $0 == "\t" }))
         let marker: String
         if trimmed.contains("[ ]") { marker = "☐  " }
         else if trimmed.lowercased().contains("[x]") { marker = "☑  " }
@@ -42,7 +45,7 @@ enum MarkdownRich {
         else if trimmed == ">" { marker = "│  " }
         else if trimmed.first?.isNumber == true { marker = trimmed + "  " }
         else { marker = "" }
-        return (prefix, indent + marker, ns.substring(from: NSMaxRange(match.range)))
+        return (prefix, marker, ns.substring(from: NSMaxRange(match.range)))
     }
 
     static func attributed(from markdown: String, firstLineIsTitle: Bool = true, assets: DocumentAssets = .shared) -> NSMutableAttributedString {
@@ -129,10 +132,18 @@ enum MarkdownRich {
     static func style(_ text: NSMutableAttributedString, title: Bool = false) {
         guard text.length > 0 else { return }
         let whole = NSRange(location: 0, length: text.length)
+        // Remove only checkbox decoration before reapplying it. Explicit ~~text~~
+        // must survive checking, unchecking, saving and undo.
+        text.enumerateAttribute(.manChecklistStrike, in: whole) { value, range, _ in
+            guard let original = value as? Int else { return }
+            if original == 0 { text.removeAttribute(.strikethroughStyle, range: range) }
+            else { text.addAttribute(.strikethroughStyle, value: original, range: range) }
+        }
+        text.removeAttribute(.manChecklistStrike, range: whole)
         let rawPrefix = text.attribute(.manBlock, at: 0, effectiveRange: nil) as? String ?? ""
         let prefix = rawPrefix.trimmingCharacters(in: .whitespaces)
         // Two leading spaces per nesting level, as the markdown stores it.
-        let nesting = CGFloat(rawPrefix.prefix(while: { $0 == " " || $0 == "\t" }).count / 2)
+        let nesting = CGFloat(rawPrefix.prefix(while: { $0 == " " || $0 == "\t" }).reduce(0) { $0 + ($1 == "\t" ? 2 : 1) } / 2)
         let heading = prefix.hasPrefix("#")
         let size: CGFloat = title ? titleSize : prefix == "#" ? 28 : prefix == "##" ? 24 : prefix == "###" ? 20 : bodySize
         let existingParagraph = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
@@ -147,9 +158,8 @@ enum MarkdownRich {
         paragraph.paragraphSpacingBefore = heading && !title ? 12 : 0
         if tableCell != nil { paragraph.paragraphSpacing = 0; paragraph.lineSpacing = 3 }
         if prefix.hasPrefix("-") || prefix.hasPrefix("*") || prefix.first?.isNumber == true || prefix == ">" {
-            // The display text keeps its leading spaces, so only wrapped
-            // lines need the extra hang to sit under the first word.
-            paragraph.headIndent = 24 + nesting * 7
+            paragraph.firstLineHeadIndent = nesting * listIndent
+            paragraph.headIndent = 24 + nesting * listIndent
         }
         text.addAttribute(.paragraphStyle, value: paragraph, range: whole)
         text.enumerateAttributes(in: whole) { attributes, range, _ in
@@ -159,6 +169,26 @@ enum MarkdownRich {
             text.addAttribute(.font, value: code != nil ? NSFont.monospacedSystemFont(ofSize: bodySize - 2, weight: bold ? .semibold : .regular) : MM.Fonts.native(tableCell != nil ? MM.Fonts.tableSize : size, bold || title || heading || tableCell?.startingRow == 0 ? .semiBold : .regular, italic: italic), range: range)
             text.addAttribute(.foregroundColor, value: prefix == ">" ? NSColor.secondaryLabelColor : NSColor.textColor, range: range)
             if code == "inline" { text.addAttribute(.backgroundColor, value: NSColor.quaternaryLabelColor, range: range) }
+        }
+        if prefix.contains("[ ]") || prefix.lowercased().contains("[x]") {
+            let marker = (text.string as NSString).range(of: prefix.contains("[ ]") ? "☐" : "☑")
+            if marker.location != NSNotFound {
+                text.addAttributes([.font: MM.Fonts.native(bodySize + 2, .regular),
+                                    .foregroundColor: NSColor(prefix.contains("[ ]") ? MM.Colors.textSecondary : MM.Colors.accent)], range: marker)
+            }
+        }
+        if prefix.lowercased().contains("[x]") {
+            let display = block(rawPrefix + "content").display
+            let start = text.string.hasPrefix(display) ? (display as NSString).length : 0
+            let end = (text.string.trimmingCharacters(in: .newlines) as NSString).length
+            if end > start {
+                let body = NSRange(location: start, length: end - start)
+                text.enumerateAttribute(.strikethroughStyle, in: body) { value, range, _ in
+                    text.addAttribute(.manChecklistStrike, value: value as? Int ?? 0, range: range)
+                }
+                text.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: body)
+                text.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: body)
+            }
         }
     }
 
@@ -177,7 +207,7 @@ enum MarkdownRich {
                     marks.append(("link:" + url, "[", "](\(url))"))
                 }
                 if (attributes[.underlineStyle] as? Int ?? 0) != 0 { marks.append(("underline", "<u>", "</u>")) }
-                if (attributes[.strikethroughStyle] as? Int ?? 0) != 0 { marks.append(("strike", "~~", "~~")) }
+                if (attributes[.manChecklistStrike] as? Int ?? attributes[.strikethroughStyle] as? Int ?? 0) != 0 { marks.append(("strike", "~~", "~~")) }
                 if attributes[.manBold] as? Bool == true { marks.append(("bold", "**", "**")) }
                 if attributes[.manItalic] as? Bool == true { marks.append(("italic", "*", "*")) }
                 if attributes[.manCode] as? String == "inline" { marks.append(("code", "`", "`")) }

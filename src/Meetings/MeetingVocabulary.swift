@@ -5,10 +5,25 @@ import NaturalLanguage
 enum MeetingVocabulary {
     struct Correction { let text: String; let corrections: [String] }
 
-    /// Product and tool names that speech recognizers reliably mangle
-    /// ("Amplitune", "Jupiter", "Snow flake"). Applied to meeting transcripts
-    /// only, through the same fuzzy restore dictation uses, which needs a
-    /// close spelling match — never a global word swap.
+    /// Advisory only: never rewrite a potentially legitimate product mention.
+    static func flaggedTokens(in text: String, context: String, perThousand: Double = 2,
+                              terms: [String] = commonTerms) -> [String] {
+        let words = MeetingSource.words(text)
+        guard !words.isEmpty else { return [] }
+        let normalized = " " + words.joined(separator: " ") + " "
+        let context = " " + MeetingSource.normalized(context) + " "
+        return Set(terms).filter { term in
+            let needle = " " + MeetingSource.normalized(term) + " "
+            guard !context.contains(needle) else { return false }
+            let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: MeetingSource.normalized(term)) + "(?![\\p{L}\\p{N}])"
+            let regex = try? NSRegularExpression(pattern: pattern)
+            let count = regex?.numberOfMatches(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)) ?? 0
+            return count >= 3 && Double(count) * 1000 / Double(words.count) > perThousand
+        }.sorted()
+    }
+
+    /// Product names monitored for suspicious repetition. They are never
+    /// injected into meeting recognition or fuzzy-matched against its words.
     static let commonTerms: [String] = [
         "Amplitude", "Mixpanel", "PostHog", "Datadog", "Snowflake", "Databricks", "BigQuery", "Redshift",
         "Looker", "Tableau", "Jupyter", "Kubernetes", "Terraform", "Postgres", "GraphQL", "TypeScript",
@@ -84,6 +99,8 @@ enum MeetingVocabulary {
     static func correct(_ text: String, terms: [String], aliases: [String: String] = [:]) -> Correction {
         var value = text
         var applied: [String] = []
+        // Reviewed spelling, not a phonetic guess. Shopify remains Shopify.
+        let aliases = ["Shop Monkey": "Shopmonkey"].merging(aliases) { _, explicit in explicit }
         for (alias, canonical) in aliases.sorted(by: { $0.key.count > $1.key.count }) {
             guard let regex = try? NSRegularExpression(pattern: "(?i)(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: alias) + "(?![\\p{L}\\p{N}])") else { continue }
             let range = NSRange(value.startIndex..., in: value)
@@ -92,11 +109,9 @@ enum MeetingVocabulary {
                 applied.append("\(alias) → \(canonical)")
             }
         }
-        // Share the dictation spelling rules, including multiword names, but
-        // retain an audit for each actual replacement in derived material.
-        value = DictationCleanup.applyVocabulary(value, terms: terms) { original, replacement in
-            applied.append("\(original) → \(replacement)")
-        }
+        // No edit-distance substitutions in meetings. Ordinary English often
+        // differs from an imported product/person by only one or two letters.
+        // Only explicit, reviewed aliases above may change the words.
         return Correction(text: value, corrections: applied)
     }
 

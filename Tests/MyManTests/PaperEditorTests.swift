@@ -5,6 +5,35 @@ import GRDB
 @testable import MyMan
 
 final class PaperEditorTests: XCTestCase {
+    @MainActor func testNewTitleOpensReadyForBodyTypingAndPersists() async throws {
+        let db = try DatabaseQueue(); try Database.migrator.migrate(db)
+        let store = NotesStore(database: db)
+        let note = try XCTUnwrap(store.save(body: "A new idea", continueWriting: true))
+        XCTAssertEqual(note.body, "A new idea\n")
+        let saver = DocumentAutosave()
+        let window = try await host(NoteDocumentView(note: note, autosave: saver, store: store, focusAtEnd: true))
+        defer { window.contentView = nil; window.close() }
+        let text = try XCTUnwrap(editor(in: XCTUnwrap(window.contentView)))
+        XCTAssertTrue(window.firstResponder === text)
+        XCTAssertEqual(text.selectedRange(), NSRange(location: text.string.utf16.count, length: 0))
+        text.insertText("Start writing immediately", replacementRange: text.selectedRange())
+        saver.flush()
+        let saved = try await db.read { try Note.fetchOne($0, key: note.id) }
+        XCTAssertEqual(saved?.title, "A new idea")
+        XCTAssertEqual(saved?.body, "A new idea\nStart writing immediately")
+    }
+
+    @MainActor func testNewNoteDoesNotDismissDraftWhenSavingFails() throws {
+        let store = NotesStore(database: try DatabaseQueue()) // No schema: write must fail.
+        XCTAssertNil(store.save(body: "Keep this draft", continueWriting: true))
+    }
+
+    @MainActor func testNestedChecklistAppearance() async throws {
+        var markdown = "Plan for the week\n\n- [ ] Prepare the proposal\n  - [x] Review the customer feedback\n  - [ ] Draft the recommended changes and explain how they address the feedback we received from the team\n    - [ ] Add supporting examples\n- [x] Share the meeting notes\n\n- Product work\n  - Research\n    - Customer interviews"
+        let window = try await host(RichMarkdownEditor(markdown: Binding(get: { markdown }, set: { markdown = $0 })))
+        defer { window.contentView = nil; window.close() }
+        try render(window, name: "nested-checkboxes")
+    }
     private let sample = "A quieter place to think\nCapture the thought. Give it room to become something useful.\n\n## Make space for good work\nA simple document with **clear emphasis**, *a softer aside*, and a [useful reference](https://example.com).\n\n- Keep the important things easy to find\n- Leave room for the next idea\n\n### Next time we meet\n- [ ] Bring the new sketches\n- [x] Share the first draft\n\n> Good notes make the next conversation better."
 
     @MainActor func testGellixFacesAreBundledAndActuallyUsed() throws {

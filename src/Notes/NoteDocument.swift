@@ -9,13 +9,20 @@ import SwiftUI
 final class NoteDocumentController {
     static let shared = NoteDocumentController()
     private var windows: [String: NSWindow] = [:]
+    func create(body: String = "") {
+        CaptureActions.perform {
+            let note = Note(body: body)
+            try Database.shared.write { try note.insert($0) }
+            self.open(note, focusAtEnd: true)
+        }
+    }
     func close(id: String) {
         let window = windows.removeValue(forKey: id)
         (window as? DocumentWindow)?.autosave?.discardPendingChanges()
         window?.contentView = nil; window?.close()
     }
 
-    func open(_ note: Note) {
+    func open(_ note: Note, focusAtEnd: Bool = false) {
         if let existing = windows[note.id] {
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -36,7 +43,7 @@ final class NoteDocumentController {
         let autosave = DocumentAutosave()
         window.autosave = autosave
         window.center()
-        window.contentView = NSHostingView(rootView: NoteDocumentView(note: note, autosave: autosave))
+        window.contentView = NSHostingView(rootView: NoteDocumentView(note: note, autosave: autosave, focusAtEnd: focusAtEnd))
         windows[note.id] = window
         Analytics.track("note_document_opened")
         NSApp.activate(ignoringOtherApps: true)
@@ -51,10 +58,12 @@ struct NoteDocumentView: View {
     @StateObject private var editor = RichEditorSession()
     @State private var showRelated = false
     private let store: NotesStore
+    private let focusAtEnd: Bool
 
-    init(note: Note, autosave: DocumentAutosave? = nil, store: NotesStore? = nil) {
+    init(note: Note, autosave: DocumentAutosave? = nil, store: NotesStore? = nil, focusAtEnd: Bool = false) {
         self.note = note
         self.store = store ?? NotesStore()
+        self.focusAtEnd = focusAtEnd
         _body_ = State(initialValue: note.body)
         _autosave = StateObject(wrappedValue: autosave ?? DocumentAutosave())
     }
@@ -100,7 +109,7 @@ struct NoteDocumentView: View {
             RichMarkdownEditor(markdown: Binding(get: { body_ }, set: { text in
                 body_ = text
                 autosave.submit { try store.updateDocument(note, body: text) }
-            }), session: editor, showsEmptyPlaceholder: false, documentID: "note-" + note.id)
+            }), session: editor, showsEmptyPlaceholder: false, documentID: "note-" + note.id, focusAtEndOnOpen: focusAtEnd)
             .overlay {
                 if body_.isEmpty {
                     UtilityEmptyState(icon: .note, title: "Room for a thought", message: "Start typing, or drop something in.")

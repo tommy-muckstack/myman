@@ -411,8 +411,9 @@ enum MeetingEvidence {
 }
 
 enum GroundedMeetingNotes {
-    static func generate(_ meeting: Meeting, corrections: [String: String] = [:],
+    static func generate(_ meeting: Meeting, corrections: [String: String] = [:], useLanguageModel: Bool = true,
                          progress: @escaping MeetingNotesService.Progress = { _ in }) async -> MeetingAnalysis {
+        let cacheURL = MeetingNotesCache.url(for: meeting)
         let parsed = MeetingSource.parse(meeting.transcript)
         let publicSource = MeetingSource.publicTurns(parsed)
         let omitted = publicSource.count < parsed.filter { !MeetingSource.isBackchannel($0.text) }.count
@@ -420,8 +421,7 @@ enum GroundedMeetingNotes {
         // several times) repair its one-off near-misses. Derived input only;
         // the transcript keeps the recognizer's words, and every change is
         // recorded at the end of the notes.
-        let corroborated = MeetingVocabulary.corroboratedPhrases(in: publicSource.map(\.text))
-        let aliases = corroborated.merging(corrections) { _, explicit in explicit }
+        let aliases = corrections
         let vocabulary = DictationCleanup.userVocabulary()
         let prepared = publicSource.map { turn -> MeetingSourceTurn in
             let fixed = MeetingVocabulary.correct(turn.text, terms: vocabulary, aliases: aliases)
@@ -433,18 +433,31 @@ enum GroundedMeetingNotes {
         var unclear = 0
         let debug = ProcessInfo.processInfo.environment["MAN_NOTES_DEBUG"] == "1"
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), case .available = SystemLanguageModel.default.availability {
+        if #available(macOS 26.0, *), useLanguageModel, case .available = SystemLanguageModel.default.availability {
             // Smaller windows: the model returns a handful of facts per call,
             // so a 30-minute meeting read in five bites came back as five
             // bullets. More, shorter reads cover the whole conversation.
+            var modelResponsive = true
             let windows = MeetingSource.windows(prepared, limit: 2600)
             for (index, window) in windows.enumerated() {
                 guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
                 await progress("Reading sources · \(index + 1) of \(windows.count)…")
+                let cacheKey = "sources-v1:" + meeting.kind + ":" + window
+                if let cached = await MeetingNotesCache.shared.value(for: cacheKey, at: cacheURL) {
+                    facts += cached.facts; actions += cached.actions; unclear += cached.unclear
+                    continue
+                }
+                guard modelResponsive else {
+                    facts += fallbackFacts(prepared.filter { window.contains("[T\($0.id)]") }).sorted { $0.quote.count > $1.quote.count }.prefix(1)
+                    continue
+                }
+                let factStart = facts.count, actionStart = actions.count, unclearStart = unclear
                 let session = LanguageModelSession(instructions: instructions(listening: meeting.captureKind == .listening))
                 do {
-                    let response = try await session.respond(to: window, generating: Extraction.self)
-                    facts += response.content.facts.filter { $0.importance >= 2 }.compactMap {
+                    let response = try await AsyncDeadline.run(seconds: 20) {
+                        (try await session.respond(to: window, generating: Extraction.self)).content
+                    }
+                    facts += response.facts.filter { $0.importance >= 2 }.compactMap {
                         let candidate = MeetingFact(sourceID: $0.sourceID, text: $0.text, quote: $0.quote, importance: $0.importance,
                                                     kind: MeetingClaimKind(rawValue: $0.kind))
                         let checked = MeetingEvidence.factChecked(candidate, sources: sources)
@@ -459,7 +472,7 @@ enum GroundedMeetingNotes {
                         return MeetingFact(sourceID: source.id, text: "“\($0.quote)”", quote: $0.quote, importance: 1, kind: .discussion)
                     }
                     if meeting.captureKind != .listening {
-                        actions += response.content.commitments.compactMap {
+                        actions += response.commitments.compactMap {
                             let candidate = MeetingCommitment(sourceID: $0.sourceID, owner: $0.owner, task: $0.task,
                                                               quote: $0.quote, due: $0.due, confidence: $0.confidence, tentative: $0.tentative)
                             let accepted = MeetingEvidence.commitment(candidate, sources: sources)
@@ -467,7 +480,11 @@ enum GroundedMeetingNotes {
                             return accepted
                         }
                     }
+                    await MeetingNotesCache.shared.save(.init(facts: Array(facts.dropFirst(factStart)),
+                        actions: Array(actions.dropFirst(actionStart)), unclear: unclear - unclearStart),
+                        source: cacheKey, at: cacheURL)
                 } catch {
+                    if error is AsyncDeadline.TimedOut { modelResponsive = false }
                     // Keep this window represented by an attributed source
                     // excerpt, rather than silently dropping part of the recording.
                     if debug { print("NOTES_DEBUG fact pass failed: \(error)") }
@@ -486,11 +503,25 @@ enum GroundedMeetingNotes {
                     guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
                     await progress("Collecting follow-ups · \(index + 1) of \(candidates.count)…")
                     let excerpt = [sources[turn.id - 1], turn, sources[turn.id + 1]].compactMap { $0?.prompt }.joined(separator: "\n\n")
+                    let cacheKey = "followup-v1:" + excerpt + " target:" + String(turn.id)
+                    if let cached = await MeetingNotesCache.shared.value(for: cacheKey, at: cacheURL) {
+                        actions += cached.actions
+                        continue
+                    }
+                    guard modelResponsive else {
+                        if let literal = MeetingEvidence.literalFollowUp(in: turn) { actions.append(literal) }
+                        continue
+                    }
                     let session = LanguageModelSession(instructions: followUpInstructions)
                     var found: [MeetingCommitment] = []
+                    var succeeded = false
+                    let actionStart = actions.count
                     do {
-                        let response = try await session.respond(to: excerpt + "\n\nReport the follow-up in [T\(turn.id)] if there is one.", generating: FollowUpExtraction.self)
-                        found = response.content.commitments.compactMap {
+                        let response = try await AsyncDeadline.run(seconds: 20) {
+                            (try await session.respond(to: excerpt + "\n\nReport the follow-up in [T\(turn.id)] if there is one.", generating: FollowUpExtraction.self)).content
+                        }
+                        succeeded = true
+                        found = response.commitments.compactMap {
                             let candidate = MeetingCommitment(sourceID: $0.sourceID, owner: $0.owner, task: $0.task,
                                                               quote: $0.quote, due: $0.due, confidence: $0.confidence, tentative: $0.tentative)
                             let accepted = MeetingEvidence.commitment(candidate, sources: sources)
@@ -498,6 +529,7 @@ enum GroundedMeetingNotes {
                             return accepted
                         }
                     } catch {
+                        if error is AsyncDeadline.TimedOut { modelResponsive = false }
                         if debug { print("NOTES_DEBUG followup pass failed: \(error)") }
                         Analytics.track("meeting_followup_turn_failed", ["turn": turn.id])
                     }
@@ -511,11 +543,25 @@ enum GroundedMeetingNotes {
                     } else {
                         actions += found
                     }
+                    if succeeded {
+                        await MeetingNotesCache.shared.save(.init(facts: [], actions: Array(actions.dropFirst(actionStart)), unclear: 0),
+                                                            source: cacheKey, at: cacheURL)
+                    }
                 }
             }
         }
         #endif
         guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
+        if !useLanguageModel {
+            // A deadline must not discard successfully grounded earlier windows.
+            for window in MeetingSource.windows(prepared, limit: 2600) {
+                let key = "sources-v1:" + meeting.kind + ":" + window
+                if let cached = await MeetingNotesCache.shared.value(for: key, at: cacheURL) {
+                    facts += cached.facts; actions += cached.actions; unclear += cached.unclear
+                } else { facts += fallbackFacts(prepared.filter { window.contains("[T\($0.id)]") }) }
+            }
+            actions += prepared.compactMap { MeetingEvidence.literalFollowUp(in: $0) }
+        }
         if facts.isEmpty {
             let fallback = fallbackFacts(prepared)
             facts = fallback.filter { MeetingEvidence.legible($0.quote) }
@@ -529,10 +575,12 @@ enum GroundedMeetingNotes {
         })
         var overview = ""
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), meeting.captureKind != .listening, !selected.isEmpty,
+        if #available(macOS 26.0, *), useLanguageModel, meeting.captureKind != .listening, !selected.isEmpty,
            case .available = SystemLanguageModel.default.availability {
             await progress("Writing overview…")
-            overview = await self.overview(from: selected, sources: sources)
+            overview = (try? await AsyncDeadline.run(seconds: 20) {
+                await self.overview(from: selected, sources: sources)
+            }) ?? ""
         }
         #endif
         let markdown = render(facts: selected, actions: actions, sources: sources, meeting: meeting, privateOmitted: omitted,
@@ -562,7 +610,9 @@ enum GroundedMeetingNotes {
         // Preserve coverage across the whole conversation, not just its opening.
         return (0..<12).compactMap { bucket in
             let start = bucket * kept.count / 12, end = (bucket + 1) * kept.count / 12
-            return kept[start..<end].max { $0.importance < $1.importance }
+            return kept[start..<end].max {
+                ($0.importance, MeetingNoteSections.salience($0.quote)) < ($1.importance, MeetingNoteSections.salience($1.quote))
+            }
         }
     }
 
@@ -596,7 +646,7 @@ enum GroundedMeetingNotes {
                 let concrete = words.filter { $0.count >= 5 && !filler.contains($0) }
                 return Set(concrete).count - words.filter { filler.contains($0) }.count * 2
             }
-            guard let quote = sentences.max(by: { score($0) < score($1) }), score(quote) >= 4,
+            guard let quote = sentences.filter({ MeetingNoteSections.isSubstantive($0) }).max(by: { score($0) + MeetingNoteSections.salience($0) < score($1) + MeetingNoteSections.salience($1) }), score(quote) >= 4,
                   !MeetingEvidence.isAgendaPrompt(quote) else { return nil }
             return MeetingFact(sourceID: turn.id, text: "“\(quote)”", quote: quote, importance: 1, kind: .discussion)
         }
@@ -642,7 +692,11 @@ enum GroundedMeetingNotes {
 
     static func render(facts: [MeetingFact], actions: [MeetingCommitment], sources: [Int: MeetingSourceTurn],
                        meeting: Meeting, privateOmitted: Bool, unclear: Int = 0, overview: String = "") -> String {
-        func stamp(_ source: MeetingSourceTurn) -> String { source.timestamp.isEmpty ? "(time unavailable)" : "[" + source.timestamp + "]" }
+        func stamp(_ source: MeetingSourceTurn) -> String {
+            guard !source.timestamp.isEmpty else { return "(time unavailable)" }
+            let next = sources.values.filter { $0.seconds > source.seconds }.min { $0.seconds < $1.seconds }
+            return "[" + source.timestamp + (next.map { "–" + $0.timestamp } ?? "") + "]"
+        }
         func line(_ fact: MeetingFact) -> String {
             guard let source = sources[fact.sourceID] else { return "" }
             return "- \(source.speaker): \(fact.text) \(stamp(source))"
@@ -653,7 +707,7 @@ enum GroundedMeetingNotes {
         } else {
             var lead = leadFacts(facts)
             if lead.isEmpty { lead = Array(facts.sorted { ($0.importance, -$0.sourceID) > ($1.importance, -$1.sourceID) }.prefix(3)).sorted { $0.sourceID < $1.sourceID } }
-            output = "## Overview\n\n" + (overview.isEmpty ? lead.map(line).joined(separator: "\n") : overview)
+            output = "## Overview\n\n" + (overview.isEmpty ? lead.prefix(3).map { fact in var brief = fact; brief.text = MeetingNoteSections.sentences(fact.text).first ?? fact.text; return line(brief) }.joined(separator: "\n") : MeetingNoteSections.sentences(overview).prefix(3).joined(separator: " "))
             let topics = facts.filter { $0.resolvedKind == .discussion }
             if !topics.isEmpty { output += "\n\n## Main topics\n\n" + topics.map(line).joined(separator: "\n") }
             let existing = facts.filter { $0.resolvedKind == .existingCommitment }
@@ -667,16 +721,20 @@ enum GroundedMeetingNotes {
                 output = output.trimmingCharacters(in: .newlines)
             }
             if !actions.isEmpty {
-                output += "\n\n## Follow-ups\n\n" + actions.compactMap { action -> String? in
+                output += "\n\n## Next steps\n\n" + actions.compactMap { action -> String? in
                     guard let source = sources[action.sourceID] else { return nil }
                     var line = action.tentative == true
                         ? "- \(MeetingCommitment.unassignedOwner) — \(action.task) (suggested)"
                         : "- **\(action.owner)** — \(action.task)"
                     if action.isRequest { line += " (requested)" }
                     if !action.due.isEmpty { line += " — due \(DueDate.resolve(action.due, from: meeting.startedAt) ?? action.due)" }
+                    else { line += " — date not agreed" }
                     return line + " " + stamp(source)
                 }.joined(separator: "\n")
             }
+            if actions.isEmpty { output += "\n\n## Next steps\n\nNone agreed. Owner: none assigned. Date: none agreed." }
+            output += "\n\n" + MeetingNoteSections.quotes(meeting: meeting)
+            output += MeetingNoteSections.interview(meeting: meeting)
             let questions = facts.filter { $0.resolvedKind == .openQuestion }
             if !questions.isEmpty { output += "\n\n## Open questions\n\n" + questions.map(line).joined(separator: "\n") }
         }
@@ -700,18 +758,18 @@ enum GroundedMeetingNotes {
         """
     }
 
-    @available(macOS 26.0, *) @Generable fileprivate struct FollowUpExtraction {
+    @available(macOS 26.0, *) @Generable fileprivate struct FollowUpExtraction: Sendable {
         @Guide(description: "The promise, request, or shared we-should in the indicated turn; empty if it holds none.", .count(0...2)) var commitments: [ExtractedCommitment]
     }
 
-    @available(macOS 26.0, *) @Generable fileprivate struct ExtractedFact {
+    @available(macOS 26.0, *) @Generable fileprivate struct ExtractedFact: Sendable {
         @Guide(description: "The integer after T in the source label, e.g. 12 from [T12].") var sourceID: Int
         @Guide(description: "Copy 4 to 20 consecutive words EXACTLY from this source utterance, including filler. Spoken content, never a speaker name.") var quote: String
         @Guide(description: "State the actual point using the source’s concrete words and tense, e.g. The registration report should be delivered by email. Keep any negation. Do not start with a speaker name. Do not say that somebody discussed a topic; explain the point.") var text: String
         @Guide(description: "1 for background, 2 for explanation, 3 for a specific proposal or decision.", .range(1...3)) var importance: Int
         @Guide(description: "discussion, proposal, existing_commitment (already done or invested in), decision (explicitly agreed now), or open_question.") var kind: String
     }
-    @available(macOS 26.0, *) @Generable fileprivate struct ExtractedCommitment {
+    @available(macOS 26.0, *) @Generable fileprivate struct ExtractedCommitment: Sendable {
         @Guide(description: "The integer after T in the turn containing the explicit promise or request.") var sourceID: Int
         @Guide(description: "Copy the exact sentence containing I'll, I will, I can, let me, we should, or can you AND its deliverable. Never a speaker name.") var quote: String
         @Guide(description: "The exact speaker promising this work, the named recipient of the direct request, or Owner not assigned for a shared we-should.") var owner: String
@@ -720,7 +778,7 @@ enum GroundedMeetingNotes {
         @Guide(description: "Certainty that this is an explicit deliverable promised by this owner, or a clear shared follow-up.", .range(0.0...1.0)) var confidence: Double
         @Guide(description: "true only for a shared we-should / we-need-to with no named owner.") var tentative: Bool
     }
-    @available(macOS 26.0, *) @Generable fileprivate struct Extraction {
+    @available(macOS 26.0, *) @Generable fileprivate struct Extraction: Sendable {
         @Guide(description: "Useful facts backed by exact quoted source evidence.", .count(0...6)) var facts: [ExtractedFact]
         @Guide(description: "Explicit promises, direct requests, and shared follow-ups only. Empty when nobody commits to new work.", .count(0...4)) var commitments: [ExtractedCommitment]
     }

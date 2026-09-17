@@ -146,6 +146,9 @@ enum BrainAgentExport {
                 let ended: Date? = meeting["endedAt"]
                 fields += ["started: \(iso(item.capturedAt))", "ended: \(ended.map(iso) ?? "")", "participants:"]
                 let names = participants(meeting, transcript: item.body)
+                let owner: String = meeting.columnNames.contains("ownerName") ? meeting["ownerName"] : ""
+                // Insert before the participants sequence, shared with direct exports.
+                fields.insert(contentsOf: MeetingConversation.metadata(transcript: item.body, summary: item.summary, title: item.title, owner: owner.isEmpty ? NSFullUserName() : owner, started: item.capturedAt, ended: ended, participants: names), at: fields.count - 1)
                 fields += names.isEmpty ? ["  []"] : names.map { "  - \(scalar($0))" }
                 if meeting.columnNames.contains("kind"), let kind: String = meeting["kind"] { fields.append("kind: \(scalar(kind))") }
                 if !item.body.isEmpty && item.body.split(whereSeparator: \.isWhitespace).count < 100 { fields.append("low_content: true") }

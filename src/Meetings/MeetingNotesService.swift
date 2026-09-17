@@ -10,6 +10,10 @@ final class MeetingNotesService: ObservableObject {
     static let shared = MeetingNotesService()
 
     @Published private(set) var stages: [String: String] = [:]
+    @Published private(set) var failures: [String: String] = [:]
+    @Published private(set) var drafts: [String: String] = [:]
+    private var draftTasks: [String: Task<String, Never>] = [:]
+    private var draftTimes: [String: Date] = [:]
     private struct Job {
         let token: UUID
         let input: String
@@ -38,18 +42,69 @@ final class MeetingNotesService: ObservableObject {
         return (try? await db.read { try Meeting.fetchOne($0, key: meetingID)?.summary }) ?? ""
     }
 
+    func regenerate(meetingID: String) async -> String {
+        if let task = job(for: meetingID, replacing: true) { return await task.value }
+        return ""
+    }
+
+    /// Keep a provisional summary available during capture. Exact source
+    /// windows are cached by GroundedMeetingNotes and reused on finalization.
+    func updateDraft(_ meeting: Meeting) {
+        guard meeting.transcript.count >= 400, draftTasks[meeting.id] == nil,
+              Date().timeIntervalSince(draftTimes[meeting.id] ?? .distantPast) >= 120 else { return }
+        draftTimes[meeting.id] = Date()
+        let previous = tail
+        let task = Task { @MainActor [self] in
+            defer { draftTasks.removeValue(forKey: meeting.id) }
+            _ = await previous?.value
+            guard !Task.isCancelled else { return "" }
+            let analysis = await Self.generateBounded(meeting)
+            guard !Task.isCancelled, !analysis.markdown.isEmpty else { return "" }
+            drafts[meeting.id] = analysis.markdown
+            if let url = MeetingNotesCache.url(for: meeting)?.deletingPathExtension().appendingPathExtension("draft.md") {
+                try? analysis.markdown.write(to: url, atomically: true, encoding: .utf8)
+            }
+            return analysis.markdown
+        }
+        draftTasks[meeting.id] = task
+        tail = task
+    }
+
+    nonisolated static func generateBounded(_ meeting: Meeting, progress: @escaping Progress = { _ in }) async -> MeetingAnalysis {
+        do {
+            return try await AsyncDeadline.run(seconds: 90) {
+                await GroundedMeetingNotes.generate(meeting, progress: progress)
+            }
+        } catch {
+            guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
+            await progress("Saving notes from the transcript…")
+            return await GroundedMeetingNotes.generate(meeting, useLanguageModel: false)
+        }
+    }
+
     /// Editing or deleting takes precedence over an in-flight model response.
     func cancel(meetingID: String) {
         jobs.removeValue(forKey: meetingID)?.task.cancel()
+        draftTasks.removeValue(forKey: meetingID)?.cancel()
         stages.removeValue(forKey: meetingID)
     }
 
-    private func job(for id: String) -> Task<String, Never>? {
+    private func job(for id: String, replacing: Bool = false) -> Task<String, Never>? {
         guard let meeting = try? db.read({ try Meeting.fetchOne($0, key: id) }),
-              meeting.summary.isEmpty, !meeting.transcript.isEmpty else { return nil }
-        let input = [meeting.transcript, meeting.kind, meeting.ownerName, meeting.participantsJSON].joined(separator: "\u{0}")
+              (replacing || meeting.summary.isEmpty), !meeting.transcript.isEmpty else { return nil }
+        let input = [meeting.transcript, meeting.summary, meeting.kind, meeting.ownerName, meeting.participantsJSON].joined(separator: "\u{0}")
         if let current = jobs[id], current.input == input { return current.task }
+        if replacing, !meeting.summary.isEmpty, let url = MeetingNotesCache.url(for: meeting) {
+            do {
+                let backup = url.deletingLastPathComponent().appendingPathComponent("\(id)-before-notes-\(UUID().uuidString).json")
+                try JSONEncoder().encode(meeting).write(to: backup, options: .atomic)
+            } catch {
+                failures[id] = "Couldn’t preserve the existing notes. Retry when storage is available."
+                return nil
+            }
+        }
         cancel(meetingID: id)
+        failures.removeValue(forKey: id)
         let token = UUID()
         let previous = tail
         let queueTimer = MeetingProcessingTimer()
@@ -60,7 +115,7 @@ final class MeetingNotesService: ObservableObject {
                     jobs.removeValue(forKey: id)
                     stages.removeValue(forKey: id)
                 }
-                if jobs.isEmpty { tail = nil }
+                if jobs.isEmpty && draftTasks.isEmpty { tail = nil }
             }
             _ = await previous?.value
             guard !Task.isCancelled, isCurrent(meeting) else { return "" }
@@ -68,23 +123,32 @@ final class MeetingNotesService: ObservableObject {
             let progress: Progress = { [weak self] stage in
                 await self?.setStage(stage, id: id, token: token)
             }
-            let analysis: MeetingAnalysis
-            if let generate {
-                analysis = MeetingAnalysis(markdown: await generate(meeting.transcript, meeting.startedAt, progress))
-            } else {
-                analysis = await GroundedMeetingNotes.generate(meeting, progress: progress)
+            var analysis = MeetingAnalysis(markdown: "")
+            for attempt in 1...3 {
+                guard !Task.isCancelled else { return "" }
+                if attempt > 1 { await progress("Retrying notes · attempt \(attempt) of 3…") }
+                if let generate {
+                    analysis = MeetingAnalysis(markdown: await generate(meeting.transcript, meeting.startedAt, progress))
+                } else {
+                    analysis = await Self.generateBounded(meeting, progress: progress)
+                }
+                if !analysis.markdown.isEmpty { break }
             }
             let generated = analysis.markdown
-            guard !Task.isCancelled, !generated.isEmpty else { return "" }
+            guard !Task.isCancelled else { return "" }
+            guard !generated.isEmpty else {
+                failures[id] = "Notes could not be generated. Your transcript is saved."
+                return ""
+            }
             do {
-                let saved: Meeting? = try await db.write { db in
+                let saved: Meeting? = try await db.write { [analysis] db in
                     // Field-only, conditional update: never overwrite edits,
                     // resurrect a deletion, or save notes for an old transcript.
                     try db.execute(sql: """
                         UPDATE meeting SET summary = ?, analysisJSON = ?
-                        WHERE id = ? AND summary = '' AND transcript = ?
+                        WHERE id = ? AND summary = ? AND transcript = ?
                             AND kind = ? AND ownerName = ? AND participantsJSON = ?
-                        """, arguments: [generated, String(decoding: try JSONEncoder().encode(analysis), as: UTF8.self), id, meeting.transcript,
+                        """, arguments: [generated, String(decoding: try JSONEncoder().encode(analysis), as: UTF8.self), id, meeting.summary, meeting.transcript,
                                           meeting.kind, meeting.ownerName, meeting.participantsJSON])
                     guard db.changesCount == 1 else { return nil }
                     try TaskHygiene.store(analysis.actions, meeting: meeting, in: db)
@@ -101,6 +165,7 @@ final class MeetingNotesService: ObservableObject {
                 return saved.summary
             } catch {
                 NSLog("My Man [Summary] could not save notes")
+                failures[id] = "Notes could not be saved. Retry when ready."
                 return ""
             }
         }
@@ -111,7 +176,7 @@ final class MeetingNotesService: ObservableObject {
 
     private func isCurrent(_ meeting: Meeting) -> Bool {
         guard let current = try? db.read({ try Meeting.fetchOne($0, key: meeting.id) }) else { return false }
-        return current.summary.isEmpty && current.transcript == meeting.transcript
+        return current.summary == meeting.summary && current.transcript == meeting.transcript
             && current.kind == meeting.kind && current.ownerName == meeting.ownerName
             && current.participantsJSON == meeting.participantsJSON
     }

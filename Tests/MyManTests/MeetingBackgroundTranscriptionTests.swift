@@ -36,9 +36,9 @@ final class MeetingBackgroundTranscriptionTests: XCTestCase {
         let dictationEngine = TranscriptionService.shared.kind
         let meeting = Meeting(id: "synthetic", title: "Synthetic", startedAt: Date(), transcript: "")
         let worker = MeetingTranscriptionWorker()
-        let result = await worker.process(.init(record: meeting, micPath: url.path, systemPath: nil,
+        let result = try await worker.process(.init(record: meeting, micPath: url.path, systemPath: nil,
                                                 candidates: .none, attendees: []))
-        XCTAssertTrue(result.transcript.lowercased().contains("proposal"))
+        XCTAssertTrue(result.transcript.lowercased().contains("proposal"), result.transcript)
         XCTAssertEqual(TranscriptionService.shared.kind, dictationEngine,
                        "Processing a meeting must not change dictation's engine")
     }

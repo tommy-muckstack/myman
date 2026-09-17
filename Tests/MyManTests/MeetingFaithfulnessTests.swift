@@ -201,7 +201,7 @@ final class MeetingNotesSemanticEvalTests: XCTestCase {
             check(!notes.lowercased().contains("eliminat"), "team elimination invented")
             check(!notes.contains("4.8"), "unsupported model version")
             check(!notes.lowercased().hasPrefix("## overview\n\n- riley: asks what"), "agenda prompt leads the recap")
-            check(notes.contains("## Follow-ups"), "follow-ups missing")
+            check(notes.contains("## Next steps"), "follow-ups missing")
             check(notes.lowercased().contains("pranjal") || notes.lowercased().contains("design"), "final-minute design follow-up lost")
             check(!notes.contains("— due"), "invented deadline")
             check(analysis.actions.allSatisfy { $0.tentative == true || ["Alex", "Riley"].contains($0.owner) }, "invented owner")

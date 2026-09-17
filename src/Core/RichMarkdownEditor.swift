@@ -59,10 +59,12 @@ struct RichMarkdownEditor: NSViewRepresentable {
     /// Small hosts (the recording card) cannot afford page margins.
     var compact = false
     var onFocusChanged: ((Bool) -> Void)? = nil
+    var focusAtEndOnOpen = false
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = RichNoteTextView()
         textView.compactMargins = compact
+        textView.focusAtEndOnOpen = focusAtEndOnOpen
         textView.onFocusChanged = onFocusChanged
         textView.delegate = context.coordinator
         textView.isRichText = true
@@ -137,7 +139,23 @@ final class RichNoteTextView: NSTextView {
     var showsEmptyPlaceholder = true
     var compactMargins = false
     var onFocusChanged: ((Bool) -> Void)?
+    var focusAtEndOnOpen = false
+    private var checklistShortcutCaret: Int?
     private var formatBar: NSHostingView<FormatBar>?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard focusAtEndOnOpen, window != nil else { return }
+        focusAtEndOnOpen = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window else { return }
+            let end = NSRange(location: (self.string as NSString).length, length: 0)
+            self.setSelectedRange(end)
+            self.typingAttributes = self.baseAttributes(title: self.firstLineIsTitle && !self.string.contains("\n"))
+            window.makeFirstResponder(self)
+            self.scrollRangeToVisible(end)
+        }
+    }
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
@@ -172,7 +190,7 @@ final class RichNoteTextView: NSTextView {
 
     override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if image(at: point) != nil || [formatBar as NSView?, slashMenu as NSView?].compactMap({ $0 }).contains(where: {
+        if image(at: point) != nil || checklistLine(at: point) != nil || [formatBar as NSView?, slashMenu as NSView?].compactMap({ $0 }).contains(where: {
             !$0.isHidden && $0.frame.contains(point)
         }) {
             NSCursor.pointingHand.set()
@@ -188,6 +206,10 @@ final class RichNoteTextView: NSTextView {
                 guard value is DocumentImageAttachment else { return }
                 let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
                 let rect = manager.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+                addCursorRect(rect.intersection(visibleRect), cursor: .pointingHand)
+            }
+            attributedString().enumerateAttribute(.manBlock, in: NSRange(location: 0, length: attributedString().length)) { value, range, _ in
+                guard let prefix = value as? String, prefix.contains("["), let rect = self.checklistRect(at: range.location) else { return }
                 addCursorRect(rect.intersection(visibleRect), cursor: .pointingHand)
             }
         }
@@ -244,6 +266,25 @@ final class RichNoteTextView: NSTextView {
         let caret = selectedRange()
         let effectiveRange = replacementRange.location == NSNotFound ? caret : replacementRange
         if replaceAcrossTableCells(insertString, range: effectiveRange) { return }
+        let shortcutCaret = checklistShortcutCaret
+        checklistShortcutCaret = nil
+        if insertString as? String == " ", caret.length == 0, effectiveRange == caret, shortcutCaret == caret.location { return }
+        var checklistPrefix: String?
+        if let text = insertString as? String, caret.length == 0, effectiveRange == caret, !hasMarkedText(), !isTitle(caret), currentTable == nil,
+           typingAttributes[.manCode] == nil {
+            let ns = string as NSString
+            let line = ns.lineRange(for: caret)
+            let prefix = line.location < ns.length ? attributedString().attribute(.manBlock, at: line.location, effectiveRange: nil) as? String ?? "" : ""
+            let marker = prefix.trimmingCharacters(in: .whitespaces)
+            var before = ns.substring(with: NSRange(location: line.location, length: caret.location - line.location))
+            let display = MarkdownRich.block(prefix + "content").display
+            if !display.isEmpty, before.hasPrefix(display) { before = String(before.dropFirst(display.count)) }
+            let typed = before + text
+            if ["", "-", "*"].contains(marker), typed.range(of: #"^[ \t]*\[(?: |x|X)?\] ?$"#, options: .regularExpression) != nil {
+                let indent = prefix.isEmpty ? String(typed.prefix(while: { $0 == " " || $0 == "\t" })) : String(prefix.prefix(while: { $0 == " " || $0 == "\t" }))
+                checklistPrefix = indent + (typed.lowercased().contains("[x]") ? "- [x] " : "- [ ] ")
+            }
+        }
         var convertBlock = false
         if let text = insertString as? String, text == " ", caret.length == 0, !hasMarkedText(), !isTitle(caret), currentTable == nil,
            typingAttributes[.manCode] == nil {
@@ -252,9 +293,24 @@ final class RichNoteTextView: NSTextView {
             let before = ns.substring(with: NSRange(location: line.location, length: caret.location - line.location))
             convertBlock = before.range(of: #"^(?:[-*]|\d+\.|#{1,3}|>)$"#, options: .regularExpression) != nil
         }
-        if convertBlock { undoManager?.beginUndoGrouping() }
+        if convertBlock || checklistPrefix != nil {
+            breakUndoCoalescing()
+            undoManager?.beginUndoGrouping()
+        }
         super.insertText(insertString, replacementRange: replacementRange)
-        if convertBlock {
+        if let checklistPrefix {
+            let ns = string as NSString
+            let range = ns.lineRange(for: selectedRange())
+            let caret = selectedRange().location
+            let suffix = attributedString().attributedSubstring(from: NSRange(location: caret, length: NSMaxRange(range) - caret))
+            let raw = checklistPrefix + MarkdownRich.inlineMarkdown(suffix)
+            replace(range, with: MarkdownRich.attributed(from: raw, firstLineIsTitle: false, assets: assets))
+            let end = range.location + (MarkdownRich.block(raw).display as NSString).length
+            setSelectedRange(NSRange(location: end, length: 0))
+            typingAttributes = baseAttributes(prefix: checklistPrefix)
+            checklistShortcutCaret = end
+            undoManager?.endUndoGrouping()
+        } else if convertBlock {
             let ns = string as NSString
             let range = ns.lineRange(for: selectedRange())
             let raw = ns.substring(with: range)
@@ -284,27 +340,29 @@ final class RichNoteTextView: NSTextView {
         guard currentTable == nil, !isTitle(selectedRange()) else { return false }
         let selection = selectedRange()
         let ns = string as NSString
-        let range = ns.lineRange(for: selection)
+        let range = ns.lineRange(for: NSRange(location: selection.location, length: max(0, selection.length - 1)))
         let existing = attributedString().attributedSubstring(from: range)
         let raw = MarkdownRich.markdown(from: existing, firstLineIsTitle: false)
         let lines = raw.components(separatedBy: "\n")
         var changed = false
+        var isList = false
         let rewritten = lines.enumerated().map { index, line -> String in
             if index == lines.count - 1, line.isEmpty, raw.hasSuffix("\n") { return "" }
             let parts = MarkdownRich.block(line)
             let marker = parts.prefix.trimmingCharacters(in: .whitespaces)
             guard marker.hasPrefix("-") || marker.hasPrefix("*") || marker.first?.isNumber == true else { return line }
-            let level = parts.prefix.prefix(while: { $0 == " " }).count / 2
+            isList = true
+            let level = parts.prefix.prefix(while: { $0 == " " || $0 == "\t" }).reduce(0) { $0 + ($1 == "\t" ? 2 : 1) } / 2
             let next = max(0, min(6, level + delta))
             guard next != level else { return line }
             changed = true
             return String(repeating: "  ", count: next) + marker + " " + parts.body
         }.joined(separator: "\n")
-        guard changed else { return false }
+        guard changed else { return isList }
         let content = MarkdownRich.attributed(from: rewritten, firstLineIsTitle: false, assets: assets)
         replace(range, with: content)
         let caret = min(selection.location + (content.length - existing.length), range.location + content.length)
-        setSelectedRange(NSRange(location: max(range.location, caret), length: 0))
+        setSelectedRange(selection.length == 0 ? NSRange(location: max(range.location, caret), length: 0) : NSRange(location: range.location, length: content.length - (content.string.hasSuffix("\n") ? 1 : 0)))
         typingAttributes = baseAttributes(prefix: MarkdownRich.block(rewritten.components(separatedBy: "\n").first ?? "").prefix)
         return true
     }
@@ -454,6 +512,9 @@ final class RichNoteTextView: NSTextView {
             for key in [NSAttributedString.Key.manBold, .manItalic, .underlineStyle, .strikethroughStyle] {
                 attrs[key] = typingAttributes[key]
             }
+            if let original = typingAttributes[.manChecklistStrike] as? Int {
+                attrs[.strikethroughStyle] = original == 0 ? nil : original
+            }
         }
         let insertion = NSAttributedString(string: "\n" + MarkdownRich.block(next + "content").display, attributes: attrs)
         insertText(insertion, replacementRange: selection)
@@ -535,22 +596,32 @@ final class RichNoteTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if let image = image(at: point) { DocumentImagePreview.shared.open(image.sourceURL); return }
-        let index = characterIndexForInsertion(at: point)
-        let ns = string as NSString
-        if index < ns.length {
-            let line = ns.lineRange(for: NSRange(location: index, length: 0))
-            let prefix = textStorage?.attribute(.manBlock, at: line.location, effectiveRange: nil) as? String ?? ""
-            let marker = MarkdownRich.block(prefix + "content").display
-            if prefix.contains("["), index < line.location + (marker as NSString).length {
-                toggleChecklist(at: line)
-                return
-            }
-        }
+        if let line = checklistLine(at: point) { toggleChecklist(at: line); return }
         super.mouseDown(with: event)
+    }
+
+    func checklistRect(at index: Int) -> NSRect? {
+        let ns = string as NSString
+        guard index < ns.length, let manager = layoutManager, let container = textContainer else { return nil }
+        let line = ns.lineRange(for: NSRange(location: index, length: 0))
+        let prefix = textStorage?.attribute(.manBlock, at: line.location, effectiveRange: nil) as? String ?? ""
+        guard prefix.contains("[ ]") || prefix.lowercased().contains("[x]") else { return nil }
+        let marker = ns.range(of: prefix.contains("[ ]") ? "☐" : "☑", range: line)
+        guard marker.location != NSNotFound else { return nil }
+        let glyphs = manager.glyphRange(forCharacterRange: marker, actualCharacterRange: nil)
+        return manager.boundingRect(forGlyphRange: glyphs, in: container)
+            .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y).insetBy(dx: -4, dy: -3)
+    }
+
+    private func checklistLine(at point: NSPoint) -> NSRange? {
+        let index = characterIndexForInsertion(at: point)
+        guard let rect = checklistRect(at: index), rect.contains(point) else { return nil }
+        return (string as NSString).lineRange(for: NSRange(location: index, length: 0))
     }
 
     func toggleChecklist(at line: NSRange) {
         guard let storage = textStorage else { return }
+        let selection = selectedRange()
         let content = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: line))
         let prefix = content.attribute(.manBlock, at: 0, effectiveRange: nil) as? String ?? ""
         guard prefix.contains("[") else { return }
@@ -559,7 +630,9 @@ final class RichNoteTextView: NSTextView {
         let marker = (content.string as NSString).range(of: checked ? "☐" : "☑")
         if marker.location != NSNotFound { content.replaceCharacters(in: marker, with: checked ? "☑" : "☐") }
         content.addAttribute(.manBlock, value: next, range: NSRange(location: 0, length: content.length))
+        MarkdownRich.style(content, title: isTitle(line))
         replace(line, with: content)
+        setSelectedRange(selection)
     }
 
     func toggleBoldSelection() { toggle(.manBold) }
