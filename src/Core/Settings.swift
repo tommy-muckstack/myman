@@ -27,8 +27,42 @@ struct HotkeyCombo: Codable, Equatable {
         return parts + Self.keyName(keyCode)
     }
 
+    /// Keys allowed as a hotkey with NO modifier. A bare hotkey is taken from
+    /// every app on the machine, so the keys you type prose with — letters,
+    /// digits, Space, Return, Delete, Escape, the arrows — are deliberately
+    /// absent: binding one would swallow it system-wide. ` and ⇥ are in
+    /// because a launcher key is the one thing people reach for bare.
+    static let bareCapableKeyCodes: Set<UInt32> = {
+        var codes: Set<UInt32> = [
+            UInt32(kVK_Tab), UInt32(kVK_ANSI_Grave),
+            UInt32(kVK_ANSI_Minus), UInt32(kVK_ANSI_Equal),
+            UInt32(kVK_ANSI_LeftBracket), UInt32(kVK_ANSI_RightBracket),
+            UInt32(kVK_ANSI_Backslash), UInt32(kVK_ANSI_Semicolon),
+            UInt32(kVK_ANSI_Quote), UInt32(kVK_ANSI_Comma),
+            UInt32(kVK_ANSI_Period), UInt32(kVK_ANSI_Slash),
+            UInt32(kVK_Home), UInt32(kVK_End),
+            UInt32(kVK_PageUp), UInt32(kVK_PageDown),
+        ]
+        codes.formUnion(functionKeyCodes.keys)
+        return codes
+    }()
+
+    static func allowsBareKey(_ code: UInt32) -> Bool {
+        bareCapableKeyCodes.contains(code) || ModifierHotkeyMonitor.isModifierKeyCode(code)
+    }
+
+    private static let functionKeyCodes: [UInt32: String] = [
+        UInt32(kVK_F1): "F1", UInt32(kVK_F2): "F2", UInt32(kVK_F3): "F3",
+        UInt32(kVK_F4): "F4", UInt32(kVK_F5): "F5", UInt32(kVK_F6): "F6",
+        UInt32(kVK_F7): "F7", UInt32(kVK_F8): "F8", UInt32(kVK_F9): "F9",
+        UInt32(kVK_F10): "F10", UInt32(kVK_F11): "F11", UInt32(kVK_F12): "F12",
+        UInt32(kVK_F13): "F13", UInt32(kVK_F14): "F14", UInt32(kVK_F15): "F15",
+        UInt32(kVK_F16): "F16", UInt32(kVK_F17): "F17", UInt32(kVK_F18): "F18",
+        UInt32(kVK_F19): "F19", UInt32(kVK_F20): "F20",
+    ]
+
     static func keyName(_ code: UInt32) -> String {
-        let names: [UInt32: String] = [
+        var names: [UInt32: String] = [
             UInt32(kVK_Space): "Space", UInt32(kVK_Return): "⏎",
             UInt32(kVK_ANSI_A): "A", UInt32(kVK_ANSI_B): "B", UInt32(kVK_ANSI_C): "C",
             UInt32(kVK_ANSI_D): "D", UInt32(kVK_ANSI_E): "E", UInt32(kVK_ANSI_F): "F",
@@ -47,7 +81,20 @@ struct HotkeyCombo: Codable, Equatable {
             UInt32(kVK_Option): "L⌥", UInt32(kVK_RightOption): "R⌥",
             UInt32(kVK_Shift): "L⇧", UInt32(kVK_RightShift): "R⇧",
             UInt32(kVK_Control): "⌃",
+            UInt32(kVK_Tab): "⇥", UInt32(kVK_Escape): "⎋", UInt32(kVK_Delete): "⌫",
+            UInt32(kVK_ForwardDelete): "⌦",
+            UInt32(kVK_LeftArrow): "←", UInt32(kVK_RightArrow): "→",
+            UInt32(kVK_UpArrow): "↑", UInt32(kVK_DownArrow): "↓",
+            UInt32(kVK_Home): "↖", UInt32(kVK_End): "↘",
+            UInt32(kVK_PageUp): "⇞", UInt32(kVK_PageDown): "⇟",
+            UInt32(kVK_ANSI_Grave): "`", UInt32(kVK_ANSI_Minus): "-",
+            UInt32(kVK_ANSI_Equal): "=", UInt32(kVK_ANSI_LeftBracket): "[",
+            UInt32(kVK_ANSI_RightBracket): "]", UInt32(kVK_ANSI_Backslash): "\\",
+            UInt32(kVK_ANSI_Semicolon): ";", UInt32(kVK_ANSI_Quote): "'",
+            UInt32(kVK_ANSI_Comma): ",", UInt32(kVK_ANSI_Period): ".",
+            UInt32(kVK_ANSI_Slash): "/",
         ]
+        names.merge(functionKeyCodes) { current, _ in current }
         return names[code] ?? "key\(code)"
     }
 }
@@ -595,9 +642,16 @@ private struct HotkeyCaptureView: NSViewRepresentable {
             if event.modifierFlags.contains(.option) { carbonMods |= UInt32(optionKey) }
             if event.modifierFlags.contains(.shift) { carbonMods |= UInt32(shiftKey) }
             if event.modifierFlags.contains(.control) { carbonMods |= UInt32(controlKey) }
-            // Bare keys make terrible global hotkeys — require a modifier.
-            guard carbonMods != 0 else { return }
-            onCapture?(HotkeyCombo(keyCode: UInt32(event.keyCode), carbonModifiers: carbonMods))
+            // A modifier-less key is fine as long as it isn't one you type
+            // with — a bare hotkey is grabbed from every app on the machine.
+            // Rejected keys fall through to the responder chain so ⎋ still
+            // closes the panel and a stray letter still beeps.
+            let code = UInt32(event.keyCode)
+            guard carbonMods != 0 || HotkeyCombo.allowsBareKey(code) else {
+                super.keyDown(with: event)
+                return
+            }
+            onCapture?(HotkeyCombo(keyCode: code, carbonModifiers: carbonMods))
         }
     }
 }
