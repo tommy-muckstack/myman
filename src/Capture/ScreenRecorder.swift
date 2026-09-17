@@ -839,6 +839,18 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         start(regionAppKit: region == .zero ? nil : region)
     }
 
+    var hasPendingSelection: Bool {
+        !isRecording && stream == nil && !changingSegment &&
+            (selection != nil || pendingRegion != nil || confirmPanel != nil || countdownPanel != nil)
+    }
+
+    func cancelPendingSelection() {
+        guard hasPendingSelection else { return }
+        selection?.hideAll()
+        selection = nil
+        cancelPending()
+    }
+
     private func cancelPending() {
         pendingRegion = nil
         confirmPanel?.orderOut(nil)
