@@ -227,16 +227,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let voiceID = voice.activeRecordingID
-        let meetingID = meetings.activeCaptureMeetingID
+        let meetingPhase = meetings.phase
         let screenStartedAt = ScreenRecorder.shared.startedAt
-        if voiceID == nil, meetingID == nil, !ScreenRecorder.shared.isRecording, ScreenRecorder.shared.hasPendingSelection {
+        if voiceID == nil, meetingPhase == .idle, !ScreenRecorder.shared.isRecording, ScreenRecorder.shared.hasPendingSelection {
             ScreenRecorder.shared.cancelPendingSelection()
             updateCoordinator.refresh()
             return
         }
         let alert = NSAlert()
         alert.messageText = "Cancel active recording?"
-        alert.informativeText = meetingID == nil
+        alert.informativeText = meetingPhase == .idle
             ? "The current unsaved recording will be discarded. Previously saved recordings and notes are kept."
             : "The current recording and its meeting note will be discarded. Other saved recordings and notes are kept."
         alert.alertStyle = .warning
@@ -245,7 +245,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard alert.runModal() == .alertSecondButtonReturn else { return }
         Task { @MainActor in
             if let voiceID, voice.activeRecordingID == voiceID { voice.dismiss() }
-            if let meetingID, meetings.activeCaptureMeetingID == meetingID { meetings.discardRecording() }
+            // The phase carries the start timestamp, including provisional
+            // recordings whose committed capture ID is intentionally hidden.
+            if meetingPhase != .idle, meetings.phase == meetingPhase { meetings.discardRecording() }
             do {
                 if let screenStartedAt, ScreenRecorder.shared.startedAt == screenStartedAt, ScreenRecorder.shared.isRecording {
                     try await ScreenRecorder.shared.cancelForAgent()

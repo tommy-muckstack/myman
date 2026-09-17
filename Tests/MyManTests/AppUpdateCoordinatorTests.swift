@@ -8,6 +8,7 @@ final class AppUpdateCoordinatorTests: XCTestCase {
         XCTAssertFalse(AppUpdateActivity(voice: .done("Already saved")).isBusy)
         XCTAssertFalse(AppUpdateActivity(voice: .idle).isBusy)
         XCTAssertTrue(AppUpdateActivity(voice: .recording).canCancelRecording)
+        XCTAssertTrue(AppUpdateActivity(voice: .idle, meetingRecording: true).canCancelRecording)
         XCTAssertTrue(AppUpdateActivity(voice: .transcribing).isBusy)
         let processing = AppUpdateActivity(voice: .idle, screenProcessing: true)
         XCTAssertTrue(processing.isBusy)
