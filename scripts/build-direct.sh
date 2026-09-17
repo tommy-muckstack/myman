@@ -204,7 +204,7 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
     <key>SUEnableAutomaticChecks</key><true/>
     <key>SUAutomaticallyUpdate</key><true/>
-    <key>SUScheduledCheckInterval</key><integer>86400</integer>
+    <key>SUScheduledCheckInterval</key><integer>3600</integer>
 </dict>
 </plist>
 PLIST

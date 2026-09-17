@@ -38,6 +38,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// True from tile-click to file-saved — covers the async spin-up window
     /// so meeting detection can never mistake our own mic for a call.
     private(set) var isBusy = false
+    private var transcriptionCount = 0
+    var isTranscribing: Bool { transcriptionCount > 0 }
 
     private var stream: SCStream?
     private var recordingOutput: Any? // SCRecordingOutput, typed loosely for the 14.x floor
@@ -591,7 +593,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
     // MARK: Transcription → brain
 
     private func transcribeAndSync(_ record: ScreenRecording) {
+        transcriptionCount += 1
         Task { @MainActor in
+            defer { transcriptionCount -= 1 }
             if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .parakeet {
                 await TranscriptionService.shared.load(kind: .parakeet)
             }
