@@ -117,8 +117,7 @@ final class MeetingController: ObservableObject {
     /// the user may keep speaking or typing after everyone else leaves.
     private var lastRemoteAudibleAt = Date()
     private var slideTimer: Timer?
-    private var slidePaths: [String] = []
-    private var lastSlideFingerprint: [Float]?
+    private let slideCapture = MeetingSlideCapture()
     private var systemLevel: Float = 0
     private var levelTimer: Timer?
 
@@ -373,8 +372,7 @@ final class MeetingController: ObservableObject {
         provisionalTimeout = nil
         slideTimer?.invalidate()
         slideTimer = nil
-        for path in slidePaths { try? FileManager.default.removeItem(atPath: path) }
-        slidePaths = []
+        for path in slideCapture.finish() { try? FileManager.default.removeItem(atPath: path) }
         levelTimer?.invalidate()
         levelTimer = nil
         micDrainTimer?.invalidate()
@@ -665,31 +663,33 @@ final class MeetingController: ObservableObject {
     // MARK: Slides — periodic captures of the call window, deduped
 
     private func startSlideCapture(meetingID: String) {
-        slidePaths = []
-        lastSlideFingerprint = nil
+        slideCapture.start(meetingID: meetingID, folder: Self.recordingsFolder)
+        participantScanner = CallParticipantScanner()
         slideTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.captureSlide(meetingID: meetingID) }
         }
     }
 
-    private let participantScanner = CallParticipantScanner()
+    private var participantScanner = CallParticipantScanner()
 
     private func captureSlide(meetingID: String) async {
-        guard case .recording = phase else { return }
-        guard let image = await captureCallWindow() else { return }
-        await scanCallParticipants(image)
-        guard slidePaths.count < 24 else { return }
-        keepSlideIfChanged(image, meetingID: meetingID)
+        guard case .recording = phase, meeting?.id == meetingID else { return }
+        await slideCapture.capture(meetingID: meetingID, image: {
+            await self.captureCallWindow()
+        }, inspect: { image in
+            await self.scanCallParticipants(image, meetingID: meetingID)
+        })
     }
 
     /// Names on the call window are the best evidence of who is talking.
     /// They become one-tap choices and hints; a name never lands on a line
     /// without a person confirming it.
-    private func scanCallParticipants(_ image: CGImage) async {
+    private func scanCallParticipants(_ image: CGImage, meetingID: String) async {
         let known = sessionAttendeeNames.names
         let owner = meeting?.resolvedOwner ?? NSFullUserName()
         let names = await participantScanner.ingest(image, owner: owner, knownNames: known)
-        guard case .recording = phase, !names.isEmpty, names != liveTranscript.callParticipants else { return }
+        guard case .recording = phase, meeting?.id == meetingID,
+              !names.isEmpty, names != liveTranscript.callParticipants else { return }
         liveTranscript.updateCallParticipants(names)
         var merged = sessionAttendeeNames
         for name in names where !merged.names.contains(where: { LiveMeetingTranscript.sameName($0, name) }) {
@@ -729,38 +729,6 @@ final class MeetingController: ObservableObject {
             configuration: config)
     }
 
-    private func keepSlideIfChanged(_ image: CGImage, meetingID: String) {
-        // Keep a frame only when the window meaningfully changed — slides
-        // flipping, screen shares starting — never 90 copies of one face.
-        let fingerprint = Self.fingerprint(image)
-        if let last = lastSlideFingerprint, last.count == fingerprint.count {
-            let diff = zip(fingerprint, last).reduce(Float(0)) { $0 + abs($1.0 - $1.1) }
-                / Float(max(fingerprint.count, 1))
-            guard diff > 0.04 else { return }
-        }
-        lastSlideFingerprint = fingerprint
-
-        let url = Self.recordingsFolder
-            .appendingPathComponent("\(meetingID)-slide-\(slidePaths.count).png")
-        let rep = NSBitmapImageRep(cgImage: image)
-        guard let png = rep.representation(using: .png, properties: [:]) else { return }
-        try? png.write(to: url)
-        slidePaths.append(url.path)
-    }
-
-    /// 32×32 grayscale mean fingerprint — cheap frame-change detector.
-    private static func fingerprint(_ image: CGImage) -> [Float] {
-        let side = 32
-        var pixels = [UInt8](repeating: 0, count: side * side)
-        guard let ctx = CGContext(
-            data: &pixels, width: side, height: side, bitsPerComponent: 8,
-            bytesPerRow: side, space: CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return [] }
-        ctx.interpolationQuality = .low
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
-        return pixels.map { Float($0) / 255 }
-    }
-
     private func drainMic(final: Bool) {
         // Session drain never touches the engine — no churn, no dropped audio,
         // and nothing for a concurrent call app to fight with.
@@ -791,6 +759,7 @@ final class MeetingController: ObservableObject {
         levelTimer = nil
         slideTimer?.invalidate()
         slideTimer = nil
+        let slidePaths = slideCapture.finish()
         micDrainTimer?.invalidate()
         micDrainTimer = nil
         tap.stop()
@@ -812,7 +781,6 @@ final class MeetingController: ObservableObject {
         if let data = try? JSONEncoder().encode(slidePaths) {
             finished.slides = String(decoding: data, as: UTF8.self)
         }
-        slidePaths = []
         Analytics.track("meeting_stopped",
                         ["duration_s": Int(Date().timeIntervalSince(finished.startedAt)),
                          "slide_count": finished.slidePaths.count])
