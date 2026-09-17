@@ -74,6 +74,11 @@ strikethrough survive saving, reopening, and undo.
 
 ## Meeting reliability and transcript fidelity (2026-09-17)
 
+Long live transcripts rebuild speaker hints and grouped rows in the background.
+Name evidence uses literal matching instead of per-turn regular expressions;
+participant refreshes are combined, and canceled refreshes cannot overwrite
+newer edits or a stopped meeting.
+
 Meeting transcription now checkpoints small audio slices during capture and resumes
 from the saved offsets after interruption. Finalization uses Parakeet rather than
 the stateful Qwen decoder implicated in a Core ML IOSurface exception. Automatic

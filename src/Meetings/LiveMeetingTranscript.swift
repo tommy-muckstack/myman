@@ -281,7 +281,7 @@ final class LiveMeetingTranscript: ObservableObject {
     /// One block per run of speech: the speaker, when they STARTED, and
     /// everything they said until someone else spoke. `turnIDs` lists the
     /// machine turns folded into the block, first one giving the row its id.
-    struct Row: Identifiable, Equatable {
+    struct Row: Identifiable, Equatable, Sendable {
         let id: String
         let speaker: String
         let timestamp: String
@@ -313,6 +313,8 @@ final class LiveMeetingTranscript: ObservableObject {
     private var learningTask: Task<Void, Never>?
     private var task: Task<Void, Never>?
     private var generation = UUID()
+    private var rowTask: Task<Void, Never>?
+    private var rowRevision = UUID()
     var onProgress: ([MeetingTurn]) -> Void = { _ in }
     private let automaticRetryDelays: [Double]
 
@@ -394,6 +396,9 @@ final class LiveMeetingTranscript: ObservableObject {
     @discardableResult func stop() -> Task<Void, Never>? {
         let finishing = task
         task?.cancel()
+        rowTask?.cancel()
+        rowTask = nil
+        rowRevision = UUID()
         learningTask?.cancel()
         learningTask = nil
         reader = nil
@@ -422,9 +427,10 @@ final class LiveMeetingTranscript: ObservableObject {
     /// Names visible on the call window. They never label a line on their
     /// own; they become one-tap choices and a "Possibly" hint when only one
     /// other person is on the call.
-    func updateCallParticipants(_ names: [String]) {
+    func updateCallParticipants(_ names: [String], candidates: SpeakerCandidates? = nil) {
         let cleaned = names.filter { !$0.isEmpty && !MeetingSource.genericSpeaker($0) }
-        guard callParticipants != cleaned else { return }
+        guard callParticipants != cleaned || (candidates != nil && candidates != self.candidates) else { return }
+        if let candidates { self.candidates = candidates }
         callParticipants = cleaned
         rebuildRows()
     }
@@ -439,7 +445,8 @@ final class LiveMeetingTranscript: ObservableObject {
         if !confirmedNames.isEmpty { onEditsChanged(corrections) }
     }
 
-    private func rowID(_ turn: MeetingTurn) -> String { "\(turn.speaker)-\(turn.start)-\(turn.end)" }
+    private func rowID(_ turn: MeetingTurn) -> String { Self.identifier(turn) }
+    nonisolated private static func identifier(_ turn: MeetingTurn) -> String { "\(turn.speaker)-\(turn.start)-\(turn.end)" }
 
     var corrections: [LiveTranscriptCorrection] {
         turns.compactMap { turn in
@@ -514,52 +521,99 @@ final class LiveMeetingTranscript: ObservableObject {
         }
     }
 
+    private struct RenderState: Sendable {
+        let turns: [MeetingTurn]
+        let candidates: SpeakerCandidates
+        let callParticipants: [String]
+        let ownerName: String
+        let confirmedNames: [String: String]
+        let correctedText: [String: String]
+        let absorbed: [String: String]
+    }
+
     private func rebuildRows() {
+        rowTask?.cancel()
+        rowTask = nil
+        rowRevision = UUID()
+        let snapshot = RenderState(turns: turns, candidates: candidates, callParticipants: callParticipants,
+                                   ownerName: ownerName, confirmedNames: confirmedNames,
+                                   correctedText: correctedText, absorbed: absorbed)
+        // Keep small edits immediate. Full meeting histories run off the UI
+        // thread; an obsolete refresh can never replace newer edits or a stop.
+        if turns.count <= 100, candidates.names.count + callParticipants.count <= 32,
+           turns.reduce(0, { $0 + $1.text.utf8.count }) <= 16_000 {
+            rows = Self.buildRows(snapshot)
+            return
+        }
+        let revision = rowRevision
+        let worker = Task.detached(priority: .userInitiated) { Self.buildRows(snapshot) }
+        rowTask = Task { [weak self] in
+            let result = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            guard !Task.isCancelled, let self, self.rowRevision == revision else { return }
+            self.rows = result
+            self.rowTask = nil
+        }
+    }
+
+    nonisolated private static func buildRows(_ input: RenderState) -> [Row] {
+        let turns = input.turns, candidates = input.candidates, callParticipants = input.callParticipants
+        let ownerName = input.ownerName, confirmedNames = input.confirmedNames
+        let correctedText = input.correctedText, absorbed = input.absorbed
+        guard !Task.isCancelled else { return [] }
         let named = MeetingController.nameSpeakers(in: turns, candidates: candidates)
         var suggestions = MeetingSpeakerHints.suggestions(in: turns, names: candidates.names + callParticipants)
-        // Exactly one other person visible on the call and one unnamed
-        // remote voice: that is who it most likely is. Still only a hint.
         let others = callParticipants.filter { !Self.sameName($0, ownerName) }
         let remoteVoices = Set(turns.map(\.speaker).filter { $0.hasPrefix("Speaker ") && $0 != "Speaker unclear" })
         if others.count == 1, remoteVoices.count == 1, let voice = remoteVoices.first, suggestions[voice] == nil {
             suggestions[voice] = others[0]
         }
+        let ids = turns.map(identifier)
+        var membersByGroup: [String: [String]] = [:]
+        for id in ids {
+            if let group = absorbed[id] { membersByGroup[group, default: []].append(id) }
+        }
         var built: [Row] = []
-        for (raw, named) in zip(turns, named) {
-            let id = rowID(raw)
+        var pending: Row?
+        var fragments: [String] = []
+        var members: [String] = []
+        func flush() {
+            guard let row = pending else { return }
+            built.append(Row(id: row.id, speaker: row.speaker, timestamp: row.timestamp,
+                             text: fragments.joined(separator: " "), suggestedName: row.suggestedName,
+                             turnIDs: members, callParticipants: row.callParticipants))
+        }
+        for (index, pair) in zip(turns, named).enumerated() {
+            if Task.isCancelled { return [] }
+            let (raw, named) = pair, id = ids[index]
             if absorbed[id] != nil { continue }
             let confirmed = confirmedNames[raw.speaker == "Speaker unclear" ? id : raw.speaker]
             let speaker = confirmed ?? (raw.speaker == "Speaker unclear" ? raw.speaker : named.speaker == MeetingController.ownerLabel
                 ? (ownerName.isEmpty ? "You" : "\(ownerName) (you)") : named.speaker)
             let suggested = confirmed == nil && speaker.hasPrefix("Speaker ") ? suggestions[raw.speaker] : nil
             let corrected = correctedText[id]
-            // Same person still talking: keep their name and start time and
-            // let the words run on. Corrected blocks and uncertain audio
-            // stay their own rows so edits keep exact intervals.
-            if corrected == nil, let last = built.last, last.speaker == speaker, speaker != "Speaker unclear",
+            if corrected == nil, let last = pending, last.speaker == speaker, speaker != "Speaker unclear",
                correctedText[last.id] == nil {
-                built[built.count - 1] = Row(id: last.id, speaker: speaker, timestamp: last.timestamp,
-                                             text: Self.join(last.text, named.text),
-                                             suggestedName: last.suggestedName ?? suggested,
-                                             turnIDs: last.turnIDs + [id], callParticipants: last.callParticipants)
+                // Accumulate fragments/IDs in place; copying the whole block
+                // for every turn made long uninterrupted speech quadratic.
+                if fragments.count == 1 {
+                    fragments[0] = fragments[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                    if fragments[0].isEmpty { fragments.removeAll(keepingCapacity: true) }
+                }
+                let text = named.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { fragments.append(text) }
+                pending?.suggestedName = last.suggestedName ?? suggested
+                members.append(id)
                 continue
             }
-            // A corrected block still owns the turns it replaced, so a later
-            // edit of the same block keeps the whole interval.
-            let members = [id] + turns.map(rowID).filter { absorbed[$0] == id }
-            built.append(Row(id: id, speaker: speaker, timestamp: MeetingSource.stamp(named.start),
-                             text: corrected ?? named.text, suggestedName: suggested, turnIDs: members,
-                             callParticipants: speaker == MeetingController.ownerLabel || speaker.hasSuffix("(you)") ? [] : others))
+            flush()
+            pending = Row(id: id, speaker: speaker, timestamp: MeetingSource.stamp(named.start),
+                          text: "", suggestedName: suggested,
+                          callParticipants: speaker == MeetingController.ownerLabel || speaker.hasSuffix("(you)") ? [] : others)
+            fragments = [corrected ?? named.text]
+            members = [id] + (membersByGroup[id] ?? [])
         }
-        rows = built
-    }
-
-    private static func join(_ lhs: String, _ rhs: String) -> String {
-        let left = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
-        let right = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
-        if left.isEmpty { return right }
-        if right.isEmpty { return left }
-        return left + " " + right
+        flush()
+        return built
     }
 
     nonisolated static func sameName(_ a: String, _ b: String) -> Bool {
