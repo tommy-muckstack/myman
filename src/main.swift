@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsStore.shared.theme?.apply()
         Analytics.setup()
         _ = Database.shared
+        MeetingTranscriptionStatus.shared.retryHandler = { [weak self] id, regenerate in
+            self?.meetings.retryTranscription(meetingID: id, regenerate: regenerate)
+        }
         Brain.bootstrap()
         BrainAgentExportObserver.shared.start()
         Brain.backfillScreenshots()
@@ -72,7 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openNote: { note in NoteDocumentController.shared.open(note) },
             openScreenshot: { [weak self] url in self?.capture.openInEditor(fileURL: url) },
             saveQueryAsNote: { [weak self] text in
-                _ = self?.notesStore.save(body: text, source: "search_empty_state")
+                if let note = self?.notesStore.save(body: text, source: "search_empty_state", continueWriting: true) {
+                    NoteDocumentController.shared.open(note, focusAtEnd: true)
+                }
             },
             openChat: { BrainChatController.shared.show() }
         )
@@ -151,9 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         meetingDetector.start()
 
-        // Warm the Qwen3 accuracy engine off the critical path — dictation
-        // uses Parakeet until it's genuinely ready.
-        TranscriptionService.shared.warmQwen3()
+        // Keep Qwen's stateful decoder out of the app process. Its native
+        // IOSurface allocation exception cannot be caught by Swift.
         voice.warmUp()
         Task.detached(priority: .background) { await Diarization.shared.warm() }
         meetings.recoverOrphanedTranscriptions()

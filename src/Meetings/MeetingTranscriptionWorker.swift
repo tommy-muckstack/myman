@@ -5,17 +5,38 @@ import Foundation
 actor MeetingTranscriptionWorker {
     private let service = TranscriptionService()
 
-    func process(_ job: MeetingController.TranscriptionJob) async -> MeetingTranscriptResult {
+    func process(_ job: MeetingController.TranscriptionJob) async throws -> MeetingTranscriptResult {
         let timer = MeetingProcessingTimer()
-        if !service.isReady { await service.load(kind: .qwen3) }
+        // Qwen's stateful Core ML decoder can abort the process when its
+        // IOSurface allocation fails. Swift cannot catch that exception.
+        // Meetings use the same bounded, stateless engine as live captions.
+        let candidates = job.candidates.isEmpty ? MeetingController.speakerCandidates(eventTitle: job.record.title, attendees: job.record.participants.filter { !$0.isOwner }.map(\.name)) : job.candidates
+        let reader = LiveMeetingTranscriptReader(
+            micURL: job.micPath.map { URL(fileURLWithPath: $0) },
+            systemURL: job.systemPath.map { URL(fileURLWithPath: $0) },
+            singleRemote: candidates.fromAttendees && candidates.names.count == 1,
+            micLag: job.micLag,
+            checkpointURL: MeetingTranscriptCheckpoint.url(micPath: job.micPath, systemPath: job.systemPath,
+                                                           regenerating: job.regenerating),
+            wallDuration: job.record.endedAt.map { $0.timeIntervalSince(job.record.startedAt) })
+        try await reader.prepare()
+        while await reader.hasUnreadAudio() {
+            try Task.checkCancellation()
+            _ = try await reader.next(final: true)
+        }
+        let turns = await reader.savedTurns()
+        if !job.record.liveCorrections.isEmpty, !service.isReady { await service.load(kind: .parakeet) }
         timer.finish("speech_model_ready")
         let result = await MeetingController.buildTranscriptResult(
             micPath: job.micPath, systemPath: job.systemPath,
-            candidates: job.candidates, corrections: job.record.liveCorrections,
+            candidates: candidates, corrections: job.record.liveCorrections,
             wallDuration: job.record.endedAt.map { $0.timeIntervalSince(job.record.startedAt) },
-            micLag: job.micLag, title: job.record.title, service: service)
+            micLag: job.micLag, title: job.record.title, service: service, pretranscribedTurns: turns)
         Analytics.track("meeting_transcribed", ["transcript_chars": result.transcript.count,
                                                 "engine": service.kind.rawValue])
-        return result
+        var record = job.record
+        record.kind = result.kind.rawValue
+        return MeetingTranscriptResult(transcript: MeetingConversation.finish(result.transcript, meeting: record),
+                                       originalTranscript: result.originalTranscript, kind: result.kind)
     }
 }

@@ -4,6 +4,71 @@ import SwiftUI
 @testable import MyMan
 
 final class EditorBlocksTests: XCTestCase {
+    @MainActor func testTypedCheckboxesCompleteNestAndContinueUnchecked() async throws {
+        for shortcut in ["[]", "[ ]", "- []", "- [ ]"] {
+            let (window, text) = try await host("Title\n")
+            defer { window.contentView = nil; window.close() }
+            text.setSelectedRange(NSRange(location: text.string.utf16.count, length: 0))
+            type(shortcut, into: text)
+            XCTAssertEqual(save(text), "Title\n- [ ] ", shortcut)
+            type(" First task", into: text)
+            XCTAssertEqual(save(text), "Title\n- [ ] First task")
+            let line = (text.string as NSString).lineRange(for: text.selectedRange())
+            text.toggleChecklist(at: line)
+            let task = (text.string as NSString).range(of: "First task")
+            XCTAssertEqual(text.attributedString().attribute(.strikethroughStyle, at: task.location, effectiveRange: nil) as? Int, 1)
+            XCTAssertEqual(save(text), "Title\n- [x] First task")
+            // The clicked checkbox must not leave the whole line selected.
+            XCTAssertEqual(text.selectedRange().length, 0)
+            text.insertNewline(nil)
+            type("Child", into: text)
+            text.insertTab(nil)
+            XCTAssertEqual(save(text), "Title\n- [x] First task\n  - [ ] Child")
+            let child = (text.string as NSString).range(of: "Child")
+            XCTAssertEqual(text.attributedString().attribute(.strikethroughStyle, at: child.location, effectiveRange: nil) as? Int ?? 0, 0)
+            let style = try XCTUnwrap(text.attributedString().attribute(.paragraphStyle, at: child.location, effectiveRange: nil) as? NSParagraphStyle)
+            XCTAssertEqual(style.firstLineHeadIndent, 32)
+            text.insertBacktab(nil)
+            text.insertBacktab(nil)
+            XCTAssertEqual(save(text), "Title\n- [x] First task\n- [ ] Child")
+        }
+    }
+
+    @MainActor func testCheckboxClickUndoAndExplicitStrikeRoundTrip() async throws {
+        let source = "Title\n- [ ] Keep **bold** and ~~original strike~~\n  - [ ] Child"
+        let (window, text) = try await host(source)
+        defer { window.contentView = nil; window.close() }
+        text.setSelectedRange((text.string as NSString).range(of: "bold"))
+        let index = (text.string as NSString).range(of: "Keep").location
+        let rect = try XCTUnwrap(text.checklistRect(at: index))
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: text.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        text.mouseDown(with: event)
+        XCTAssertTrue(save(text).contains("- [x] Keep **bold** and ~~original strike~~"))
+        XCTAssertEqual(text.selectedRange(), (text.string as NSString).range(of: "bold"))
+        text.undoManager?.undo()
+        XCTAssertEqual(save(text), source)
+        text.toggleChecklist(at: (text.string as NSString).lineRange(for: NSRange(location: index, length: 0)))
+        text.toggleChecklist(at: (text.string as NSString).lineRange(for: NSRange(location: index, length: 0)))
+        XCTAssertEqual(save(text), source)
+        let restored = MarkdownRich.attributed(from: save(text))
+        XCTAssertEqual(MarkdownRich.markdown(from: restored), source)
+    }
+
+    @MainActor func testCheckboxShortcutOnlyConvertsAtStartOfBody() async throws {
+        let (window, text) = try await host("Title\nAn array ")
+        defer { window.contentView = nil; window.close() }
+        text.setSelectedRange(NSRange(location: text.string.utf16.count, length: 0))
+        type("[]", into: text)
+        XCTAssertEqual(save(text), "Title\nAn array []")
+        text.insertNewline(nil)
+        type("[", into: text)
+        // Separate input events, as real key presses arrive in the run loop.
+        try await Task.sleep(for: .milliseconds(30))
+        type("]", into: text)
+        XCTAssertTrue(save(text).hasSuffix("- [ ] "))
+        text.undoManager?.undo()
+        XCTAssertTrue(text.string.hasSuffix("["), text.string)
+    }
     @MainActor private func host(_ source: String, assets: DocumentAssets = .shared) async throws -> (DocumentWindow, RichNoteTextView) {
         _ = NSApplication.shared
         MM.Fonts.registerFonts()

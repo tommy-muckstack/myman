@@ -48,7 +48,7 @@ struct Meeting: Codable, FetchableRecord, PersistableRecord, Sendable {
 /// One utterance: who said it, and the window it occupies. Turns carry their
 /// END as well as their start so overlapping speech can be ordered, and so
 /// fragments of one sentence can be recognised by the gap between them.
-struct MeetingTurn: Sendable, Equatable {
+struct MeetingTurn: Codable, Sendable, Equatable {
     var start: Double
     var end: Double
     var speaker: String
@@ -63,7 +63,7 @@ struct MeetingTurn: Sendable, Equatable {
 /// remote turn misfiles the whole conversation against a real person.
 struct SpeakerCandidates: Sendable, Equatable {
     var names: [String] = []
-    /// True only when these came from an actual attendee list.
+    /// True for an attendee list or an explicit Owner <> Remote title.
     var fromAttendees = false
 
     static let none = SpeakerCandidates()
@@ -95,6 +95,7 @@ final class MeetingController: ObservableObject {
     private var transcriptionRevision = 0
     private let transcriptionWorker = MeetingTranscriptionWorker()
     private let transcriptionRunner: ((TranscriptionJob) async -> Void)?
+    private let transcriptionProcessor: ((TranscriptionJob) async throws -> MeetingTranscriptResult)?
     private var isRecoveringTranscripts = false
     var isTranscribing: Bool { !transcribingTitles.isEmpty || isRecoveringTranscripts }
     /// Quill-style detection capture: recording is already running, but
@@ -165,8 +166,10 @@ final class MeetingController: ObservableObject {
     /// Supplying an existing take allows previews and title-persistence tests
     /// without starting microphones, process taps, or transcription models.
     init(recording: Meeting? = nil, titleDatabase: DatabaseQueue? = nil,
-         transcriptionRunner: ((TranscriptionJob) async -> Void)? = nil) {
+         transcriptionRunner: ((TranscriptionJob) async -> Void)? = nil,
+         transcriptionProcessor: ((TranscriptionJob) async throws -> MeetingTranscriptResult)? = nil) {
         self.transcriptionRunner = transcriptionRunner
+        self.transcriptionProcessor = transcriptionProcessor
         self.titleDatabase = titleDatabase
         recordingNote = MeetingRecordingNote(database: titleDatabase)
         meeting = recording
@@ -177,6 +180,15 @@ final class MeetingController: ObservableObject {
         }
         liveTranscript.onEditsChanged = { [weak self] edits in self?.saveLiveEdits(edits) }
         liveTranscript.onTextCorrected = { text in DictationCleanup.learn(from: text) }
+        liveTranscript.onProgress = { [weak self] turns in
+            guard let self, var record = self.meeting, !self.isProvisional else { return }
+            let cleaned = MeetingChannelDedupe.clean(mic: turns.filter { $0.speaker == Self.ownerLabel },
+                                                     system: turns.filter { $0.speaker != Self.ownerLabel })
+            let sorted = (cleaned.mic + cleaned.system).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+            record.kind = cleaned.kind.rawValue
+            record.transcript = MeetingSource.render(Self.nameSpeakers(in: sorted, candidates: self.sessionAttendeeNames))
+            MeetingNotesService.shared.updateDraft(record)
+        }
     }
 
     private func saveLiveEdits(_ edits: [LiveTranscriptCorrection]) {
@@ -261,7 +273,9 @@ final class MeetingController: ObservableObject {
         let reader = LiveMeetingTranscriptReader(
             micURL: micWriter?.url, systemURL: systemWriter?.url,
             singleRemote: sessionAttendeeNames.fromAttendees && Set(sessionAttendeeNames.names).count == 1,
-            startedAt: meeting.startedAt, micLag: micStartLag)
+            startedAt: meeting.startedAt, micLag: micStartLag,
+            checkpointURL: MeetingTranscriptCheckpoint.url(micPath: micWriter?.url.path, systemPath: systemWriter?.url.path))
+        MeetingTranscriptionStatus.shared.recordingIDs.insert(meeting.id)
         liveTranscript.start(reader: reader, ownerName: meeting.resolvedOwner, candidates: sessionAttendeeNames)
     }
 
@@ -278,10 +292,18 @@ final class MeetingController: ObservableObject {
         let cutoff = Date().addingTimeInterval(-Double(days) * 86400)
         let folder = recordingsFolder
         Task.detached(priority: .background) {
+            // Never age out the only source of a failed or unfinished job.
+            guard let records = try? await Database.shared.read({ try Meeting.fetchAll($0) }) else { return }
+            let protected = Set(records.filter { record in
+                if record.transcript.isEmpty { return true }
+                do { return try MeetingProcessingRecord.load(for: record).map { $0.phase != .complete } ?? false }
+                catch { return true }
+            }.flatMap { [$0.micAudioPath, $0.systemAudioPath].compactMap { $0 } })
             guard let files = try? FileManager.default.contentsOfDirectory(
                 at: folder, includingPropertiesForKeys: [.contentModificationDateKey]
             ) else { return }
             for file in files where file.pathExtension == "wav" {
+                guard !protected.contains(file.path) else { continue }
                 let modified = (try? file.resourceValues(
                     forKeys: [.contentModificationDateKey]))?.contentModificationDate
                 if let modified, modified < cutoff {
@@ -360,7 +382,19 @@ final class MeetingController: ObservableObject {
             return
         }
         stopConfirmationVisible = false
-        liveTranscript.stop()
+        let liveCompletion = liveTranscript.stop()
+        if let record = meeting {
+            MeetingTranscriptionStatus.shared.recordingIDs.remove(record.id)
+            MeetingNotesService.shared.cancel(meetingID: record.id)
+            Task {
+                await liveCompletion?.value
+                let folder = Self.recordingsFolder
+                let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+                for file in files where file.lastPathComponent.hasPrefix(record.id + "-") {
+                    try? FileManager.default.removeItem(at: file)
+                }
+            }
+        }
         titleSaveTask?.cancel(); titleSaveTask = nil
         titleNeedsSaving = false; titleEditorVisible = false
         let wasProvisional = isProvisional
@@ -480,6 +514,7 @@ final class MeetingController: ObservableObject {
         meeting?.participantsJSON = (try? JSONEncoder().encode(identities)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         sessionAttendeeNames = Self.speakerCandidates(
             eventTitle: title, attendees: pendingAttendees.map(\.name))
+        if let meeting { MeetingInterviewContext.capture(for: meeting) }
         if provisional {
             isProvisional = true
             // Unclaimed for 90 minutes = not wanted. Quietly clean up.
@@ -751,7 +786,8 @@ final class MeetingController: ObservableObject {
             return
         }
         stopConfirmationVisible = false
-        liveTranscript.stop()
+        let liveCompletion = liveTranscript.stop()
+        if let id = meeting?.id { MeetingTranscriptionStatus.shared.recordingIDs.remove(id) }
         flushRecordingTitle()
         titleEditorVisible = false
         stopEndWatch()
@@ -790,7 +826,16 @@ final class MeetingController: ObservableObject {
         let job = TranscriptionJob(
             record: finished,
             micPath: micURL?.path, systemPath: systemURL?.path,
-            candidates: sessionAttendeeNames, attendees: pendingAttendees, micLag: micStartLag)
+            candidates: sessionAttendeeNames, attendees: pendingAttendees, micLag: micStartLag, liveCompletion: liveCompletion)
+        // Save the end time and slides BEFORE decoding; these survive a crash.
+        do {
+            try (titleDatabase ?? Database.shared).write { db in
+                try db.execute(sql: "UPDATE meeting SET endedAt = ?, slides = ? WHERE id = ?",
+                               arguments: [finished.endedAt, finished.slides, finished.id])
+            }
+        } catch {
+            NSLog("My Man [Meeting] could not save recording metadata: %@", error.localizedDescription)
+        }
         meeting = nil
         pendingAttendees = []
         sessionAttendeeNames = .none
@@ -808,9 +853,13 @@ final class MeetingController: ObservableObject {
         let candidates: SpeakerCandidates
         let attendees: [(name: String, email: String?)]
         var micLag: Double = 0
+        var liveCompletion: Task<Void, Never>? = nil
+        var regenerating = false
+        var expectedTranscript = ""
     }
 
     func enqueueTranscription(_ job: TranscriptionJob) {
+        guard !MeetingTranscriptionStatus.shared.isPending(job.record.id) else { return }
         transcriptionRevision += 1
         let revision = transcriptionRevision
         transcribingTitles.append(job.record.title)
@@ -821,6 +870,7 @@ final class MeetingController: ObservableObject {
         let queueTimer = MeetingProcessingTimer()
         transcriptionChain = Task(priority: .utility) { @MainActor in
             await previous?.value
+            await job.liveCompletion?.value
             queueTimer.finish("transcription_queue")
             if let runner = self.transcriptionRunner { await runner(job) }
             else { await self.runTranscription(job) }
@@ -837,50 +887,95 @@ final class MeetingController: ObservableObject {
         var record = job.record
         let totalTimer = MeetingProcessingTimer()
         defer { totalTimer.finish("transcription_total") }
-        let processed = await transcriptionWorker.process(job)
-        record.transcript = processed.transcript
-        record.originalTranscript = processed.originalTranscript
-        record.kind = processed.kind.rawValue
-        let hasNote = (try? await Database.shared.read { [id = record.id] db in
-            try Note.filter(Column("meetingID") == id).fetchCount(db) > 0
-        }) ?? false
-        if (record.transcript.isEmpty || Self.isNoiseFragment(record)) && !hasNote && record.liveCorrections.isEmpty {
-            // Nothing was said — or an aborted sliver of a recording that
-            // would land in the brain looking like a real meeting. Keep
-            // nothing, but say so plainly.
-            if !record.transcript.isEmpty {
-                Analytics.track("meeting_noise_discarded",
-                                ["words": record.transcript
-                                    .split(whereSeparator: \.isWhitespace).count])
-            }
-            await Self.deleteArtifacts(of: record)
-        } else {
-            guard let saved = try? await Database.shared.write({ [record] in
-                try Self.saveTranscription(record, in: $0)
-            }) else { return }
-            record = saved
-            People.noteAttendees(job.attendees)
-            Brain.syncMeeting(id: record.id, title: record.title,
-                              startedAt: record.startedAt, endedAt: record.endedAt,
-                              summary: record.summary, transcript: record.transcript)
-            MeetingNotesService.shared.prepare(meetingID: record.id)
+        var state: MeetingProcessingRecord
+        do {
+            state = try MeetingProcessingRecord.load(for: record) ?? MeetingProcessingRecord(
+                regenerating: job.regenerating, expectedTranscript: job.expectedTranscript, micLag: job.micLag)
+        } catch {
+            MeetingTranscriptionStatus.shared.fail(meetingID: record.id, message: "Couldn’t read recovery progress. Your audio is saved. Choose Regenerate transcript to start again.")
+            return
         }
-        if record.transcript.isEmpty, hasNote || !record.liveCorrections.isEmpty {
-            Toast.show("Meeting and your note saved", duration: 4, position: .bottomRight)
-        } else {
-            notifyDone(record)
+        while state.attempts < 3 {
+            state.attempts += 1
+            state.phase = .running
+            do {
+                try state.save(for: record)
+                if state.attempts > 1 {
+                    MeetingTranscriptionStatus.shared.stage("Retrying transcription · attempt \(state.attempts) of 3…", meetingID: record.id)
+                    try await Task.sleep(for: .seconds(2 * (state.attempts - 1)))
+                }
+                let processed: MeetingTranscriptResult
+                if let transcriptionProcessor { processed = try await transcriptionProcessor(job) }
+                else { processed = try await transcriptionWorker.process(job) }
+                guard !processed.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw NSError(domain: "MyMan.Meeting", code: 1, userInfo: [NSLocalizedDescriptionKey: "No readable speech was returned. Your audio is saved."])
+                }
+                record.transcript = processed.transcript
+                record.originalTranscript = processed.originalTranscript
+                record.kind = processed.kind.rawValue
+                guard let saved = try await (titleDatabase ?? Database.shared).write({ [record] in
+                    try Self.saveTranscription(record, in: $0, replacing: job.expectedTranscript)
+                }) else { return }
+                state.phase = .complete
+                state.error = ""
+                try state.save(for: saved)
+                if titleDatabase != nil { return }
+                People.noteAttendees(job.attendees)
+                Brain.syncMeeting(id: saved.id, title: saved.title, startedAt: saved.startedAt,
+                                  endedAt: saved.endedAt, summary: saved.summary, transcript: saved.transcript)
+                MeetingNotesService.shared.prepare(meetingID: saved.id)
+                notifyDone(saved)
+                return
+            } catch is CancellationError { return }
+            catch {
+                state.error = error.localizedDescription
+                NSLog("My Man [Meeting] transcription attempt %d failed: %@", state.attempts, error.localizedDescription)
+            }
+        }
+        state.phase = .failed
+        try? state.save(for: record)
+        MeetingTranscriptionStatus.shared.fail(meetingID: record.id, message: "Transcription needs another try. Your recording is saved.")
+    }
+
+    func retryTranscription(meetingID: String, regenerate: Bool) {
+        guard meeting?.id != meetingID, !MeetingTranscriptionStatus.shared.isPending(meetingID),
+              var record = try? Database.shared.read({ try Meeting.fetchOne($0, key: meetingID) }) else { return }
+        do {
+            let previous = try? MeetingProcessingRecord.load(for: record)
+            let regenerating = regenerate || previous?.regenerating == true
+            if regenerate {
+                // Keep the complete previous document available for undo/recovery.
+                if let checkpoint = MeetingTranscriptCheckpoint.url(micPath: record.micAudioPath, systemPath: record.systemAudioPath, regenerating: true) {
+                    let backup = checkpoint.deletingLastPathComponent().appendingPathComponent("\(record.id)-before-regeneration-\(UUID().uuidString).json")
+                    try JSONEncoder().encode(record).write(to: backup, options: .atomic)
+                    if FileManager.default.fileExists(atPath: checkpoint.path) { try FileManager.default.removeItem(at: checkpoint) }
+                }
+            }
+            if record.endedAt == nil {
+                let duration = max(record.micAudioPath.map(Self.wavDuration(atPath:)) ?? 0,
+                                   record.systemAudioPath.map(Self.wavDuration(atPath:)) ?? 0)
+                record.endedAt = record.startedAt.addingTimeInterval(duration)
+            }
+            let state = MeetingProcessingRecord(regenerating: regenerating, expectedTranscript: record.transcript,
+                                                micLag: previous?.micLag ?? 0)
+            try state.save(for: record)
+            enqueueTranscription(TranscriptionJob(record: record, micPath: record.micAudioPath,
+                systemPath: record.systemAudioPath, candidates: Self.speakerCandidates(eventTitle: record.title, attendees: record.participants.filter { !$0.isOwner }.map(\.name)), attendees: [], micLag: state.micLag,
+                regenerating: regenerating, expectedTranscript: record.transcript))
+        } catch {
+            MeetingTranscriptionStatus.shared.fail(meetingID: meetingID, message: "Couldn’t prepare recovery. Your recording and existing transcript are unchanged.")
         }
     }
 
     /// The user may already be editing notes while audio is processing.
     /// Update only the unfinished transcript and retain the latest document.
-    nonisolated static func saveTranscription(_ record: Meeting, in db: GRDB.Database) throws -> Meeting? {
+    nonisolated static func saveTranscription(_ record: Meeting, in db: GRDB.Database, replacing expected: String = "") throws -> Meeting? {
         try db.execute(sql: """
             UPDATE meeting SET transcript = ?, endedAt = COALESCE(endedAt, ?),
                 kind = ?, originalTranscript = ?, ownerName = ?, participantsJSON = ?
-            WHERE id = ? AND transcript = ''
+            WHERE id = ? AND transcript = ? AND liveCorrectionsJSON = ?
             """, arguments: [record.transcript, record.endedAt, record.kind, record.originalTranscript,
-                              record.ownerName, record.participantsJSON, record.id])
+                              record.ownerName, record.participantsJSON, record.id, expected, record.liveCorrectionsJSON])
         return try Meeting.fetchOne(db, key: record.id)
     }
 
@@ -976,6 +1071,10 @@ final class MeetingController: ObservableObject {
     /// omit attendees entirely; use the single non-owner name in that exact
     /// title pattern as equally bounded evidence.
     nonisolated static func speakerCandidates(eventTitle: String?, attendees: [String]) -> SpeakerCandidates {
+        if attendees.isEmpty, let eventTitle,
+           let pair = MeetingConversation.explicitPair(title: eventTitle, owner: NSFullUserName()) {
+            return SpeakerCandidates(names: [pair.remote], fromAttendees: true)
+        }
         var names = attendees.compactMap(firstName(fromAttendee:))
         let uniqueAttendees = Array(Set(names)).sorted()
         guard uniqueAttendees.isEmpty, let eventTitle else {
@@ -1300,7 +1399,8 @@ final class MeetingController: ObservableObject {
                                       wallDuration: Double? = nil,
                                       micLag: Double = 0,
                                       title: String = "",
-                                      service: TranscriptionService = .shared) async -> MeetingTranscriptResult {
+                                      service: TranscriptionService = .shared,
+                                      pretranscribedTurns: [MeetingTurn]? = nil) async -> MeetingTranscriptResult {
         // A track with more audio than the meeting lasted was resampled at
         // the wrong rate after a device swap. Put it back on the clock, per
         // track, before anything is ordered, matched, or stamped.
@@ -1320,16 +1420,16 @@ final class MeetingController: ObservableObject {
         // processes the tracks, then join before assigning any speaker labels.
         // ASR slices themselves remain serial on the supplied speech engine.
         let knownRemote = candidates.fromAttendees && candidates.names.count == 1
-        async let diarized = diarizeRemote(path: systemPath, skip: knownRemote || !overlapDiarization)
+        async let diarized = diarizeRemote(path: systemPath, skip: pretranscribedTurns != nil || knownRemote || !overlapDiarization)
         async let echo = AudioEchoEvidence.analyze(micPath: micPath, systemPath: systemPath)
-        var turns: [MeetingTurn] = []
-        if let micPath, FileManager.default.fileExists(atPath: micPath) {
+        var turns: [MeetingTurn] = pretranscribedTurns ?? []
+        if pretranscribedTurns == nil, let micPath, FileManager.default.fileExists(atPath: micPath) {
             // The mic file starts once its engine is up; the tap was already
             // rolling. Put the owner's words back on the shared timeline.
             turns += onClock(await turnsWithFallback(atPath: micPath, speaker: Self.ownerLabel, service: service), micScale)
                 .map { MeetingTurn(start: $0.start + micLag, end: $0.end + micLag, speaker: $0.speaker, text: $0.text) }
         }
-        if let systemPath, FileManager.default.fileExists(atPath: systemPath) {
+        if pretranscribedTurns == nil, let systemPath, FileManager.default.fileExists(atPath: systemPath) {
             var sysTurns: [MeetingTurn]
             if candidates.fromAttendees, candidates.names.count == 1,
                let only = candidates.names.first {
@@ -1372,7 +1472,7 @@ final class MeetingController: ObservableObject {
             let terms = vocabularyTerms(candidates: candidates, title: title)
             turns = turns.map { turn in
                 var fixed = turn
-                fixed.text = DictationCleanup.applyVocabulary(turn.text, terms: terms)
+                fixed.text = MeetingVocabulary.correct(turn.text, terms: terms).text
                 return fixed
             }
             let cleaned = MeetingChannelDedupe.clean(mic: turns.filter { $0.speaker == Self.ownerLabel },
@@ -1402,8 +1502,12 @@ final class MeetingController: ObservableObject {
                 }
             }
             if cleaned.kind == .meeting { turns = nameSpeakers(in: turns, candidates: candidates) }
-            turns = mergeConsecutive(turns)
+            if pretranscribedTurns == nil { turns = mergeConsecutive(turns) }
             return MeetingTranscriptResult(transcript: MeetingSource.render(turns), originalTranscript: original, kind: cleaned.kind)
+        }
+        if pretranscribedTurns != nil {
+            let edited = await MeetingLiveEdits.apply(corrections, to: []) { _ in [] }
+            return MeetingTranscriptResult(transcript: MeetingSource.render(edited), originalTranscript: "", kind: .meeting)
         }
         var sections: [String] = []
         if let micPath, FileManager.default.fileExists(atPath: micPath) {
@@ -1478,11 +1582,8 @@ final class MeetingController: ObservableObject {
         return result
     }
 
-    /// The same deterministic dictionary dictation already trusts —
-    /// vocabulary.md + the people registry — plus this meeting's own attendee
-    /// names. ASR mangles recurring proper nouns the same few ways every
-    /// meeting ("Sneehith", "stat sig"); the restore pass puts the canonical
-    /// spelling back without asking a model to rewrite anything.
+    /// Names available for vocabulary auditing. Meetings never apply fuzzy
+    /// spelling restoration to this list; approved aliases are exact matches.
     nonisolated static func vocabularyTerms(candidates: SpeakerCandidates, title: String = "") -> [String] {
         var terms = DictationCleanup.vocabulary()
         func add(_ term: String) {
@@ -1660,72 +1761,29 @@ final class MeetingController: ObservableObject {
     func recoverOrphanedTranscriptions() {
         guard !isRecoveringTranscripts else { return }
         isRecoveringTranscripts = true
-        // Ride the same serial chain as live transcription jobs — the ASR
-        // models can't take interleaved calls from two transcriptions.
-        let previous = transcriptionChain
-        transcriptionRevision += 1
-        let revision = transcriptionRevision
-        transcriptionChain = Task(priority: .utility) { @MainActor in
-            defer {
-                isRecoveringTranscripts = false
-                if transcriptionRevision == revision { transcriptionChain = nil }
+        defer { isRecoveringTranscripts = false }
+        let records = (try? Database.shared.read { try Meeting.fetchAll($0) }) ?? []
+        for var record in records where record.id != meeting?.id {
+            let state: MeetingProcessingRecord?
+            do { state = try MeetingProcessingRecord.load(for: record) }
+            catch {
+                MeetingTranscriptionStatus.shared.fail(meetingID: record.id, message: "Recovery progress could not be read. Choose Regenerate transcript; your audio is saved.")
+                continue
             }
-            await previous?.value
-            let orphans: [Meeting] = (try? await Database.shared.read { db in
-                try Meeting.filter(Column("transcript") == "").fetchAll(db)
-            }) ?? []
-            for var orphan in orphans {
-                guard orphan.id != meeting?.id else { continue }
-                let hasNote = (try? await Database.shared.read { [id = orphan.id] db in
-                    try Note.filter(Column("meetingID") == id).fetchCount(db) > 0
-                }) ?? false
-                let micOK = orphan.micAudioPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
-                let sysOK = orphan.systemAudioPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
-                guard micOK || sysOK else {
-                    // A note or human correction remains valuable even if
-                    // the recording was lost. Preserve its meeting link.
-                    if hasNote || !orphan.liveCorrections.isEmpty {
-                        let edited = await MeetingLiveEdits.apply(orphan.liveCorrections, to: []) { _ in [] }
-                        orphan.transcript = MeetingSource.render(edited)
-                        _ = try? await Database.shared.write { [orphan] in try Self.saveTranscription(orphan, in: $0) }
-                        continue
-                    }
-                    try? await Database.shared.write { [orphan] in
-                        _ = try Meeting.deleteOne($0, key: orphan.id)
-                    }
-                    continue
-                }
-                if orphan.endedAt == nil, let path = orphan.micAudioPath,
-                   let mtime = try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date {
-                    orphan.endedAt = mtime
-                }
-                let processed = await transcriptionWorker.process(TranscriptionJob(
-                    record: orphan, micPath: orphan.micAudioPath, systemPath: orphan.systemAudioPath,
-                    // Known people, not this meeting's attendee list —
-                    // usable as naming hints, never as proof of who spoke.
-                    candidates: SpeakerCandidates(
-                        names: People.all().prefix(25).compactMap {
-                            $0.name.split(separator: " ").first.map(String.init)
-                        },
-                        fromAttendees: false), attendees: []))
-                orphan.transcript = processed.transcript
-                orphan.originalTranscript = processed.originalTranscript
-                orphan.kind = processed.kind.rawValue
-                if (orphan.transcript.isEmpty || Self.isNoiseFragment(orphan)) && !hasNote && orphan.liveCorrections.isEmpty {
-                    await Self.deleteArtifacts(of: orphan)
-                } else {
-                    guard let saved = try? await Database.shared.write({ [orphan] in
-                        try Self.saveTranscription(orphan, in: $0)
-                    }) else { continue }
-                    orphan = saved
-                    Brain.syncMeeting(id: orphan.id, title: orphan.title,
-                                      startedAt: orphan.startedAt, endedAt: orphan.endedAt,
-                                      summary: orphan.summary, transcript: orphan.transcript)
-                    MeetingNotesService.shared.prepare(meetingID: orphan.id)
-                    Analytics.track("meeting_transcription_recovered")
-                    Toast.show("Recovered meeting: \(orphan.title)", duration: 4, position: .bottomRight)
-                }
+            guard record.transcript.isEmpty || state?.phase == .running || state?.phase == .failed else { continue }
+            guard state?.attempts ?? 0 < 3 else {
+                MeetingTranscriptionStatus.shared.fail(meetingID: record.id, message: "Automatic retries stopped. Your recording is saved; retry when ready.")
+                continue
             }
+            guard [record.micAudioPath, record.systemAudioPath].compactMap({ $0 }).contains(where: { FileManager.default.fileExists(atPath: $0) }) else { continue }
+            if record.endedAt == nil {
+                let duration = max(record.micAudioPath.map(Self.wavDuration(atPath:)) ?? 0,
+                                   record.systemAudioPath.map(Self.wavDuration(atPath:)) ?? 0)
+                record.endedAt = record.startedAt.addingTimeInterval(duration)
+            }
+            enqueueTranscription(TranscriptionJob(record: record, micPath: record.micAudioPath,
+                systemPath: record.systemAudioPath, candidates: Self.speakerCandidates(eventTitle: record.title, attendees: record.participants.filter { !$0.isOwner }.map(\.name)), attendees: [], micLag: state?.micLag ?? 0,
+                regenerating: state?.regenerating ?? false, expectedTranscript: state?.expectedTranscript ?? ""))
         }
     }
 
@@ -2137,7 +2195,8 @@ struct MeetingPillView: View {
                     } else {
                         MeetingLiveTranscriptView(transcript: controller.liveTranscript,
                                                   saveFailed: controller.liveEditSaveFailed,
-                                                  retry: { controller.liveTranscript.retry() })
+                                                  retry: { controller.liveTranscript.retry() },
+                                                  meetingID: controller.activeCaptureMeetingID)
                     }
                 }
                     .frame(height: 302)

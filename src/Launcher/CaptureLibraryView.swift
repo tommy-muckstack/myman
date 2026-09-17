@@ -241,7 +241,7 @@ struct CaptureLibraryView: View {
             }
         } else {
             UtilityEmptyState(icon: .note, title: "Keep something worth finding", message: "Your notes, meetings, and captures will live here.", actionTitle: "Write a note") {
-                onDismiss(); NoteDocumentController.shared.open(Note(body: ""))
+                onDismiss(); NoteDocumentController.shared.create()
             }
         }
     }

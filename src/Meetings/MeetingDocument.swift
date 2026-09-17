@@ -157,6 +157,8 @@ struct MeetingDocumentView: View {
     @StateObject private var editor = RichEditorSession()
     @StateObject private var notesService: MeetingNotesService
     @State private var hasEditedNotes = false
+    @State private var hasEditedTranscript = false
+    @State private var endedAt: Date?
     @State private var showRelated = false
     @State private var showSlides = false
     private let database: DatabaseQueue?
@@ -178,6 +180,7 @@ struct MeetingDocumentView: View {
         _summary = State(initialValue: meeting.summary)
         _transcript = State(initialValue: meeting.transcript)
         _slidePaths = State(initialValue: meeting.slidePaths)
+        _endedAt = State(initialValue: meeting.endedAt)
     }
 
     var body: some View {
@@ -186,12 +189,27 @@ struct MeetingDocumentView: View {
             if transcriptionStatus.isPending(meeting.id) {
                 HStack(spacing: MM.Layout.spacing) {
                     ProgressView().controlSize(.small)
-                    Text("Transcribing your meeting on this Mac… the transcript and notes will appear here when it finishes.")
+                    Text(transcriptionStatus.stages[meeting.id] ?? "Finishing transcript…")
                         .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
                 }
                 .padding(.horizontal, MM.Document.margin)
                 .padding(.bottom, MM.Layout.spacing)
                 .accessibilityLabel("Transcription in progress")
+            }
+            if !transcriptionStatus.isPending(meeting.id),
+               let failure = transcriptionStatus.failures[meeting.id] ?? (transcript.isEmpty && canTranscribe ? "Your recording is saved. Retry to recover the transcript." : nil) {
+                HStack {
+                    Text(failure).font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                    Spacer()
+                    Button("Retry transcription") { retryTranscription(regenerate: false) }.disabled(!canTranscribe)
+                }.padding(.horizontal, MM.Document.margin).padding(.bottom, MM.Layout.spacing)
+            }
+            if let failure = notesService.failures[meeting.id] {
+                HStack {
+                    Text(failure).font(MM.Fonts.secondary)
+                    Spacer()
+                    Button("Retry notes") { regenerateNotes() }.disabled(isSummarizing)
+                }.padding(.horizontal, MM.Document.margin)
             }
             MeetingLinkedNotesView(meetingID: meeting.id, database: database)
             if showSlides, !slidePaths.isEmpty { slideCarousel }
@@ -201,7 +219,8 @@ struct MeetingDocumentView: View {
                         if transcript.isEmpty {
                             UtilityEmptyState(icon: .voice, title: transcriptionStatus.isPending(meeting.id) ? "Transcribing…" : "No words just yet",
                                               message: transcriptionStatus.isPending(meeting.id) ? "Your transcript is being prepared on this Mac."
-                                                : meeting.endedAt == nil ? "Your transcript will appear after recording." : "No speech was captured in this recording.")
+                                                : transcriptionStatus.recordingIDs.contains(meeting.id) ? "Your meeting is recording."
+                                                : "No transcript is available yet. Use Retry transcription if audio is saved.")
                                 .allowsHitTesting(false)
                         }
                     }
@@ -242,8 +261,10 @@ struct MeetingDocumentView: View {
                 for try await saved in observation.values(in: db) {
                     guard let saved else { return }
                     // A document can already be open when transcription finishes.
-                    if transcript.isEmpty { transcript = saved.transcript }
-                    if !hasEditedNotes, summary.isEmpty { summary = saved.summary }
+                    if !hasEditedTranscript { transcript = saved.transcript }
+                    if !hasEditedNotes { summary = saved.summary }
+                    endedAt = saved.endedAt
+                    slidePaths = saved.slidePaths
                     if automaticallySummarize { generateSummaryIfMissing() }
                 }
             } catch { /* Keep the editable document available if observation fails. */ }
@@ -340,6 +361,7 @@ struct MeetingDocumentView: View {
             } else {
                 TextEditor(text: Binding(get: { transcript }, set: { text in
                     notesService.cancel(meetingID: meeting.id)
+                    hasEditedTranscript = true
                     transcript = text; debouncedSaveTranscript(text)
                 }))
                     .font(MM.Fonts.body)
@@ -497,7 +519,7 @@ struct MeetingDocumentView: View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing) {
             HStack(spacing: MM.Layout.spacing) {
                 Text(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
-                if let ended = meeting.endedAt { Text("\(Int(ended.timeIntervalSince(meeting.startedAt) / 60)) min") }
+                if let ended = endedAt { Text("\(Int(ended.timeIntervalSince(meeting.startedAt) / 60)) min") }
                 Spacer()
                 if !slidePaths.isEmpty {
                     Button { showSlides.toggle() } label: { Label("\(slidePaths.count)", systemImage: "photo.on.rectangle").clickable(minSize: 28) }
@@ -506,6 +528,11 @@ struct MeetingDocumentView: View {
                 Button { showRelated.toggle() } label: { IconView(icon: .related).clickable(minSize: 28) }
                     .buttonStyle(.plain).help("Related captures").accessibilityLabel("Related captures")
                 Menu {
+                    Button("Regenerate transcript") { retryTranscription(regenerate: true) }
+                        .disabled(!canTranscribe || transcriptionStatus.isPending(meeting.id))
+                    Button("Regenerate notes") { regenerateNotes() }
+                        .disabled(transcript.isEmpty || isSummarizing || transcriptionStatus.isPending(meeting.id))
+                    Divider()
                     Button("Copy notes") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(MarkdownRich.plainText(summary), forType: .string)
@@ -563,6 +590,30 @@ struct MeetingDocumentView: View {
     }
 
     private func debouncedSave(_ text: String) { saveField("summary", text: text) }
+
+    private var canTranscribe: Bool {
+        !transcriptionStatus.recordingIDs.contains(meeting.id)
+            && [meeting.micAudioPath, meeting.systemAudioPath].compactMap { $0 }.contains { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    private func retryTranscription(regenerate: Bool) {
+        autosave.flush()
+        guard autosave.state != .failed else { return }
+        hasEditedTranscript = false
+        transcriptionStatus.retryHandler?(meeting.id, regenerate)
+    }
+
+    private func regenerateNotes() {
+        autosave.flush()
+        guard autosave.state != .failed, !isSummarizing else { return }
+        hasEditedNotes = false
+        isSummarizing = true
+        Task { @MainActor in
+            let generated = await notesService.regenerate(meetingID: meeting.id)
+            isSummarizing = false
+            if !hasEditedNotes, !generated.isEmpty { summary = generated }
+        }
+    }
     private func debouncedSaveTitle(_ text: String) { saveField("title", text: text) }
     private func debouncedSaveTranscript(_ text: String) { saveField("transcript", text: text) }
 

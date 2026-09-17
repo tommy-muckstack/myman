@@ -29,7 +29,7 @@ private actor RetryingLiveReader: LiveMeetingTranscriptReading {
 
 final class LiveMeetingTranscriptTests: XCTestCase {
     @MainActor func testRetryKeepsHumanEditsAndSpeakerIdentity() async throws {
-        let transcript = LiveMeetingTranscript()
+        let transcript = LiveMeetingTranscript(automaticRetryDelays: [])
         transcript.start(reader: RetryingLiveReader(), ownerName: "Alex", candidates: .none)
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while transcript.status != .unavailable, ContinuousClock.now < deadline {

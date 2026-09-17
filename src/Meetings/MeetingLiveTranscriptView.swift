@@ -5,6 +5,8 @@ struct MeetingLiveTranscriptView: View {
     @ObservedObject var transcript: LiveMeetingTranscript
     var saveFailed = false
     var retry: () -> Void
+    var meetingID: String? = nil
+    @ObservedObject private var notes = MeetingNotesService.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
@@ -53,6 +55,12 @@ struct MeetingLiveTranscriptView: View {
             }
             if let message = transcript.voiceLearningMessage {
                 Text(message).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+            }
+            if let meetingID, let draft = notes.drafts[meetingID], !draft.isEmpty {
+                DisclosureGroup("Summary so far · draft") {
+                    ScrollView { Text(draft).font(MM.Fonts.secondary).textSelection(.enabled) }
+                        .frame(maxHeight: 120)
+                }.font(MM.Fonts.metadata)
             }
         }
         .sheet(isPresented: Binding(get: { transcript.editingRowID != nil },

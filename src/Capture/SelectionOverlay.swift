@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 
 @MainActor
 protocol SelectionOverlayDelegate: AnyObject {
@@ -338,11 +339,18 @@ final class SelectionOverlayView: NSView {
 
     private func drawDimensionLabel(for selection: CGRect, context: CGContext) {
         let text = "\(Int(selection.width)) × \(Int(selection.height))"
+        // Avoid NSString's AppKit font substitution path: on macOS 26 it
+        // can raise an uncaught nil-attribute exception in TAttributes::ApplyFont.
+        // Core Text owns both the concrete font and the drawing attributes.
+        let font = CTFontCreateWithName("Menlo-Medium" as CFString, 12, nil)
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.white,
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
         ]
-        let textSize = (text as NSString).size(withAttributes: attributes)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
+        var ascent: CGFloat = 0, descent: CGFloat = 0
+        let width = CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        let textSize = CGSize(width: ceil(width), height: ceil(ascent + descent))
         let padding: CGFloat = 8
         let labelSize = CGSize(width: textSize.width + padding * 2, height: textSize.height + padding)
 
@@ -355,10 +363,11 @@ final class SelectionOverlayView: NSView {
 
         NSColor.black.withAlphaComponent(0.75).setFill()
         NSBezierPath(roundedRect: labelRect, xRadius: 4, yRadius: 4).fill()
-        (text as NSString).draw(
-            at: CGPoint(x: labelRect.minX + padding, y: labelRect.minY + padding / 2),
-            withAttributes: attributes
-        )
+        context.saveGState()
+        context.textMatrix = .identity
+        context.textPosition = CGPoint(x: labelRect.minX + padding, y: labelRect.minY + padding / 2 + descent)
+        CTLineDraw(line, context)
+        context.restoreGState()
     }
 
     override var acceptsFirstResponder: Bool { true }

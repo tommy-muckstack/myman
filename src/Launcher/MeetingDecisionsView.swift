@@ -60,7 +60,7 @@ struct MeetingDecisionsView: View {
                 }.clickable()
             }
             Button("Create follow-up draft from selected decisions") {
-                attempt { let markdown = try store.followup(ids: Array(selected), relatedIDs: Array(related)); NoteDocumentController.shared.open(Note(body: markdown)) }
+                attempt { let markdown = try store.followup(ids: Array(selected), relatedIDs: Array(related)); NoteDocumentController.shared.create(body: markdown) }
             }.disabled(selected.isEmpty).clickable()
             Text(message).font(MM.Fonts.secondary)
         }.onAppear { refresh() }
