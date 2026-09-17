@@ -33,6 +33,13 @@ enum Annotation: Identifiable, Equatable {
         }
     }
 
+    var supportsColor: Bool {
+        switch self {
+        case .pixelate, .image: return false
+        default: return true
+        }
+    }
+
     /// Rectangle-shaped annotations share their geometry handling.
     var rect: CGRect? {
         switch self {
@@ -81,7 +88,7 @@ enum BackdropStyle: String, CaseIterable, Identifiable {
 @MainActor
 final class EditorModel: ObservableObject {
     @Published var image: NSImage
-    var annotationColors: [UUID: NSColor] = [:]
+    @Published var annotationColors: [UUID: NSColor] = [:]
     var annotationFontSizes: [UUID: CGFloat] = [:]
     @Published var annotations: [Annotation] = []
     @Published var backdrop: BackdropStyle = .none
@@ -123,8 +130,9 @@ final class EditorModel: ObservableObject {
     let fileURL: URL
     private var imageHistory: [NSImage] = []
 
-    /// Applied consistently to new arrows, boxes, text, and highlights.
+    /// Defaults for new annotations; existing annotations keep their own colors.
     @Published var annotationColor = NSColor(red: 1.0, green: 0.22, blue: 0.36, alpha: 1)
+    @Published var highlightAnnotationColor = EditorModel.highlightColor
     /// Line weight for new strokes (arrow, line, box, ellipse, pen), image points.
     @Published var strokeWidth: CGFloat = 3
     var annotationStrokeWidths: [UUID: CGFloat] = [:]
@@ -167,6 +175,9 @@ final class EditorModel: ObservableObject {
     }
 
     func add(_ annotation: Annotation) {
+        if annotation.supportsColor, annotationColors[annotation.id] == nil {
+            annotationColors[annotation.id] = color(for: annotation)
+        }
         annotations.append(annotation)
         annotationStrokeWidths[annotation.id] = strokeWidth
         if case .pixelate(let id, let rect) = annotation {
@@ -174,8 +185,28 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    func color(for annotation: Annotation) -> NSColor {
+        if let color = annotationColors[annotation.id] { return color }
+        if case .highlight = annotation { return highlightAnnotationColor }
+        return annotationColor
+    }
+
+    func setAnnotationColor(_ color: NSColor, selected id: UUID?) {
+        annotationColor = color
+        highlightAnnotationColor = color.withAlphaComponent(Self.highlightColor.alphaComponent)
+        guard let annotation = annotations.first(where: { $0.id == id }), annotation.supportsColor else { return }
+        if case .highlight = annotation {
+            annotationColors[annotation.id] = highlightAnnotationColor
+        } else {
+            annotationColors[annotation.id] = color
+        }
+    }
+
     func remove(_ id: UUID) {
         annotations.removeAll { $0.id == id }
+        annotationColors[id] = nil
+        annotationFontSizes[id] = nil
+        annotationStrokeWidths[id] = nil
         pixelatePreviews[id] = nil
         overlayImages[id] = nil
     }
@@ -241,8 +272,8 @@ final class EditorModel: ObservableObject {
     }
 
     func undo() {
-        if let last = annotations.popLast() {
-            pixelatePreviews[last.id] = nil
+        if let last = annotations.last {
+            remove(last.id)
         } else if let previous = imageHistory.popLast() {
             image = previous
             if let removal = backgroundRemovalUndo, removal.image === previous { backdrop = removal.backdrop; backgroundRemovalUndo = nil }
@@ -621,7 +652,7 @@ final class EditorModel: ObservableObject {
         }
 
         for annotation in annotations {
-            let color = annotationColors[annotation.id] ?? annotationColor
+            let color = color(for: annotation)
             let fontSize = annotationFontSizes[annotation.id] ?? annotationFontSize
             switch annotation {
             case .pixelate(let id, let rect):
@@ -630,7 +661,7 @@ final class EditorModel: ObservableObject {
             case .highlight(_, let rect):
                 ctx.saveGState()
                 ctx.setBlendMode(.multiply)
-                ctx.setFillColor((annotationColors[annotation.id] ?? Self.highlightColor).cgColor)
+                ctx.setFillColor(color.cgColor)
                 ctx.fill(flip(rect))
                 ctx.restoreGState()
 

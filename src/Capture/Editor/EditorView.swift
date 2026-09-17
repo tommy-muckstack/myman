@@ -452,7 +452,14 @@ struct EditorView: View {
         }
     }
 
-    /// Color swatches collapse to the current annotation color.
+    private var activeAnnotationColor: NSColor {
+        if let annotation = model.annotations.first(where: { $0.id == selectedAnnotation }), annotation.supportsColor {
+            return model.color(for: annotation)
+        }
+        return tool == .highlight ? model.highlightAnnotationColor : model.annotationColor
+    }
+
+    /// Show the selected object's color, or the default for the next drawing.
     @ViewBuilder private var colorGroup: some View {
         if expandedGroup == .color {
             HStack(spacing: 6) {
@@ -460,16 +467,17 @@ struct EditorView: View {
                     let color = annotationColors[index]
                     Button {
                         withAnimation(MM.Motion.gentle) {
-                            model.annotationColor = color
+                            model.setAnnotationColor(color, selected: selectedAnnotation)
                             expandedGroup = nil
                         }
                     } label: {
                         colorSwatch(color)
                             .overlay(Circle().strokeBorder(MM.Colors.textPrimary, lineWidth: 2)
-                                .opacity(model.annotationColor.isEqual(color) ? 1 : 0))
+                                .opacity(activeAnnotationColor.withAlphaComponent(1).isEqual(color) ? 1 : 0))
                             .clickable(minSize: 26)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Annotation color: \(["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "White"][index])")
                 }
             }
             .transition(.scale(scale: 0.5).combined(with: .opacity))
@@ -477,7 +485,7 @@ struct EditorView: View {
         } else {
             groupChip(help: "Annotation color — click to choose",
                       action: { expand(.color) }) {
-                colorSwatch(model.annotationColor)
+                colorSwatch(activeAnnotationColor)
             }
         }
     }
@@ -710,10 +718,8 @@ struct EditorView: View {
 
     private func annotationLayer(scale: CGFloat) -> some View {
         Canvas { context, _ in
-            let color = Color(nsColor: model.annotationColor)
-
             for annotation in model.annotations {
-                draw(annotation, in: &context, scale: scale, color: color)
+                draw(annotation, in: &context, scale: scale, color: Color(nsColor: model.color(for: annotation)))
             }
             // Selection halo — a quiet dashed outline you can grab — and the
             // handles that resize it. The body still drags; the handles win
@@ -750,7 +756,7 @@ struct EditorView: View {
                                    style: .init(lineWidth: 1.5, dash: [6, 4]))
                 } else if tool != .select && tool != .ocr && tool != .text {
                     let preview = previewAnnotation(from: start, to: current)
-                    draw(preview, in: &context, scale: scale, color: color.opacity(0.85))
+                    draw(preview, in: &context, scale: scale, color: Color(nsColor: model.color(for: preview)).opacity(0.85))
                 }
             }
         }
@@ -855,7 +861,7 @@ struct EditorView: View {
                                 width: rect.width * scale, height: rect.height * scale)
             context.drawLayer { layer in
                 layer.blendMode = .multiply
-                layer.fill(Path(scaled), with: .color(Color(nsColor: EditorModel.highlightColor)))
+                layer.fill(Path(scaled), with: .color(color))
             }
 
         case .image(let id, let rect):
