@@ -725,16 +725,15 @@ final class MeetingController: ObservableObject {
         let names = await participantScanner.ingest(image, owner: owner, knownNames: known)
         guard case .recording = phase, meeting?.id == meetingID,
               !names.isEmpty, names != liveTranscript.callParticipants else { return }
-        liveTranscript.updateCallParticipants(names)
         var merged = sessionAttendeeNames
         for name in names where !merged.names.contains(where: { LiveMeetingTranscript.sameName($0, name) }) {
             merged.names.append(name)
         }
         if merged != sessionAttendeeNames {
             sessionAttendeeNames = merged
-            liveTranscript.updateCandidates(merged)
             Analytics.track("meeting_call_names_seen", ["count": names.count])
         }
+        liveTranscript.updateCallParticipants(names, candidates: merged)
     }
 
     private func captureCallWindow() async -> CGImage? {
