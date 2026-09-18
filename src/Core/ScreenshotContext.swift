@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import GRDB
+import NaturalLanguage
 
 /// Metadata belongs to an intentional capture, never a background activity log.
 struct ScreenshotContext: Codable, FetchableRecord, PersistableRecord {
@@ -63,6 +64,25 @@ struct ScreenshotContext: Codable, FetchableRecord, PersistableRecord {
 }
 
 enum ScreenshotIntelligence {
+    /// Recording overlap is not evidence that a slide was shared. A repeated,
+    /// distinctive company header that differs from the invite's company is
+    /// a conservative off-topic hint; ordinary headings are not company names.
+    static func offTopicForMeeting(text: String, domains: Set<String>) -> Bool {
+        let companies = domains.compactMap { $0.split(separator: ".").first.map(String.init) }
+        guard !companies.isEmpty else { return false }
+        let words = MeetingSource.words(text)
+        guard !companies.contains(where: { words.contains($0) }) else { return false }
+        let header = text.components(separatedBy: .newlines).prefix(10)
+        guard let dictionary = NLEmbedding.wordEmbedding(for: .english) else { return false }
+        for line in header {
+            let token = line.trimmingCharacters(in: .whitespaces)
+            guard token.range(of: #"^[A-Z][a-z]{5,24}$"#, options: .regularExpression) != nil,
+                  dictionary.vector(for: token.lowercased()) == nil,
+                  text.lowercased().components(separatedBy: token.lowercased()).count >= 3 else { continue }
+            return true
+        }
+        return false
+    }
     struct Tag: Codable, Equatable { var name: String; var confidence: Double }
     struct Analysis: Codable {
         var summary = ""

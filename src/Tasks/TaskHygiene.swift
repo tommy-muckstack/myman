@@ -12,12 +12,12 @@ enum TaskHygiene {
         guard meeting.captureKind == .meeting else { return }
         var existing = try TaskItem.filter(Column("archived") == false).fetchAll(db)
         let vocabulary = DictationCleanup.userVocabulary()
-        let sources = Dictionary(uniqueKeysWithValues: MeetingSource.publicTurns(MeetingSource.parse(meeting.transcript)).map { turn in
+        let sources = Dictionary(uniqueKeysWithValues: MeetingSource.paragraphs(MeetingSource.notesTurns(MeetingSource.parse(meeting.transcript))).map { turn in
             (turn.id, MeetingSourceTurn(id: turn.id, speaker: turn.speaker == "You" ? meeting.resolvedOwner : turn.speaker,
                 timestamp: turn.timestamp, text: MeetingVocabulary.correct(turn.text, terms: vocabulary).text))
         })
         var added = 0
-        for action in actions where action.owner == meeting.resolvedOwner && !action.isRequest && action.confidence >= 0.93 {
+        for action in actions where action.owner == meeting.resolvedOwner && !action.isRequest && action.tentative != true && action.confidence >= 0.93 {
             guard added < 3, MeetingEvidence.commitment(action, sources: sources) != nil else { continue }
             let key = "\(action.sourceID)|\(action.owner)"
             let title = action.task + " — " + action.owner

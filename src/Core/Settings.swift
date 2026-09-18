@@ -293,6 +293,7 @@ struct SettingsPanelView: View {
     @State private var settingsPage: SettingsPage = .general
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
+    @AppStorage("meetingOmitPrivateNotes") private var meetingOmitPrivateNotes = false
     @State private var automationCopied = false
     @State private var vocabularySuggestions: [String] = []
     @State private var knownPeople: [Person] = []
@@ -491,6 +492,11 @@ struct SettingsPanelView: View {
                 }
             Text("Personal vocabulary — one name, product, or term per line.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            MeetingPeopleFoldersSettings()
+            Toggle("Omit private passages from my meeting notes", isOn: $meetingOmitPrivateNotes)
+                .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+            Text("Off by default for your own notes. When enabled, omitted ranges and reasons appear in the export; your full transcript is preserved.")
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             MeetingVocabularyControls(suggestions: vocabularySuggestions, people: knownPeople,
                 accept: { term in
                     MeetingVocabulary.decide(term, accept: true)
