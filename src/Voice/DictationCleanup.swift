@@ -401,11 +401,28 @@ enum DictationCleanup {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    /// Recognition already supplies sentence case and punctuation. Avoid a
+    /// second generation for ordinary neutral prose; keep it for requested
+    /// styles, self-corrections, and spoken-number formatting.
+    static func requiresModelPolish(_ text: String, tone: DictationTone) -> Bool {
+        if tone == .verbatim { return false }
+        if tone != .neutral { return true }
+        let special = #"(?i)\b(no wait|i mean|rather|scratch that|actually make that|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|hundred|thousand|million|percent|dollars|dot com)\b"#
+        return text.first?.isUppercase != true || ![".", "?", "!"].contains(text.last.map(String.init) ?? "")
+            || text.range(of: special, options: .regularExpression) != nil
+    }
+
+    static func boundedPolish(fallback: String, seconds: Double = 0.9,
+                              operation: @escaping @Sendable () async throws -> String) async -> String {
+        (try? await AsyncDeadline.run(seconds: seconds, operation: operation)) ?? fallback
+    }
+
     static func clean(_ raw: String, tone: DictationTone = .neutral,
                       targetBundleID: String? = nil) async -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let terms = vocabulary()
         guard trimmed.count > 12 else { return deterministicCleanup(trimmed, terms: terms) }
+        guard requiresModelPolish(trimmed, tone: tone) else { return deterministicCleanup(trimmed, terms: terms) }
         // Long transcripts degrade the 3B model — it starts rewriting numbers
         // ($92,000 → "9,200") and paraphrasing (churn → "turnover"). Wrong
         // beats unpolished, so beyond this: deterministic cleanup only.
@@ -438,34 +455,32 @@ enum DictationCleanup {
             are clearly dictated: \(protectedTerms).
             6. Output style: \(tone.promptRules)
             """)
-        do {
-            // Delimited so the model can never mistake the transcript for a
-            // question addressed to it (it once ANSWERED "how we doing?"
-            // instead of cleaning it).
-            let response = try await session.respond(to: """
-                Clean up the dictated text between the markers. Output only \
-                the cleaned text, nothing else.
-                <<<TRANSCRIPT
-                \(trimmed)
-                TRANSCRIPT>>>
-                """)
-            var cleaned = stripPreamble(response.content.trimmingCharacters(in: .whitespacesAndNewlines))
-            cleaned = cleaned
-                .replacingOccurrences(of: "<<<TRANSCRIPT", with: "")
-                .replacingOccurrences(of: "TRANSCRIPT>>>", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            // Guards: sane length AND the output must be built from the
-            // speaker's own words — low overlap means the model went rogue.
-            guard !cleaned.isEmpty,
-                  cleaned.count > trimmed.count / 3,
-                  cleaned.count < trimmed.count * 2,
-                  wordOverlap(cleaned, trimmed) > 0.5 else {
-                return deterministicCleanup(trimmed, terms: terms)
-            }
-            return deterministicCleanup(cleaned, terms: terms)
-        } catch {
+        // Delimited so the model can never mistake the transcript for a
+        // question addressed to it (it once ANSWERED "how we doing?"
+        // instead of cleaning it).
+        let response = await boundedPolish(fallback: trimmed) {
+            try await session.respond(to: """
+            Clean up the dictated text between the markers. Output only \
+            the cleaned text, nothing else.
+            <<<TRANSCRIPT
+            \(trimmed)
+            TRANSCRIPT>>>
+            """).content
+        }
+        var cleaned = stripPreamble(response.trimmingCharacters(in: .whitespacesAndNewlines))
+        cleaned = cleaned
+            .replacingOccurrences(of: "<<<TRANSCRIPT", with: "")
+            .replacingOccurrences(of: "TRANSCRIPT>>>", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Guards: sane length AND the output must be built from the
+        // speaker's own words — low overlap means the model went rogue.
+        guard !cleaned.isEmpty,
+              cleaned.count > trimmed.count / 3,
+              cleaned.count < trimmed.count * 2,
+              wordOverlap(cleaned, trimmed) > 0.5 else {
             return deterministicCleanup(trimmed, terms: terms)
         }
+        return deterministicCleanup(cleaned, terms: terms)
         #else
         return deterministicCleanup(trimmed, terms: terms)
         #endif
