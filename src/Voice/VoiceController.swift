@@ -20,7 +20,7 @@ final class VoiceController: ObservableObject {
 
     @Published var phase: Phase = .idle
     @Published var deliveryOutcome: DictationDelivery.Outcome?
-    var resultLingerSeconds: Double { deliveryOutcome?.isVerified == true ? 3 : 12 }
+    var resultLingerSeconds: Double { deliveryOutcome?.needsAttention == false ? 3 : 12 }
     private(set) var agentSessionID: String?
     private(set) var lastDictationID: String?
     @Published var levels: [Float] = []
@@ -391,7 +391,7 @@ final class VoiceController: ObservableObject {
                     : "Could not update recovery history or the clipboard. Use Copy to recover this dictation."
             }
             deliveryOutcome = delivery
-            if !delivery.isVerified {
+            if delivery.needsAttention {
                 Toast.show(delivery.reason, actionLabel: "Review", action: { WorkflowCenter.shared.open(tab: "dictation") }, duration: 12)
             }
             TaskExtractor.run(text: text, source: .dictation)

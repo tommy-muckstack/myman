@@ -4,6 +4,81 @@ import XCTest
 @testable import MyMan
 
 final class DictationDeliveryTests: XCTestCase {
+    @MainActor func testOptInZedDelivery() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MYMAN_VERIFY_ZED_FILE"],
+              path.hasPrefix("/private/tmp/myman-zed-delivery/"),
+              URL(fileURLWithPath: path).lastPathComponent.hasPrefix("my-man-dictation-check") else {
+            throw XCTSkip("Requires an explicitly opened synthetic Zed file")
+        }
+        XCTAssertTrue(AXIsProcessTrusted())
+        guard AXIsProcessTrusted() else { return }
+        let target = try XCTUnwrap(NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "dev.zed.Zed" })
+        target.activate(options: [])
+        try await Task.sleep(for: .milliseconds(250))
+        let app = AXUIElementCreateApplication(target.processIdentifier)
+        func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
+        }
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let windows = attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        let fixture = try XCTUnwrap(windows.first {
+            (attribute($0, kAXTitleAttribute) as? String)?.contains(name) == true
+        })
+        AXUIElementPerformAction(fixture, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(fixture, kAXMainAttribute as CFString, kCFBooleanTrue)
+        try await Task.sleep(for: .milliseconds(250))
+        let rawWindow = try XCTUnwrap(attribute(app, kAXFocusedWindowAttribute))
+        guard CFGetTypeID(rawWindow) == AXUIElementGetTypeID() else { return XCTFail("No fixture window") }
+        let window = unsafeBitCast(rawWindow, to: AXUIElement.self)
+        guard (attribute(window, kAXTitleAttribute) as? String)?.contains(name) == true,
+              try String(contentsOfFile: path) == "Before:\n" else { return XCTFail("Unexpected fixture; no insertion") }
+        let text = "Synthetic dictation 👩🏽‍💻 recovery check."
+        let outcome = await DictationDelivery.deliver(text)
+        XCTAssertEqual(outcome.state, "sent", outcome.reason)
+        XCTAssertEqual(outcome.statusLabel, "Paste sent")
+        XCTAssertFalse(outcome.isVerified, "Opaque editors cannot provide AX text confirmation")
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
+              let current = attribute(app, kAXFocusedWindowAttribute), CFEqual(current, window) else {
+            return XCTFail("Focus changed; fixture not saved")
+        }
+        let source = CGEventSource(stateID: .privateState)
+        for down in [true, false] {
+            let event = try XCTUnwrap(CGEvent(keyboardEventSource: source, virtualKey: 1, keyDown: down))
+            event.flags = .maskCommand; event.post(tap: .cgSessionEventTap)
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while (try? String(contentsOfFile: path)) != "Before:" + text + "\n", Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(try String(contentsOfFile: path), "Before:" + text + "\n", "One paste must reach the fixture caret")
+        print("Zed native paste fixture: \(outcome.state), \(outcome.milliseconds)ms")
+    }
+
+    func testCustomEditorsUsePasteCapabilityInsteadOfRequiringAXTextRole() async {
+        await MainActor.run {
+            for role in [nil, "AXWindow", "AXGroup", "AXUnknown", "AXWebArea", "AXLayoutArea"] as [String?] {
+                XCTAssertEqual(DictationDelivery.insertionSupport(role: role, subrole: nil, secureInput: false,
+                    hasWindow: true, pasteEnabled: true), .pasteCommand)
+                XCTAssertEqual(DictationDelivery.insertionSupport(role: role, subrole: nil, secureInput: false,
+                    hasWindow: true, pasteEnabled: false), .unavailable)
+            }
+            for role in ["AXButton", "AXOutline", "AXTable", "AXStaticText", "AXMenuItem"] {
+                XCTAssertEqual(DictationDelivery.insertionSupport(role: role, subrole: nil, secureInput: false,
+                    hasWindow: true, pasteEnabled: true), .unavailable)
+            }
+            for role in ["AXTextField", "AXTextArea", "AXComboBox"] {
+                XCTAssertEqual(DictationDelivery.insertionSupport(role: role, subrole: nil, secureInput: false,
+                    hasWindow: true, pasteEnabled: false), .textField)
+            }
+            XCTAssertEqual(DictationDelivery.insertionSupport(role: "AXWindow", subrole: nil, secureInput: false,
+                hasWindow: false, pasteEnabled: true), .unavailable)
+            XCTAssertEqual(DictationDelivery.insertionSupport(role: "AXWindow", subrole: nil, secureInput: true,
+                hasWindow: true, pasteEnabled: true), .unavailable)
+            XCTAssertEqual(DictationDelivery.insertionSupport(role: "AXTextField", subrole: "AXSecureTextField", secureInput: false,
+                hasWindow: true, pasteEnabled: true), .unavailable)
+        }
+    }
     @MainActor func testOptInCursorDelivery() async throws {
         guard let mode = ProcessInfo.processInfo.environment["MYMAN_VERIFY_CURSOR_DELIVERY"] else { throw XCTSkip("Requires the explicitly opened synthetic Cursor window") }
         XCTAssertTrue(AXIsProcessTrusted(), "Native delivery verification requires Accessibility")
@@ -144,7 +219,7 @@ final class DictationDeliveryTests: XCTestCase {
         for readable in [true, false] {
             let editor = Editor(); editor.ignoreWrites = true
             let outcome = await editor.deliver("new", readable: readable)
-            XCTAssertEqual(outcome.state, "unverified")
+            XCTAssertEqual(outcome.state, readable ? "unverified" : "sent")
             XCTAssertEqual(editor.clipboard, "new")
             XCTAssertEqual(editor.pastes, 1)
             XCTAssertFalse(outcome.isVerified)
@@ -158,6 +233,29 @@ final class DictationDeliveryTests: XCTestCase {
         XCTAssertEqual(editor.clipboard, "new")
         XCTAssertEqual(editor.pastes, 0)
         XCTAssertEqual(editor.axWrites, 0)
+    }
+
+    @MainActor func testOpaqueEditorPastesOnceWithoutClaimingReadbackOrShowingFailure() async {
+        let editor = Editor()
+        let outcome = await editor.deliver("new", readable: false)
+        XCTAssertEqual(editor.value, "Hello new friend")
+        XCTAssertEqual(editor.pastes, 1)
+        XCTAssertEqual(editor.axWrites, 0)
+        XCTAssertEqual(editor.chunks, 0)
+        XCTAssertEqual(outcome.state, "sent")
+        XCTAssertEqual(outcome.statusLabel, "Paste sent")
+        XCTAssertFalse(outcome.isVerified)
+        XCTAssertFalse(outcome.needsAttention)
+        XCTAssertEqual(outcome.clipboardAvailable, true)
+        XCTAssertEqual(editor.clipboard, "new")
+    }
+
+    @MainActor func testOpaqueEditorFocusChangeAfterPasteRequiresReviewWithoutRetry() async {
+        let editor = Editor(); editor.onPause = { editor.focused = false }
+        let outcome = await editor.deliver("new", readable: false)
+        XCTAssertEqual(outcome.state, "uncertain")
+        XCTAssertTrue(outcome.needsAttention)
+        XCTAssertEqual(editor.pastes, 1)
     }
 
     @MainActor func testFocusChangeAfterPasteNeverRetries() async {
@@ -207,7 +305,7 @@ final class DictationDeliveryTests: XCTestCase {
     }
 
     @MainActor func testLegacyHistoryDecodesAndOnlyVerifiedOutcomeSaysPasted() throws {
-        for state in ["clipboard", "unverified", "uncertain", "verified", "future-state"] {
+        for state in ["clipboard", "unverified", "uncertain", "verified", "sent", "future-state"] {
             let json = "{\"state\":\"\(state)\",\"reason\":\"fixture\",\"milliseconds\":129}"
             let outcome = try JSONDecoder().decode(DictationDelivery.Outcome.self, from: Data(json.utf8))
             XCTAssertEqual(outcome.statusLabel == "Pasted", state == "verified")
@@ -219,14 +317,14 @@ final class DictationDeliveryTests: XCTestCase {
     @MainActor func testRenderTruthfulResultPills() async throws {
         guard let folder = ProcessInfo.processInfo.environment["MAN_SCREENSHOT_UI_REVIEW"] else { throw XCTSkip("Opt-in native visual review") }
         _ = NSApplication.shared; MM.Fonts.registerFonts()
-        for state in ["verified", "clipboard", "unverified"] {
+        for state in ["verified", "clipboard", "unverified", "sent"] {
             let controller = VoiceController()
             controller.deliveryOutcome = .init(state: state,
-                reason: "Insertion could not be confirmed. Your text is copied; check the field before pressing ⌘V to avoid duplicates.",
+                reason: state == "sent" ? "Paste sent. This app doesn’t expose its text for confirmation." : "Insertion could not be confirmed. Your text is copied; check the field before pressing ⌘V to avoid duplicates.",
                 milliseconds: 420, clipboardAvailable: state != "verified")
             controller.phase = .done("Testing the copying part of this feature.")
             controller.pillPresented = true
-            XCTAssertEqual(controller.resultLingerSeconds, state == "verified" ? 3 : 12)
+            XCTAssertEqual(controller.resultLingerSeconds, ["verified", "sent"].contains(state) ? 3 : 12)
             let host = NSHostingView(rootView: VoicePillView(controller: controller).preferredColorScheme(.dark))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 456, height: 320), styleMask: [.borderless], backing: .buffered, defer: false)
             window.contentView = host
