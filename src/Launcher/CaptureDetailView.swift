@@ -90,8 +90,8 @@ struct ThemeTimelineView: View {
             ScrollView {
                 LazyVStack {
                     ForEach(items) { item in
-                        CaptureResultRow(match: CaptureMatch(item: item, tier: 0, score: 0, excerpt: CaptureText.excerpt(item.body, query: ""), reason: item.kind.capitalized, matchedTerms: []))
-                            .clickable().onTapGesture { CaptureActions.open(item) }
+                        CaptureResultRow(match: CaptureMatch(item: item, tier: 0, score: 0, excerpt: CaptureText.excerpt(item.body, query: ""), reason: item.kind.capitalized, matchedTerms: []),
+                                         onOpen: { CaptureActions.open(item) })
                             .contextMenu {
                                 Button("Preview & related") { CaptureDetailController.shared.open(item) }
                                 Button("Remove from theme") { CaptureActions.perform { try ThemeStore.assign(item.id, to: theme.id, remove: true) } }

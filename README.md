@@ -37,7 +37,11 @@ Conversational queries such as “Find the screenshot where the number was $49�
 also recognize simple content/date constraints.
 
 An empty search browses saved captures chronologically. Open the funnel menu to
-browse **Themes** or filter by type, date, and pinning. Right-click to pin, rename,
+browse **Themes** or filter by type, date, and pinning. Hover a capture row for
+**Copy**, **Copy Path**, and **Delete**; the same controls appear on keyboard-selected
+rows. Screenshots copy as images, recordings as files, and notes/meetings as text.
+Copy Path uses the original media file or the note/meeting’s Markdown file in
+MyManBrain. Deletion asks for confirmation. Right-click to pin, rename,
 assign/remove a Theme, hide from search, or delete. **Themes** appear after at
 least three captures support a shared concept. They are collections
 of captured material; correcting one does not create tasks or initiate work.

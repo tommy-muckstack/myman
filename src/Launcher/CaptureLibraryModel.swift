@@ -110,11 +110,38 @@ enum CaptureThumbnailCache {
         case .dictation: CaptureDetailController.shared.open(item, query: query)
         }
     }
-    static func copy(_ item: CaptureItem, textOnly: Bool = false) {
-        NSPasteboard.general.clearContents()
-        if !textOnly, item.kind == "screenshot", let image = NSImage(contentsOfFile: item.sourcePath) { NSPasteboard.general.writeObjects([image]) }
-        else if !textOnly, item.kind == "recording" { NSPasteboard.general.writeObjects([URL(fileURLWithPath: item.sourcePath) as NSURL]) }
-        else { NSPasteboard.general.setString(item.body.isEmpty ? item.summary : item.body, forType: .string) }
+    @discardableResult static func copy(_ item: CaptureItem, textOnly: Bool = false, pasteboard: NSPasteboard = .general) -> Bool {
+        // Resolve content before clearing the clipboard. A missing original must
+        // not silently replace an image with OCR text or erase the user's copy.
+        if !textOnly, item.kind == "screenshot" {
+            guard let image = NSImage(contentsOfFile: item.sourcePath) else { return false }
+            pasteboard.clearContents()
+            return pasteboard.writeObjects([image])
+        } else if !textOnly, item.kind == "recording" {
+            guard FileManager.default.fileExists(atPath: item.sourcePath) else { return false }
+            pasteboard.clearContents()
+            return pasteboard.writeObjects([URL(fileURLWithPath: item.sourcePath) as NSURL])
+        } else {
+            let text = item.body.isEmpty ? item.summary : item.body
+            guard !text.isEmpty else { return false }
+            pasteboard.clearContents()
+            return pasteboard.setString(text, forType: .string)
+        }
+    }
+
+    static func fileURL(for item: CaptureItem, brainRoot: URL = Brain.root) -> URL? {
+        if ["screenshot", "recording"].contains(item.kind), !item.sourcePath.isEmpty {
+            return URL(fileURLWithPath: item.sourcePath)
+        }
+        guard ["note", "meeting", "dictation"].contains(item.kind) else { return nil }
+        let folder = item.kind == "dictation" ? "dictations" : item.kind + "s"
+        return brainRoot.appendingPathComponent("\(folder)/\(Brain.day(item.capturedAt))-\(item.sourceID.prefix(8)).md")
+    }
+
+    @discardableResult static func copyPath(_ item: CaptureItem, brainRoot: URL = Brain.root, pasteboard: NSPasteboard = .general) -> Bool {
+        guard let url = fileURL(for: item, brainRoot: brainRoot), FileManager.default.fileExists(atPath: url.path) else { return false }
+        pasteboard.clearContents()
+        return pasteboard.setString(url.path, forType: .string)
     }
     static func confirmDelete(_ item: CaptureItem) {
         let alert = NSAlert()
