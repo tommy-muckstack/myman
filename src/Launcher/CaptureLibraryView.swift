@@ -54,7 +54,8 @@ private struct CaptureRowHighlight: ViewModifier {
             .background(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
                 .fill(hovered ? MM.Colors.surface : .clear))
             .overlay(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
-                .strokeBorder(keyboardFocused ? MM.Colors.textPrimary : hovered ? MM.Colors.border.opacity(0.5) : .clear, lineWidth: keyboardFocused ? 2 : 1))
+                .strokeBorder(keyboardFocused ? MM.Colors.textPrimary : hovered ? MM.Colors.border.opacity(0.5) : .clear, lineWidth: keyboardFocused ? 2 : 1)
+                .allowsHitTesting(false))
             .onHover { hovered = $0 }
             .onDisappear { hovered = false }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
@@ -65,7 +66,65 @@ struct CaptureResultRow: View {
     let match: CaptureMatch
     var selected = false
     var keyboardFocused = false
+    var onOpen: () -> Void = {}
+    @State private var hovered = false
+    private var showActions: Bool { hovered || keyboardFocused }
+    private let actionsWidth: CGFloat = 104
+
     var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: onOpen) { rowContent.clickable() }
+                .buttonStyle(.plain)
+            HStack(spacing: 4) {
+                rowAction(.copy, label: "Copy", help: match.item.kind == "screenshot" ? "Copy image to clipboard" : "Copy to clipboard") {
+                    copyCapture()
+                }
+                rowAction(.link, label: "Copy Path", help: "Copy file path") {
+                    copyFilePath()
+                }
+                rowAction(.trash, label: "Delete", help: "Delete capture…", destructive: true) {
+                    CaptureActions.confirmDelete(match.item)
+                }
+            }
+            .frame(width: actionsWidth, alignment: .trailing)
+            .padding(MM.Layout.spacing)
+            .opacity(showActions ? 1 : 0)
+            .allowsHitTesting(showActions)
+            .disabled(!showActions)
+            .accessibilityHidden(!showActions)
+        }
+        .modifier(CaptureRowHighlight(keyboardFocused: keyboardFocused))
+        .onHover { hovered = $0 }
+        .onDisappear { hovered = false }
+        .foregroundStyle(MM.Colors.textPrimary)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityAction(named: "Copy") { copyCapture() }
+        .accessibilityAction(named: "Copy Path") { copyFilePath() }
+        .accessibilityAction(named: "Delete") { CaptureActions.confirmDelete(match.item) }
+    }
+
+    private func copyCapture() {
+        Toast.show(CaptureActions.copy(match.item) ? "Copied to clipboard" : "Couldn’t copy this capture")
+    }
+
+    private func copyFilePath() {
+        Toast.show(CaptureActions.copyPath(match.item) ? "File path copied" : "This capture’s file is not available yet")
+    }
+
+    private func rowAction(_ icon: MMIcon, label: String, help: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            IconView(icon: icon, size: 14, color: destructive ? MM.Colors.danger : MM.Colors.textSecondary)
+                .frame(width: 32, height: 28)
+                .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
+                .clickable()
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(label)
+    }
+
+    private var rowContent: some View {
         HStack(spacing: MM.Layout.spacing) {
             if match.item.kind == "screenshot" { CaptureThumbnail(path: match.item.sourcePath, revision: match.item.revision) }
             else { IconView(icon: match.item.icon).frame(width: 48) }
@@ -74,6 +133,8 @@ struct CaptureResultRow: View {
                     HighlightedCaptureText(text: match.item.title, terms: match.matchedTerms).font(MM.Fonts.body).lineLimit(1)
                     if match.item.pinned { Image(systemName: "pin.fill").foregroundStyle(MM.Colors.accent) }
                 }
+                .padding(.trailing, actionsWidth + MM.Layout.spacing)
+                .frame(minHeight: 28, alignment: .leading)
                 HighlightedCaptureText(text: match.excerpt, terms: match.matchedTerms)
                     .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary).lineLimit(2)
                 HStack {
@@ -85,10 +146,7 @@ struct CaptureResultRow: View {
         }
         .padding(MM.Layout.spacing)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .modifier(CaptureRowHighlight(keyboardFocused: keyboardFocused))
-        .foregroundStyle(MM.Colors.textPrimary)
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
 
@@ -163,11 +221,9 @@ struct CaptureLibraryView: View {
                                 ForEach(Array(visibleThemes.prefix(3))) { theme in themeRow(theme) }
                             }
                             ForEach(model.results) { match in
-                                Button { open(match) } label: {
-                                    CaptureResultRow(match: match, selected: model.selectedID == match.id, keyboardFocused: keyboardNavigation && model.selectedID == match.id)
-                                        .clickable()
-                                }
-                                .buttonStyle(.plain)
+                                CaptureResultRow(match: match, selected: model.selectedID == match.id,
+                                                 keyboardFocused: keyboardNavigation && model.selectedID == match.id,
+                                                 onOpen: { open(match) })
                                 .id(match.id)
                                 .contextMenu { itemMenu(match.item) }
                             }
@@ -289,6 +345,10 @@ struct CaptureLibraryView: View {
         Button("Prepare context for Bot…") { WorkflowContext.show(item) }
         Button("Preview & related") { CaptureDetailController.shared.open(item, query: query) }
         Button("Copy") { CaptureActions.copy(item) }
+        Button("Copy Path") {
+            let copied = CaptureActions.copyPath(item)
+            Toast.show(copied ? "File path copied" : "This capture’s file is not available yet")
+        }
         Button(item.kind == "screenshot" ? "Copy detected text" : "Copy text") { CaptureActions.copy(item, textOnly: true) }
         Button(item.pinned ? "Unpin" : "Pin") { CaptureActions.perform { try CaptureLifecycle.pin(item) } }
         Button("Rename…") { CaptureActions.prompt(title: "Capture title", value: item.title) { try CaptureLifecycle.rename(item, title: $0) } }
