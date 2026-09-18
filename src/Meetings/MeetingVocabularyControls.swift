@@ -43,3 +43,38 @@ struct MeetingVocabularyControls: View {
         }
     }
 }
+
+struct MeetingPeopleFoldersSettings: View {
+    @State private var domain = ""
+    @State private var folders = UserDefaults.standard.dictionary(forKey: "meetingPeopleFolders") as? [String: String] ?? [:]
+    var body: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+            Text("Company context for meeting names").font(MM.Fonts.secondary)
+            HStack {
+                TextField("Participant email domain", text: $domain).font(MM.Fonts.secondary)
+                Button("Choose folder…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
+                    if panel.runModal() == .OK, let url = panel.url {
+                        folders[domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()] = url.path
+                        UserDefaults.standard.set(folders, forKey: "meetingPeopleFolders")
+                        domain = ""
+                    }
+                }.clickable().disabled(!domain.contains(".") || domain.contains("@") || domain.contains("/"))
+            }
+            ForEach(folders.keys.sorted(), id: \.self) { domain in
+                HStack {
+                    Text(domain + " · " + URL(fileURLWithPath: folders[domain]!).lastPathComponent).font(MM.Fonts.metadata)
+                        .help(folders[domain]!)
+                    Spacer()
+                    Button("Remove") {
+                        folders.removeValue(forKey: domain)
+                        UserDefaults.standard.set(folders, forKey: "meetingPeopleFolders")
+                    }.buttonStyle(.plain).font(MM.Fonts.metadata).clickable()
+                }
+            }
+            Text("Company context supplies names, product spellings, and acronyms. Products and acronyms only repair uncertain recognition; common words are never globally boosted.")
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+        }
+    }
+}

@@ -18,7 +18,7 @@ actor MeetingTranscriptionWorker {
             micLag: job.micLag,
             checkpointURL: MeetingTranscriptCheckpoint.url(micPath: job.micPath, systemPath: job.systemPath,
                                                            regenerating: job.regenerating),
-            wallDuration: job.record.endedAt.map { $0.timeIntervalSince(job.record.startedAt) })
+            wallDuration: job.record.endedAt.map { $0.timeIntervalSince(job.record.startedAt) }, contextMeeting: job.record)
         try await reader.prepare()
         while await reader.hasUnreadAudio() {
             try Task.checkCancellation()
@@ -36,7 +36,9 @@ actor MeetingTranscriptionWorker {
                                                 "engine": service.kind.rawValue])
         var record = job.record
         record.kind = result.kind.rawValue
-        return MeetingTranscriptResult(transcript: MeetingConversation.finish(result.transcript, meeting: record),
+        let finished = MeetingConversation.finish(result.transcript, meeting: record)
+        let names = MeetingPeopleContext.names(for: record)
+        return MeetingTranscriptResult(transcript: MeetingPeopleContext.correct(finished, names: names).text,
                                        originalTranscript: result.originalTranscript, kind: result.kind)
     }
 }

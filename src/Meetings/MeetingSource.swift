@@ -63,7 +63,7 @@ enum MeetingSource {
     static func isBackchannel(_ text: String) -> Bool {
         let tokens = words(text)
         if tokens.isEmpty { return true }
-        let fillers: Set<String> = ["yeah", "yes", "uh", "huh", "hmm", "hm", "mm", "mhm", "right", "nice", "ok", "okay", "cough", "coughing", "ha", "haha", "laugh", "laughing", "um", "ah"]
+        let fillers: Set<String> = ["yeah", "yes", "uh", "huh", "hmm", "hm", "mm", "mhm", "right", "nice", "cool", "ok", "okay", "cough", "coughing", "ha", "haha", "laugh", "laughing", "um", "ah"]
         return tokens.count <= 6 && tokens.allSatisfy { fillers.contains($0) }
     }
 
@@ -82,6 +82,31 @@ enum MeetingSource {
     }
 
     static let privacyMarkers = ["just between us", "don't share this", "do not share this", "confidential", "off the record", "keep this private", "not for sharing"]
+
+    /// ASR emits five-second pieces. Read adjacent pieces as speech, without
+    /// crossing speakers or time gaps. IDs/timestamps still anchor the first
+    /// original piece; the stored transcript is never changed here.
+    static func paragraphs(_ turns: [MeetingSourceTurn]) -> [MeetingSourceTurn] {
+        var result: [MeetingSourceTurn] = []
+        var previousSeconds: Double = -100
+        for turn in turns {
+            if let last = result.last, last.speaker == turn.speaker,
+               turn.seconds - previousSeconds <= 15, last.text.count + turn.text.count < 1800 {
+                result[result.count - 1] = .init(id: last.id, speaker: last.speaker,
+                    timestamp: last.timestamp, text: last.text + " " + turn.text)
+            } else { result.append(turn) }
+            previousSeconds = turn.seconds
+        }
+        return result
+    }
+
+    static var omitPrivateNotes: Bool {
+        UserDefaults.standard.bool(forKey: "meetingOmitPrivateNotes")
+    }
+
+    static func notesTurns(_ turns: [MeetingSourceTurn], omitPrivate: Bool = omitPrivateNotes) -> [MeetingSourceTurn] {
+        omitPrivate ? publicTurns(turns) : turns.filter { !isBackchannel($0.text) }
+    }
 
     /// Omit flagged passages and their immediate conversational context before
     /// any derived model sees them. Keep the original transcript untouched.

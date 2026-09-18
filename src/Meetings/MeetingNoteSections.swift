@@ -26,46 +26,96 @@ enum MeetingNoteSections {
 
     /// Extractive by construction: quotes are exact source substrings, never
     /// model paraphrases. Rank beliefs/decisions, keeping coverage across time.
-    static func quotes(meeting: Meeting) -> String {
-        let owner = meeting.ownerName.isEmpty ? NSFullUserName() : meeting.ownerName
-        let turns = MeetingSource.publicTurns(MeetingSource.parse(meeting.transcript))
+    static func quotes(meeting: Meeting, limit: Int = 10, separation: Double = 45) -> String {
+        let original = MeetingSource.notesTurns(MeetingSource.parse(meeting.transcript))
+        let turns = original + MeetingSource.paragraphs(original)
         var candidates: [(source: MeetingSourceTurn, text: String, score: Int)] = []
-        for turn in turns where !["You", owner, meeting.resolvedOwner].contains(turn.speaker) && !MeetingSource.genericSpeaker(turn.speaker) {
-            for sentence in sentences(turn.text) {
+        for turn in turns where !MeetingSource.genericSpeaker(turn.speaker) {
+            for originalSentence in sentences(turn.text) {
+                let sentence = originalSentence.replacingOccurrences(of: #"(?i)^(?:(?:for a while|a lot of|and so|so|um|uh|yeah)[, ]+)+"#, with: "", options: .regularExpression)
+                    .components(separatedBy: ", which ").first ?? originalSentence
                 let words = MeetingSource.words(sentence)
-                guard (6...45).contains(words.count), !sentence.contains("?"), MeetingEvidence.legible(sentence),
-                      isSubstantive(sentence), sentence.last == ".",
-                      !["and", "um", "uh", "the", "to", "that"].contains(words.last ?? "") else { continue }
-                let cues = ["think", "believe", "need", "important", "success", "focus", "relationship", "foundation", "friction", "decided", "tension", "speed up"]
-                let score = cues.filter { sentence.localizedCaseInsensitiveContains($0) }.count + salience(sentence)
+                let completeText = originalSentence.contains(", which ") ? sentence + "." : sentence
+                guard (5...35).contains(words.count), !sentence.contains("?"), MeetingEvidence.legible(sentence),
+                      isSubstantive(sentence), completeSentence(completeText, minWords: 5), quoteHasSubject(sentence) else { continue }
+                let score = quoteScore(sentence)
                 guard score > 0 else { continue }
-                candidates.append((turn, sentence, score))
+                let anchor = quoteAnchor(sentence, paragraph: turn, originals: original)
+                candidates.append((anchor, sentence, score))
             }
         }
         var selected: [(source: MeetingSourceTurn, text: String, score: Int)] = []
         for candidate in candidates.sorted(by: { $0.score == $1.score ? $0.source.id < $1.source.id : $0.score > $1.score }) {
-            guard !selected.contains(where: { $0.text == candidate.text || abs($0.source.seconds - candidate.source.seconds) < 45 }) else { continue }
+            guard !selected.contains(where: { $0.text == candidate.text || abs($0.source.seconds - candidate.source.seconds) < separation }) else { continue }
             selected.append(candidate)
-            if selected.count == 8 { break }
+            if selected.count == limit { break }
         }
         let lines = selected.sorted { $0.source.id < $1.source.id }.map { "- “\($0.text)” — \($0.source.speaker) [\($0.source.timestamp)]" }
         return "## Quotes\n\n" + (lines.isEmpty ? "No clear, attributable quotes found." : lines.joined(separator: "\n"))
     }
 
-    static func interview(meeting: Meeting) -> String {
-        guard MeetingInterviewContext.isInterview(meeting.title) else { return "" }
-        let owner = meeting.ownerName.isEmpty ? NSFullUserName() : meeting.ownerName
-        let turns = MeetingSource.publicTurns(MeetingSource.parse(meeting.transcript))
-        func isOwner(_ turn: MeetingSourceTurn) -> Bool { ["You", owner, meeting.resolvedOwner].contains(turn.speaker) }
-        var pairs: [String] = []
-        for (index, turn) in turns.enumerated() where !isOwner(turn) {
-            guard let question = sentences(turn.text).last(where: { $0.contains("?") && MeetingSource.words($0).count >= 6 && isSubstantive($0) }),
-                  let reply = turns.dropFirst(index + 1).first(where: isOwner), reply.seconds - turn.seconds < 45,
-                  let answer = sentences(reply.text).first(where: { MeetingSource.words($0).count >= 8 }) else { continue }
-            pairs.append("- **Asked [\(turn.timestamp)]:** \(question)\n  **\(owner), answer excerpt [\(reply.timestamp)]:** \(answer)")
-            if pairs.count == 5 { break }
+    static func quoteAnchor(_ quote: String, paragraph: MeetingSourceTurn, originals: [MeetingSourceTurn]) -> MeetingSourceTurn {
+        guard let position = paragraph.text.range(of: quote) else { return paragraph }
+        let offset = paragraph.text.distance(from: paragraph.text.startIndex, to: position.lowerBound)
+        var cursor = paragraph.text.startIndex
+        for turn in originals where turn.speaker == paragraph.speaker && turn.id >= paragraph.id {
+            guard let range = paragraph.text.range(of: turn.text, range: cursor..<paragraph.text.endIndex) else { continue }
+            let end = paragraph.text.distance(from: paragraph.text.startIndex, to: range.upperBound)
+            if offset < end { return turn }
+            cursor = range.upperBound
         }
-        guard !pairs.isEmpty else { return MeetingInterviewContext.unmatchedQuestions(for: meeting) }
-        return "\n\n## Interview questions and answers\n\n" + pairs.joined(separator: "\n") + MeetingInterviewContext.unmatchedQuestions(for: meeting)
+        return paragraph
+    }
+
+    static func quoteScore(_ sentence: String) -> Int {
+        let words = MeetingSource.words(sentence)
+        let lower = words.joined(separator: " ")
+        let introductions = ["background on myself", "background about myself", "i worked at", "i used to work", "i graduated", "among the actual", "i was thinking about just", "i was wondering", "nice to meet", "thanks for taking", "happy to answer", "i ll put it this way"]
+        guard !introductions.contains(where: lower.contains) else { return 0 }
+        let beliefs: Set<String> = ["believe", "need", "important", "success", "focus", "decided", "should", "strategy"]
+        let contrasts = [" but ", " instead ", " rather ", " versus ", " not ", "wasn t", "can t", "don t", "doesn t"]
+        let contrast = contrasts.contains { (" " + lower + " ").contains($0) }
+        let strongContrast = ["can t", "cannot", "wasn t", "don t", "doesn t", "not ", "instead"].contains { lower.contains($0) }
+        let belief = !Set(words).isDisjoint(with: beliefs)
+        let number = words.contains { $0.first?.isNumber == true || ["percent", "hundred", "thousand", "million", "billion"].contains($0) }
+        // Most quotes need eight words. A short, complete principle or contrast
+        // can be the point itself; never pad it with surrounding filler.
+        guard words.count >= 8 || ((belief || contrast) && words.count >= 5), belief || contrast || number else { return 0 }
+        let filler: Set<String> = ["um", "uh", "like", "yeah", "just", "kind", "sort"]
+        let repeats = zip(words, words.dropFirst()).filter { $0 == $1 }.count
+        let repeatedContent = Dictionary(grouping: words.filter { $0.count >= 5 }, by: { $0 }).values.reduce(0) { $0 + max(0, $1.count - 1) }
+        let principle = ["we", "you", "people", "customers", "users", "teams"].contains(words.first ?? "")
+        return (belief ? 24 : 0) + (strongContrast ? 24 : (contrast ? 10 : 0)) + (number ? 20 : 0) + (principle ? 10 : 0)
+            + min(8, salience(sentence)) + (words.count <= 18 ? 8 : 0)
+            - words.filter { filler.contains($0) }.count * 3 - repeats * 12 - repeatedContent * 8
+    }
+
+    static func quoteHasSubject(_ sentence: String) -> Bool {
+        let words = MeetingSource.words(sentence)
+        guard let first = words.first else { return false }
+        let fragments: Set<String> = ["and", "or", "but", "because", "which", "among", "for", "from", "with", "related", "instead", "weird", "some", "is"]
+        guard !fragments.contains(first),
+              sentence.range(of: #"(?i)\b(if|because|when|where|that)\s+\w+\s+\1\b"#, options: .regularExpression) == nil,
+              sentence.range(of: #"[a-z]\s+(And|But|Or|So|Because)\b"#, options: .regularExpression) == nil,
+              sentence.range(of: #"\.\s+[a-z]"#, options: .regularExpression) == nil else { return false }
+        let tagger = NLTagger(tagSchemes: [.lexicalClass]); tagger.string = sentence
+        let (tag, _) = tagger.tag(at: sentence.startIndex, unit: .word, scheme: .lexicalClass)
+        if tag == .number, words.count > 1, ["we", "you", "they", "i", "it"].contains(words[1]) { return false }
+        let spokenSubjects = ["we", "you", "they", "it", "there", "people", "customers", "users", "teams"]
+        guard sentence.first?.isUppercase == true || spokenSubjects.contains(first) || tag == .number else { return false }
+        return [.pronoun, .noun, .number].contains(tag) || ["there", "that", "this", "the", "a", "an"].contains(first)
+    }
+
+    static func completeSentence(_ text: String, minWords: Int = 6) -> Bool {
+        let words = MeetingSource.words(text)
+        let unfinished: Set<String> = ["and", "but", "or", "um", "uh", "the", "to", "that", "then", "because", "with", "of", "a", "an", "your", "our", "my", "in", "for", "which"]
+        return words.count >= minWords && [".", "!"].contains(text.last.map(String.init) ?? "")
+            && !unfinished.contains(words.last ?? "")
+            && !text.contains("[unclear]") && !text.contains("[inaudible]")
+    }
+
+    static func interview(meeting: Meeting) -> String {
+        MeetingInterviewAnswers.render(MeetingInterviewAnswers.exchanges(meeting))
+            + MeetingInterviewContext.unmatchedQuestions(for: meeting)
     }
 }

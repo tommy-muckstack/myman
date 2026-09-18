@@ -40,7 +40,7 @@ enum MeetingConversation {
     }
 
     static func metadata(transcript: String, summary: String, title: String, owner: String,
-                         started: Date, ended: Date?, participants: [String]) -> [String] {
+                         started: Date, ended: Date?, participants: [String], originalTranscript: String = "", analysisJSON: String = "") -> [String] {
         let status = ended != nil && !transcript.isEmpty && !summary.isEmpty ? "complete" : "transcribing"
         var fields = ["status: \(status)"]
         let turns = MeetingSource.parse(transcript)
@@ -49,9 +49,49 @@ enum MeetingConversation {
             fields += ["call_started_at: \(ISO8601DateFormatter().string(from: started.addingTimeInterval(remote.seconds)))",
                        "call_start_offset_seconds: \(Int(remote.seconds))", "timestamp_origin: recording_start"]
         }
-        let flags = MeetingVocabulary.flaggedTokens(in: turns.map(\.text).joined(separator: " "), context: ([title] + participants).joined(separator: " "))
+        var flags = MeetingVocabulary.flaggedTokens(in: turns.map(\.text).joined(separator: " "), context: ([title] + participants).joined(separator: " "))
+        let originals = MeetingSource.parse(originalTranscript)
+        var occurrences: [String: Int] = [:]
+        for turn in turns {
+            let occurrence = occurrences[turn.timestamp, default: 0]
+            occurrences[turn.timestamp] = occurrence + 1
+            let matching = originals.filter { $0.timestamp == turn.timestamp }
+            guard matching.indices.contains(occurrence) else { continue }
+            let original = matching[occurrence]
+            guard original.text != turn.text else { continue }
+            let before = original.text.split(whereSeparator: \.isWhitespace).map(String.init)
+            let after = turn.text.split(whereSeparator: \.isWhitespace).map(String.init)
+            var prefix = 0
+            while prefix < min(before.count, after.count), before[prefix] == after[prefix] { prefix += 1 }
+            var suffix = 0
+            while suffix < min(before.count, after.count) - prefix,
+                  before[before.count - suffix - 1] == after[after.count - suffix - 1] { suffix += 1 }
+            let old = before[prefix..<(before.count - suffix)].joined(separator: " ")
+            let new = after[prefix..<(after.count - suffix)].joined(separator: " ")
+            flags.append("[\(turn.timestamp)] \(old) → \(new)")
+        }
         let json = (try? JSONSerialization.data(withJSONObject: flags)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         fields.append("flagged_hotwords: \(json)")
+        let analysis = try? JSONDecoder().decode(MeetingAnalysis.self, from: Data(analysisJSON.utf8))
+        let omit = analysis?.omissionEnabled ?? summary.contains("Private passages omitted")
+        fields.append("omission_policy: \(omit ? "omit_private" : "owner_full")")
+        let publicIDs = Set(MeetingSource.publicTurns(turns).map(\.id))
+        let excluded = omit ? turns.filter { !publicIDs.contains($0.id) && !MeetingSource.isBackchannel($0.text) } : []
+        var omitted: [[String: String]] = []
+        var run: [MeetingSourceTurn] = []
+        func appendRun() {
+            guard let first = run.first, let last = run.last else { return }
+            omitted.append(["range": first.timestamp + "–" + last.timestamp,
+                "reason": "Privacy marker and surrounding context; retained in the owner’s transcript."])
+            run = []
+        }
+        for turn in excluded {
+            if let last = run.last, turn.seconds - last.seconds > 30 { appendRun() }
+            run.append(turn)
+        }
+        appendRun()
+        let omissionsJSON = (try? JSONSerialization.data(withJSONObject: omitted, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+        fields.append("omitted: \(omissionsJSON)")
         return fields
     }
 }
