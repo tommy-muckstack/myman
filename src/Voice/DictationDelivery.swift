@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Carbon
 
 @MainActor enum DictationDelivery {
     struct Outcome: Codable, Equatable {
@@ -10,8 +11,10 @@ import Combine
         var clipboardAvailable: Bool? = nil
 
         var isVerified: Bool { state == "verified" }
+        var needsAttention: Bool { state != "verified" && state != "sent" }
         var statusLabel: String {
             if isVerified { return "Pasted" }
+            if state == "sent" { return "Paste sent" }
             if clipboardAvailable == true || (state == "clipboard" && clipboardAvailable == nil) {
                 return state == "clipboard" ? "Copied — ⌘V to paste" : "Unconfirmed — text copied"
             }
@@ -38,6 +41,18 @@ import Combine
         return bundleURL.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Contents/Frameworks/Electron Framework.framework").path) } ?? false
     }
 
+    enum InsertionSupport: Equatable { case textField, pasteCommand, unavailable }
+
+    /// Custom editors can expose only their containing window (for example
+    /// Zed/GPUI). Lack of AX text readback is not lack of Paste support.
+    static func insertionSupport(role: String?, subrole: String?, secureInput: Bool,
+                                 hasWindow: Bool, pasteEnabled: Bool) -> InsertionSupport {
+        guard !secureInput, subrole != kAXSecureTextFieldSubrole else { return .unavailable }
+        if let role, [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role) { return .textField }
+        let opaque = role.map { [kAXWindowRole, kAXGroupRole, kAXUnknownRole, "AXWebArea", "AXLayoutArea"].contains($0) } ?? true
+        return opaque && hasWindow && pasteEnabled ? .pasteCommand : .unavailable
+    }
+
     @discardableResult static func copyToClipboard(_ text: String) -> Bool {
         NSPasteboard.general.clearContents()
         return NSPasteboard.general.setString(text, forType: .string)
@@ -48,7 +63,9 @@ import Combine
                         pause: (Int) async -> Void = { try? await Task.sleep(for: .milliseconds($0)) }) async -> Outcome {
         let start = Date()
         func finish(_ state: String, _ reason: String) -> Outcome {
-            let copied = state == "verified" ? nil : copy(text)
+            // A sent paste already copied successfully; do not replace the
+            // clipboard again while the destination may still be reading it.
+            let copied: Bool? = state == "verified" ? nil : (state == "sent" ? true : copy(text))
             return Outcome(state: state, reason: copied == false ? "Your dictation is saved, but the clipboard could not be updated. Use Copy to try again; check the field first." : reason,
                            milliseconds: Int(Date().timeIntervalSince(start) * 1000), clipboardAvailable: copied)
         }
@@ -85,6 +102,9 @@ import Combine
             guard !Task.isCancelled, target.isFocused() else {
                 return finish("uncertain", "Focus changed after insertion. Your text is copied; check the field before pasting to avoid duplicates.")
             }
+            if target.prefersPaste, expected == nil {
+                return finish("sent", "Paste sent. This app doesn’t expose its text for confirmation.")
+            }
             // Cursor's empty contenteditable paragraph exposes "\n" before
             // typing, then drops that placeholder when the first text arrives.
             let dropsEmptyParagraph = target.prefersPaste && target.before == "\n"
@@ -105,9 +125,31 @@ import Combine
         var value: CFTypeRef?
         return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
     }
-    private static func focus(_ app: AXUIElement) -> AXUIElement? {
-        guard let value = attribute(app, kAXFocusedUIElementAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+    private static func element(_ app: AXUIElement, _ key: String) -> AXUIElement? {
+        guard let value = attribute(app, key), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return unsafeBitCast(value, to: AXUIElement.self)
+    }
+    private static func focus(_ app: AXUIElement) -> AXUIElement? { element(app, kAXFocusedUIElementAttribute) }
+
+    /// Match the standard Command-V shortcut rather than a localized title.
+    /// Bound both IPC time and traversal: a wedged app must not hang dictation.
+    private static func hasEnabledPasteCommand(_ app: AXUIElement) -> Bool {
+        guard let menu = element(app, kAXMenuBarAttribute) else { return false }
+        let deadline = Date().addingTimeInterval(0.2)
+        var remaining = 120
+        func visit(_ item: AXUIElement, depth: Int) -> Bool {
+            guard depth <= 4, remaining > 0, Date() < deadline else { return false }
+            remaining -= 1
+            AXUIElementSetMessagingTimeout(item, 0.04)
+            if (attribute(item, kAXMenuItemCmdCharAttribute) as? String)?.lowercased() == "v",
+               (attribute(item, kAXMenuItemCmdModifiersAttribute) as? NSNumber)?.intValue == 0,
+               (attribute(item, kAXEnabledAttribute) as? NSNumber)?.boolValue == true { return true }
+            for child in attribute(item, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+                if visit(child, depth: depth + 1) { return true }
+            }
+            return false
+        }
+        return visit(menu, depth: 0)
     }
     /// Called after the transcript is saved. The frontmost app is never activated
     /// or changed here, and every event is guarded by the original field identity.
@@ -126,7 +168,7 @@ import Combine
         guard let target = NSWorkspace.shared.frontmostApplication, target.bundleIdentifier != Bundle.main.bundleIdentifier else { return clipboard("Choose a text field, then paste. Your dictation is saved.") }
         let app = AXUIElementCreateApplication(target.processIdentifier)
         AXUIElementSetMessagingTimeout(app, 0.25)
-        let usePaste = prefersPaste(bundleID: target.bundleIdentifier, bundleURL: target.bundleURL)
+        var usePaste = prefersPaste(bundleID: target.bundleIdentifier, bundleURL: target.bundleURL)
         if usePaste {
             // Electron's documented assistive-technology hook exposes editable
             // controls that otherwise appear as an opaque web area.
@@ -137,28 +179,50 @@ import Combine
         guard !Task.isCancelled, NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
             return clipboard("Focus changed before insertion. Paste the saved text into the intended field.")
         }
-        guard let field = focus(app), let role = attribute(field, kAXRoleAttribute) as? String,
-              [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role),
-              attribute(field, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole else { return clipboard("This field does not support verified insertion. Paste the saved text yourself.") }
-        AXUIElementSetMessagingTimeout(field, 0.25)
-        let before = attribute(field, kAXValueAttribute) as? String
+        let field = focus(app)
+        let window = element(app, kAXFocusedWindowAttribute)
+        if let field { AXUIElementSetMessagingTimeout(field, 0.25) }
+        let role = field.flatMap { attribute($0, kAXRoleAttribute) as? String }
+        let subrole = field.flatMap { attribute($0, kAXSubroleAttribute) as? String }
+        let secure = IsSecureEventInputEnabled()
+        var support = insertionSupport(role: role, subrole: subrole, secureInput: secure,
+                                       hasWindow: window != nil, pasteEnabled: false)
+        if support == .unavailable, !secure, subrole != kAXSecureTextFieldSubrole {
+            // Paste availability may depend on the clipboard containing text.
+            guard copyToClipboard(text) else { return clipboard("Could not copy the dictation. Use Copy to try again.") }
+            support = insertionSupport(role: role, subrole: subrole, secureInput: secure,
+                                       hasWindow: window != nil, pasteEnabled: hasEnabledPasteCommand(app))
+        }
+        guard support != .unavailable else { return clipboard("Choose an editable field, then paste the saved text.") }
+        if support == .pasteCommand { usePaste = true }
+        let before = support == .textField ? field.flatMap { attribute($0, kAXValueAttribute) as? String } : nil
         var selected = CFRange(location: kCFNotFound, length: 0)
-        if let value = attribute(field, kAXSelectedTextRangeAttribute), CFGetTypeID(value) == AXValueGetTypeID() {
+        if support == .textField, let field, let value = attribute(field, kAXSelectedTextRangeAttribute), CFGetTypeID(value) == AXValueGetTypeID() {
             AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cfRange, &selected)
         }
         func stillFocused() -> Bool {
-            NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier && focus(app).map { CFEqual($0, field) } == true
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
+                  !IsSecureEventInputEnabled() else { return false }
+            if let window {
+                guard element(app, kAXFocusedWindowAttribute).map({ CFEqual($0, window) }) == true else { return false }
+            }
+            if let field { return focus(app).map { CFEqual($0, field) } == true }
+            return focus(app) == nil && window != nil
         }
         var settable = DarwinBoolean(false)
         var valueSettable = DarwinBoolean(false)
-        AXUIElementIsAttributeSettable(field, kAXValueAttribute as CFString, &valueSettable)
-        let canReplace = AXUIElementIsAttributeSettable(field, kAXSelectedTextAttribute as CFString, &settable) == .success && settable.boolValue && valueSettable.boolValue
+        var canReplace = false
+        if support == .textField, let field {
+            AXUIElementIsAttributeSettable(field, kAXValueAttribute as CFString, &valueSettable)
+            canReplace = AXUIElementIsAttributeSettable(field, kAXSelectedTextAttribute as CFString, &settable) == .success && settable.boolValue && valueSettable.boolValue
+        }
         let source = CGEventSource(stateID: .privateState)
         let destination = Target(prefersPaste: usePaste, before: before,
             selection: NSRange(location: selected.location, length: selected.length),
-            isFocused: stillFocused, readValue: { attribute(field, kAXValueAttribute) as? String },
+            isFocused: stillFocused, readValue: { field.flatMap { attribute($0, kAXValueAttribute) as? String } },
             replaceSelection: { value in
-                canReplace && AXUIElementSetAttributeValue(field, kAXSelectedTextAttribute as CFString, value as CFString) == .success
+                guard canReplace, let field else { return false }
+                return AXUIElementSetAttributeValue(field, kAXSelectedTextAttribute as CFString, value as CFString) == .success
             }, typeChunk: { chunk in
                 guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true), let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
                     return false
