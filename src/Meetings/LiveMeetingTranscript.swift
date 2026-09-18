@@ -40,12 +40,14 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
     private let wallDuration: Double?
     private var checkpoint: MeetingTranscriptCheckpoint
     private var restoredCheckpoint = false
+    private let contextMeeting: Meeting?
+    private var contextTerms: [MeetingContextTerm] = []
 
     private let micLag: Double
 
     init(micURL: URL?, systemURL: URL?, singleRemote: Bool, profileDatabase: DatabaseQueue? = nil,
          startedAt: Date? = nil, micLag: Double = 0, checkpointURL: URL? = nil,
-         wallDuration: Double? = nil) {
+         wallDuration: Double? = nil, contextMeeting: Meeting? = nil) {
         self.micURL = micURL
         self.systemURL = systemURL
         self.singleRemote = singleRemote
@@ -54,6 +56,7 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
         self.micLag = micLag
         self.checkpointURL = checkpointURL
         self.wallDuration = wallDuration
+        self.contextMeeting = contextMeeting
         self.checkpoint = MeetingTranscriptCheckpoint(micPath: micURL?.path, systemPath: systemURL?.path)
     }
 
@@ -76,7 +79,10 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
         }
         let lag = track == "mic" ? micLag : 0
         guard scale < 1 || lag > 0 else { return turns }
-        return turns.map { MeetingTurn(start: $0.start * scale + lag, end: $0.end * scale + lag, speaker: $0.speaker, text: $0.text) }
+        return turns.map { turn in
+            var aligned = turn; aligned.start = turn.start * scale + lag; aligned.end = turn.end * scale + lag
+            return aligned
+        }
     }
 
     func prepare() async throws {
@@ -93,6 +99,7 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
             restoredCheckpoint = true
         }
         guard asr == nil else { return }
+        if let contextMeeting { contextTerms = MeetingCompanyContext.terms(for: contextMeeting) }
         let models = try await AsrModels.downloadAndLoad()
         try Task.checkCancellation()
         let asr = AsrManager(config: .default)
@@ -266,12 +273,41 @@ actor LiveMeetingTranscriptReader: LiveMeetingTranscriptReading {
         guard !text.isEmpty else { return [] }
         let duration = Double(chunk.samples.count) / 16000
         let timings = (result.tokenTimings ?? []).filter { $0.token.contains(where: { $0.isLetter || $0.isNumber }) }
+        let words = Self.recognizedWords(result.tokenTimings ?? [])
+        var corrected = MeetingCompanyContext.correct(text, terms: contextTerms, words: words).text
+        let preceding = checkpoint.turns.suffix(35).map(\.text).joined(separator: " ")
+        if MeetingLanguageGuard.shouldRetryEnglish(text, preceding: preceding) {
+            let samples = chunk.samples
+            let retried = (try? await AsyncDeadline.run(seconds: 12) {
+                await MeetingLanguageGuard.retryEnglish(samples)
+            }) ?? ""
+            try Task.checkCancellation()
+            corrected = MeetingLanguageGuard.resolved(original: text, retried: retried)
+        }
         let audible = MeetingController.audibleBounds(chunk.samples)
         let first = max(0, min(duration, timings.first?.startTime ?? audible?.start ?? 0))
         let last = max(first, min(duration, timings.last?.endTime ?? audible?.end ?? duration))
         return [MeetingTurn(start: Double(chunk.offset) / 16000 + first,
                             end: Double(chunk.offset) / 16000 + last,
-                            speaker: speaker, text: text)]
+                            speaker: speaker, text: corrected, recognizedWords: words,
+                            originalText: corrected == text ? nil : text)]
+    }
+
+    static func recognizedWords(_ timings: [TokenTiming]) -> [MeetingRecognizedWord] {
+        var words: [MeetingRecognizedWord] = []
+        var text = ""; var confidence: Float = 1
+        func flush() {
+            if !text.isEmpty { words.append(.init(text: text, confidence: confidence)) }
+            text = ""; confidence = 1
+        }
+        for timing in timings where !timing.token.hasPrefix("<") {
+            let token = timing.token.replacingOccurrences(of: "▁", with: " ")
+            if token.first?.isWhitespace == true { flush() }
+            text += token.trimmingCharacters(in: .whitespaces)
+            confidence = min(confidence, timing.confidence)
+        }
+        flush()
+        return words
     }
 }
 

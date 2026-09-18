@@ -53,6 +53,8 @@ struct MeetingTurn: Codable, Sendable, Equatable {
     var end: Double
     var speaker: String
     var text: String
+    var recognizedWords: [MeetingRecognizedWord]? = nil
+    var originalText: String? = nil
 }
 
 /// Who the far side might be — and how much that is worth.
@@ -280,7 +282,7 @@ final class MeetingController: ObservableObject {
             micURL: micWriter?.url, systemURL: systemWriter?.url,
             singleRemote: sessionAttendeeNames.fromAttendees && Set(sessionAttendeeNames.names).count == 1,
             startedAt: meeting.startedAt, micLag: micStartLag,
-            checkpointURL: MeetingTranscriptCheckpoint.url(micPath: micWriter?.url.path, systemPath: systemWriter?.url.path))
+            checkpointURL: MeetingTranscriptCheckpoint.url(micPath: micWriter?.url.path, systemPath: systemWriter?.url.path), contextMeeting: meeting)
         MeetingTranscriptionStatus.shared.recordingIDs.insert(meeting.id)
         liveTranscript.start(reader: reader, ownerName: meeting.resolvedOwner, candidates: sessionAttendeeNames)
     }
@@ -1552,7 +1554,9 @@ final class MeetingController: ObservableObject {
             // Strictly chronological, and a turn that starts with another
             // resolves by which one finishes first.
             turns.sort { ($0.start, $0.end) < ($1.start, $1.end) }
-            let original = MeetingSource.render(turns)
+            let original = MeetingSource.render(turns.map { turn in
+                var original = turn; original.text = turn.originalText ?? turn.text; return original
+            })
             // Restore known spellings AFTER the raw record is kept: the
             // original transcript stays exactly what the recognizer heard.
             let terms = vocabularyTerms(candidates: candidates, title: title)

@@ -199,7 +199,7 @@ enum Brain {
         kind: \(meeting.captureKind.rawValue)
         started: \(iso(meeting.startedAt))
         ended: \(meeting.endedAt.map(iso) ?? "")
-        \(MeetingConversation.metadata(transcript: meeting.transcript, summary: meeting.summary, title: meeting.title, owner: meeting.ownerName.isEmpty ? NSFullUserName() : meeting.ownerName, started: meeting.startedAt, ended: meeting.endedAt, participants: meeting.participants.map(\.name)).joined(separator: "\n"))
+        \(MeetingConversation.metadata(transcript: meeting.transcript, summary: meeting.summary, title: meeting.title, owner: meeting.ownerName.isEmpty ? NSFullUserName() : meeting.ownerName, started: meeting.startedAt, ended: meeting.endedAt, participants: meeting.participants.map(\.name), originalTranscript: meeting.originalTranscript, analysisJSON: meeting.analysisJSON).joined(separator: "\n"))
         participants:
         \(yamlList(participants))
         calendar_invitees:

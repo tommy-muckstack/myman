@@ -131,6 +131,15 @@ enum BrainAgentExport {
                 entry.app = context?.app.nilIfEmpty; entry.bundle_id = context?.bundleID.nilIfEmpty
                 entry.window_title = context?.windowTitle.nilIfEmpty; entry.url = context?.url.nilIfEmpty
                 entry.meetings = screenshotMeetings[item.id] ?? []; entry.tags = analysis.tags
+                for link in entry.meetings ?? [] {
+                    guard let row = meetings[link.id], row.columnNames.contains("participantsJSON"),
+                          let people = try? JSONDecoder().decode([MeetingParticipant].self, from: Data((row["participantsJSON"] as String).utf8)) else { continue }
+                    let domains = Set(people.filter { !$0.isOwner }.compactMap { $0.email?.split(separator: "@").last.map(String.init) })
+                    if ScreenshotIntelligence.offTopicForMeeting(text: item.body, domains: domains) {
+                        entry.tags?.append(.init(name: "off-topic-for-meeting", confidence: 0.8))
+                        break
+                    }
+                }
                 entry.contains_pii = analysis.contains_pii; entry.contains_confidential = analysis.contains_confidential
                 entry.summary = analysis.summary.nilIfEmpty
                 entry.similar_to = similar[item.id]; entry.sequence_id = sequences[item.id]
@@ -148,7 +157,9 @@ enum BrainAgentExport {
                 let names = participants(meeting, transcript: item.body)
                 let owner: String = meeting.columnNames.contains("ownerName") ? meeting["ownerName"] : ""
                 // Insert before the participants sequence, shared with direct exports.
-                fields.insert(contentsOf: MeetingConversation.metadata(transcript: item.body, summary: item.summary, title: item.title, owner: owner.isEmpty ? NSFullUserName() : owner, started: item.capturedAt, ended: ended, participants: names), at: fields.count - 1)
+                fields.insert(contentsOf: MeetingConversation.metadata(transcript: item.body, summary: item.summary, title: item.title, owner: owner.isEmpty ? NSFullUserName() : owner, started: item.capturedAt, ended: ended, participants: names,
+                    originalTranscript: meeting.columnNames.contains("originalTranscript") ? meeting["originalTranscript"] : "",
+                    analysisJSON: meeting.columnNames.contains("analysisJSON") ? meeting["analysisJSON"] : ""), at: fields.count - 1)
                 fields += names.isEmpty ? ["  []"] : names.map { "  - \(scalar($0))" }
                 if meeting.columnNames.contains("kind"), let kind: String = meeting["kind"] { fields.append("kind: \(scalar(kind))") }
                 if !item.body.isEmpty && item.body.split(whereSeparator: \.isWhitespace).count < 100 { fields.append("low_content: true") }

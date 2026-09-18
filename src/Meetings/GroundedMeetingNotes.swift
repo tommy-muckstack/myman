@@ -42,6 +42,8 @@ struct MeetingAnalysis: Codable, Sendable {
     /// Candidate notes dropped because their words were not readable
     /// English — garbled recognition must never become a key point.
     var unclearPassages: Int = 0
+    var correctedTranscript: String? = nil
+    var omissionEnabled: Bool? = nil
 
     init(markdown: String, facts: [MeetingFact] = [], actions: [MeetingCommitment] = [],
          omittedPrivatePassages: Bool = false, unclearPassages: Int = 0) {
@@ -57,6 +59,8 @@ struct MeetingAnalysis: Codable, Sendable {
         actions = try container.decodeIfPresent([MeetingCommitment].self, forKey: .actions) ?? []
         omittedPrivatePassages = try container.decodeIfPresent(Bool.self, forKey: .omittedPrivatePassages) ?? false
         unclearPassages = try container.decodeIfPresent(Int.self, forKey: .unclearPassages) ?? 0
+        correctedTranscript = try container.decodeIfPresent(String.self, forKey: .correctedTranscript)
+        omissionEnabled = try container.decodeIfPresent(Bool.self, forKey: .omissionEnabled)
     }
 }
 
@@ -117,14 +121,28 @@ enum MeetingEvidence {
     /// ("We don't need to necessarily" / "grow our existing team") is only
     /// whole when read across them.
     static func context(around source: MeetingSourceTurn, in sources: [Int: MeetingSourceTurn]) -> String {
-        [sources[source.id - 1], source, sources[source.id + 1]].compactMap { $0 }
+        let ordered = sources.values.sorted { $0.id < $1.id }
+        guard let index = ordered.firstIndex(where: { $0.id == source.id }) else { return source.text }
+        return Array(ordered[max(0, index - 1)...min(ordered.count - 1, index + 1)])
             .map { $0.speaker + " " + $0.text }.joined(separator: " ")
     }
 
     private static func lemmas(_ text: String) -> Set<String> {
+        let text = evidenceWordForms(text)
         let tagger = NLTagger(tagSchemes: [.lemma])
         tagger.string = text
         var result = Set(MeetingSource.words(text).map(stem))
+        // The recognizer often spells initialisms as separate capital letters.
+        if let regex = try? NSRegularExpression(pattern: #"\b(?:[A-Z] ){1,5}[A-Z]\b"#) {
+            for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard let range = Range(match.range, in: text) else { continue }
+                let letters = String(text[range]).replacingOccurrences(of: " ", with: "").lowercased()
+                result.insert(letters)
+                var deduped = ""
+                for letter in letters where deduped.last != letter { deduped.append(letter) }
+                result.insert(deduped)
+            }
+        }
         tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .lemma, options: [.omitWhitespace, .omitPunctuation]) { tag, _ in
             if let tag { result.formUnion(MeetingSource.words(tag.rawValue).map(stem)) }
             return true
@@ -135,6 +153,7 @@ enum MeetingEvidence {
     /// New nouns/numbers are where fluent summaries most often invent detail.
     /// Prefer a conservative, concrete paraphrase to ungrounded jargon.
     static func groundedWording(_ text: String, in evidence: String) -> Bool {
+        let text = evidenceWordForms(text)
         let source = lemmas(evidence)
         let words = MeetingSource.words(text)
         guard !words.isEmpty else { return false }
@@ -143,12 +162,17 @@ enum MeetingEvidence {
         let tagger = NLTagger(tagSchemes: [.lexicalClass])
         tagger.string = text
         var supported = true
-        let generic: Set<String> = ["point", "idea", "approach", "work", "change", "use", "plan", "need", "way", "item", "aspect", "ability", "abilitie", "capability", "capabilitie", "tool", "information", "process", "system", "insight", "organization", "documentation"]
+        let generic: Set<String> = ["point", "idea", "approach", "work", "change", "use", "plan", "need", "way", "item", "aspect", "ability", "abilitie", "capability", "capabilitie", "tool", "information", "process", "system", "insight", "organization", "documentation", "respondent", "speaker", "combination", "importance"]
         tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .lexicalClass,
                              options: [.omitWhitespace, .omitPunctuation]) { tag, range in
             let raw = MeetingSource.normalized(String(text[range]))
             let word = stem(raw)
-            if tag == .noun, !generic.contains(word), forms(raw).isDisjoint(with: source) { supported = false }
+            if tag == .noun, !generic.contains(word), forms(raw).isDisjoint(with: source) {
+                if ProcessInfo.processInfo.environment["MAN_NOTES_DEBUG"] == "1" {
+                    print("UNGROUNDED_NOUN \(raw) | \(text)")
+                }
+                supported = false
+            }
             return supported
         }
         return supported
@@ -156,6 +180,20 @@ enum MeetingEvidence {
 
     private static func stem(_ word: String) -> String {
         word.count > 4 && word.hasSuffix("s") ? String(word.dropLast()) : word
+    }
+
+    /// The system lemmatizer does not equate nominalizations or plural
+    /// initialisms. These are word forms, not extra factual vocabulary.
+    private static func evidenceWordForms(_ text: String) -> String {
+        let forms = [(#"\bsuccessful(?:ly)?\b"#, "success"),
+                     (#"\bprioriti[sz](?:e|ed|ing|ation)\b"#, "priority"),
+                     (#"\bresourcing\b"#, "resource"), (#"\bcultural\b"#, "culture"),
+                     (#"\bexperimentation\b"#, "experiment"), (#"\bPMs\b"#, "PM"),
+                     (#"\brepositories\b|\brepository\b"#, "repo"),
+                     (#"\blifecycle\b"#, "life cycle")]
+        return forms.reduce(text) { value, form in
+            value.replacingOccurrences(of: form.0, with: form.1, options: [.regularExpression, .caseInsensitive])
+        }
     }
 
     /// Every spelling a word may take in the evidence: as written, its
@@ -330,15 +368,15 @@ enum MeetingEvidence {
         guard owned != nil || shared != nil else { return nil }
         // Keep the speaker's own tokens (names, hyphens); drop the leading
         // modal words so the task starts at the verb.
-        let modal: Set<String> = ["i", "ill", "will", "can", "am", "m", "going", "to", "let", "me", "we", "should", "need", "someone", "somebody",
+        let modal: Set<String> = ["i", "ill", "i ll", "will", "can", "am", "m", "going", "to", "let", "me", "we", "should", "need", "someone", "somebody",
                                   "ought", "have", "it", "would", "be", "good", "could", "just", "also", "probably", "definitely", "then", "so"]
         var tokens = sentence.split(whereSeparator: \.isWhitespace).map(String.init)
         // Start at the phrase itself when it does not open the sentence.
         let normalizedTokens = tokens.map { MeetingSource.normalized($0) }
         let phraseFirst = MeetingSource.words(owned ?? shared!).first ?? ""
-        if let at = normalizedTokens.firstIndex(of: phraseFirst) { tokens = Array(tokens[at...]) }
+        if let at = normalizedTokens.firstIndex(where: { $0 == phraseFirst || $0.hasPrefix(phraseFirst + " ") }) { tokens = Array(tokens[at...]) }
         var stripped = 0
-        while let first = tokens.first, stripped < 5, modal.contains(MeetingSource.normalized(first)) { tokens.removeFirst(); stripped += 1 }
+        while let first = tokens.first, stripped < 10, modal.contains(MeetingSource.normalized(first)) { tokens.removeFirst(); stripped += 1 }
         // "let me know" is not a deliverable; "I can bring that up" is.
         if MeetingSource.normalized(tokens.first ?? "") == "know" { return nil }
         if let stop = tokens.firstIndex(where: { ["and", "but", "so", "because", "which"].contains(MeetingSource.normalized($0)) }), stop >= 3 { tokens = Array(tokens[..<stop]) }
@@ -357,6 +395,11 @@ enum MeetingEvidence {
               candidate.confidence >= 0.5, let source = source(for: candidate.quote, in: sources),
               !source.timestamp.isEmpty, containsQuote(candidate.quote, in: source.text),
               isTaskTitle(candidate.task), groundedWording(candidate.task, in: context(around: source, in: sources)) else { return nil }
+        // An operating principle is not a deliverable. "We need to find a
+        // balance" and "I'll put it this way" introduce beliefs/explanations.
+        let taskWords = MeetingSource.normalized(candidate.task)
+        let philosophy = ["find a balance", "find the balance", "put it this way", "think horizontally", "have more understanding"]
+        guard !philosophy.contains(where: taskWords.contains) else { return nil }
         var result = candidate
         result.sourceID = source.id
         let quote = MeetingSource.normalized(candidate.quote)
@@ -364,6 +407,11 @@ enum MeetingEvidence {
                             "one day", "someday", "some day", "eventually", "at some point", "down the road", "in the future", "haven t decided", "have not decided"]
         guard !hypothetical.contains(where: quote.contains) else { return nil }
         let shared = tentativePhrases.contains(where: quote.contains)
+        if candidate.tentative == true && candidate.owner == source.speaker && commitmentPhrases.contains(where: quote.contains) {
+            result.owner = source.speaker; result.tentative = true; result.isRequest = false
+            result.due = ""
+            return result
+        }
         if candidate.tentative == true || candidate.owner == MeetingCommitment.unassignedOwner || (MeetingSource.genericSpeaker(candidate.owner) && shared) {
             // Worth returning to, but nobody owns it yet. Never a task.
             guard shared else { return nil }
@@ -413,10 +461,15 @@ enum MeetingEvidence {
 enum GroundedMeetingNotes {
     static func generate(_ meeting: Meeting, corrections: [String: String] = [:], useLanguageModel: Bool = true,
                          progress: @escaping MeetingNotesService.Progress = { _ in }) async -> MeetingAnalysis {
+        if meeting.captureKind == .meeting, UserDefaults.standard.bool(forKey: "meetingTopicNotesExperimental") {
+            return await MeetingTopicNotes.generate(meeting, corrections: corrections,
+                useLanguageModel: useLanguageModel, progress: progress)
+        }
         let cacheURL = MeetingNotesCache.url(for: meeting)
         let parsed = MeetingSource.parse(meeting.transcript)
-        let publicSource = MeetingSource.publicTurns(parsed)
-        let omitted = publicSource.count < parsed.filter { !MeetingSource.isBackchannel($0.text) }.count
+        let visibleTurns = MeetingSource.notesTurns(parsed)
+        let omitted = visibleTurns.count < parsed.filter { !MeetingSource.isBackchannel($0.text) }.count
+        let publicSource = MeetingSource.paragraphs(visibleTurns)
         // Spellings the meeting itself establishes (a phrase said clearly
         // several times) repair its one-off near-misses. Derived input only;
         // the transcript keeps the recognizer's words, and every change is
@@ -567,6 +620,7 @@ enum GroundedMeetingNotes {
             facts = fallback.filter { MeetingEvidence.legible($0.quote) }
             unclear += fallback.count - facts.count
         }
+        if meeting.captureKind == .meeting { actions += prepared.compactMap { MeetingEvidence.literalFollowUp(in: $0) } }
         actions = selectActions(actions)
         // A promise is a follow-up, not also a topic.
         let promised = Set(actions.map { MeetingSource.normalized($0.quote) })
@@ -583,8 +637,10 @@ enum GroundedMeetingNotes {
             }) ?? ""
         }
         #endif
+        let answers = await MeetingInterviewAnswers.summarize(MeetingInterviewAnswers.exchanges(meeting),
+            useLanguageModel: useLanguageModel, progress: progress)
         let markdown = render(facts: selected, actions: actions, sources: sources, meeting: meeting, privateOmitted: omitted,
-                              unclear: unclear, overview: overview)
+                              unclear: unclear, overview: overview, interviewAnswers: answers)
         let audit = publicSource.flatMap { MeetingVocabulary.correct($0.text, terms: vocabulary, aliases: aliases).corrections }
         let suffix = Array(Set(audit)).sorted().map { "<!-- corrected: \($0.replacingOccurrences(of: "--", with: "—")) -->" }.joined(separator: "\n")
         return MeetingAnalysis(markdown: markdown + (suffix.isEmpty ? "" : "\n\n" + suffix), facts: selected,
@@ -691,7 +747,8 @@ enum GroundedMeetingNotes {
     #endif
 
     static func render(facts: [MeetingFact], actions: [MeetingCommitment], sources: [Int: MeetingSourceTurn],
-                       meeting: Meeting, privateOmitted: Bool, unclear: Int = 0, overview: String = "") -> String {
+                       meeting: Meeting, privateOmitted: Bool, unclear: Int = 0, overview: String = "",
+                       interviewAnswers: [MeetingInterviewAnswer]? = nil) -> String {
         func stamp(_ source: MeetingSourceTurn) -> String {
             guard !source.timestamp.isEmpty else { return "(time unavailable)" }
             let next = sources.values.filter { $0.seconds > source.seconds }.min { $0.seconds < $1.seconds }
@@ -724,7 +781,7 @@ enum GroundedMeetingNotes {
                 output += "\n\n## Next steps\n\n" + actions.compactMap { action -> String? in
                     guard let source = sources[action.sourceID] else { return nil }
                     var line = action.tentative == true
-                        ? "- \(MeetingCommitment.unassignedOwner) — \(action.task) (suggested)"
+                        ? "- \(action.owner) — \(action.task) (proposed)"
                         : "- **\(action.owner)** — \(action.task)"
                     if action.isRequest { line += " (requested)" }
                     if !action.due.isEmpty { line += " — due \(DueDate.resolve(action.due, from: meeting.startedAt) ?? action.due)" }
@@ -732,9 +789,18 @@ enum GroundedMeetingNotes {
                     return line + " " + stamp(source)
                 }.joined(separator: "\n")
             }
-            if actions.isEmpty { output += "\n\n## Next steps\n\nNone agreed. Owner: none assigned. Date: none agreed." }
+            let interview = MeetingInterviewContext.isInterview(meeting.title)
+            if actions.isEmpty {
+                output += "\n\n## Next steps\n\n"
+                if !interview { output += "No commitments were confidently extracted. Review the transcript for follow-ups." }
+            }
+            if interview {
+                if !actions.isEmpty { output += "\n" }
+                output += "- **\(meeting.resolvedOwner)** — Send a thank-you note (inferred-from-meeting-type; not a spoken commitment)."
+            }
             output += "\n\n" + MeetingNoteSections.quotes(meeting: meeting)
-            output += MeetingNoteSections.interview(meeting: meeting)
+            output += interviewAnswers.map { MeetingInterviewAnswers.render($0) + MeetingInterviewContext.unmatchedQuestions(for: meeting) }
+                ?? MeetingNoteSections.interview(meeting: meeting)
             let questions = facts.filter { $0.resolvedKind == .openQuestion }
             if !questions.isEmpty { output += "\n\n## Open questions\n\n" + questions.map(line).joined(separator: "\n") }
         }

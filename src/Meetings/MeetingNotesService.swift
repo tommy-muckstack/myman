@@ -81,7 +81,7 @@ final class MeetingNotesService: ObservableObject {
 
     nonisolated static func generateBounded(_ meeting: Meeting, progress: @escaping Progress = { _ in }) async -> MeetingAnalysis {
         do {
-            return try await AsyncDeadline.run(seconds: 90) {
+            return try await AsyncDeadline.run(seconds: 240) {
                 await GroundedMeetingNotes.generate(meeting, progress: progress)
             }
         } catch {
@@ -154,14 +154,18 @@ final class MeetingNotesService: ObservableObject {
                     // Field-only, conditional update: never overwrite edits,
                     // resurrect a deletion, or save notes for an old transcript.
                     try db.execute(sql: """
-                        UPDATE meeting SET summary = ?, analysisJSON = ?
+                        UPDATE meeting SET summary = ?, analysisJSON = ?, transcript = ?, originalTranscript = ?
                         WHERE id = ? AND summary = ? AND transcript = ?
                             AND kind = ? AND ownerName = ? AND participantsJSON = ?
-                        """, arguments: [generated, String(decoding: try JSONEncoder().encode(analysis), as: UTF8.self), id, meeting.summary, meeting.transcript,
+                        """, arguments: [generated, String(decoding: try JSONEncoder().encode(analysis), as: UTF8.self), analysis.correctedTranscript ?? meeting.transcript,
+                                          analysis.correctedTranscript != nil && meeting.originalTranscript.isEmpty ? meeting.transcript : meeting.originalTranscript,
+                                          id, meeting.summary, meeting.transcript,
                                           meeting.kind, meeting.ownerName, meeting.participantsJSON])
                     guard db.changesCount == 1 else { return nil }
-                    try TaskHygiene.store(analysis.actions, meeting: meeting, in: db)
-                    try MeetingVocabulary.record(meeting, in: db)
+                    var current = meeting
+                    current.transcript = analysis.correctedTranscript ?? meeting.transcript
+                    try TaskHygiene.store(analysis.actions, meeting: current, in: db)
+                    try MeetingVocabulary.record(current, in: db)
                     return try Meeting.fetchOne(db, key: id)
                 }
                 guard let saved else { return "" }
