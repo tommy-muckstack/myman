@@ -38,6 +38,7 @@ final class MeetingAcceptanceTests: XCTestCase {
         let output = GroundedMeetingNotes.render(facts: [], actions: [], sources: [:], meeting: meeting, privateOmitted: false)
         XCTAssertTrue(output.contains("## Quotes"))
         XCTAssertTrue(output.contains("“I think staff adoption is important for success.”"))
-        XCTAssertTrue(output.contains("## Next steps\n\nNone agreed."))
+        XCTAssertTrue(output.contains("## Next steps\n\nNo commitments were confidently extracted."))
+        XCTAssertFalse(output.contains("None agreed."), "An empty extraction cannot establish that nobody committed to work")
     }
 }

@@ -9,6 +9,7 @@ actor MeetingNotesCache {
         var facts: [MeetingFact]
         var actions: [MeetingCommitment]
         var unclear: Int
+        var topics: [MeetingTopic]? = nil
     }
     private var files: [URL: [String: Entry]] = [:]
 
