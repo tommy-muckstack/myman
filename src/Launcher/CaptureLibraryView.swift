@@ -141,6 +141,10 @@ struct CaptureResultRow: View {
                     Text(match.reason)
                     Spacer()
                     Text(match.item.capturedAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(MM.Fonts.body)
+                        .foregroundStyle(MM.Colors.textPrimary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
                 }.font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
         }

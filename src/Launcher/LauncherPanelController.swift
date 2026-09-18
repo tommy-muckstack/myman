@@ -76,8 +76,7 @@ final class LauncherPanelController {
     /// Tasks pinned left, calendar pinned right — the ⌥Space heads-up display.
     private func showSidePanels() {
         hideSidePanels()
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })
-            ?? NSScreen.main else { return }
+        guard let panel, let screen = panel.screen else { return }
         let visible = screen.visibleFrame
 
         let tasks = FloatingPanel(content: TasksPanelView(), becomesKey: false)
@@ -88,7 +87,7 @@ final class LauncherPanelController {
         let tasksSize = NSSize(width: 260, height: 420)
         tasks.setFrame(
             NSRect(x: visible.minX + 20,
-                   y: visible.midY - tasksSize.height / 2,
+                   y: panel.frame.maxY - tasksSize.height,
                    width: tasksSize.width, height: tasksSize.height),
             display: true
         )
@@ -100,7 +99,7 @@ final class LauncherPanelController {
         let calendarSize = NSSize(width: 300, height: 420)
         calendar.setFrame(
             NSRect(x: visible.maxX - calendarSize.width - 20,
-                   y: visible.midY - calendarSize.height / 2,
+                   y: panel.frame.maxY - calendarSize.height,
                    width: calendarSize.width, height: calendarSize.height),
             display: true
         )
@@ -134,6 +133,12 @@ final class LauncherPanelController {
                        width: size.width, height: size.height),
                 display: true
             )
+            // Search results can lift the launcher to stay on screen. Keep
+            // all three headers on the same top edge after that adjustment.
+            for companion in [self.tasksPanel, self.calendarPanel].compactMap({ $0 }) {
+                companion.setFrameOrigin(NSPoint(x: companion.frame.minX,
+                    y: panel.frame.maxY - companion.frame.height))
+            }
         }
     }
 
