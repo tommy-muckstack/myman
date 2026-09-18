@@ -16,13 +16,11 @@ final class VoiceController: ObservableObject {
         case transcribing
         case done(String)
 
-        var pasted: Bool {
-            if case .done = self { return AXIsProcessTrusted() }
-            return false
-        }
     }
 
     @Published var phase: Phase = .idle
+    @Published var deliveryOutcome: DictationDelivery.Outcome?
+    var resultLingerSeconds: Double { deliveryOutcome?.isVerified == true ? 3 : 12 }
     private(set) var agentSessionID: String?
     private(set) var lastDictationID: String?
     @Published var levels: [Float] = []
@@ -121,6 +119,7 @@ final class VoiceController: ObservableObject {
         guard !starting else { return }
         agentSessionID = UUID().uuidString
         lastDictationID = nil
+        deliveryOutcome = nil
         starting = true
         cancelledWhileStarting = false
         lingerTask?.cancel()
@@ -377,14 +376,14 @@ final class VoiceController: ObservableObject {
                 entry.outcome = delivery
                 try DictationHistory.shared.save(entry)
             } catch {
-                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+                delivery.clipboardAvailable = DictationDelivery.copyToClipboard(text)
                 delivery.state = "uncertain"
-                delivery.reason = "Could not update recovery history. Your text is on the clipboard; inspect the destination before pasting."
+                delivery.reason = delivery.clipboardAvailable == true
+                    ? "Could not update recovery history. Your text is on the clipboard; inspect the destination before pasting."
+                    : "Could not update recovery history or the clipboard. Use Copy to recover this dictation."
             }
-            // Missing read-back confirmation is routine, not a reason to
-            // interrupt dictation. Keep it in history; alert only when
-            // insertion was interrupted or text fell back to the clipboard.
-            if delivery.state == "clipboard" || delivery.state == "uncertain" {
+            deliveryOutcome = delivery
+            if !delivery.isVerified {
                 Toast.show(delivery.reason, actionLabel: "Review", action: { WorkflowCenter.shared.open(tab: "dictation") }, duration: 12)
             }
             TaskExtractor.run(text: text, source: .dictation)
@@ -413,7 +412,7 @@ final class VoiceController: ObservableObject {
             // the cursor is on it, short grace after leaving.
             lingerTask?.cancel()
             lingerTask = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(self.resultLingerSeconds))
                 while self.resultHovered {
                     try? await Task.sleep(for: .milliseconds(250))
                     guard !Task.isCancelled else { return }
@@ -576,7 +575,7 @@ struct VoicePillView: View {
                     HStack(spacing: 10) {
                         IconView(icon: .voice, size: 15, color: .white)
                         Spacer()
-                        Text(AXIsProcessTrusted() ? "Pasted" : "Copied — ⌘V to paste")
+                        Text(controller.deliveryOutcome?.statusLabel ?? "Saved — use Copy")
                             .font(MM.Fonts.secondary)
                             .foregroundStyle(Color(white: 0.62))
                         Image(systemName: "xmark")
@@ -586,6 +585,12 @@ struct VoicePillView: View {
                             .background(Circle().strokeBorder(Color(white: 0.35), lineWidth: 1))
                             .clickable(minSize: 32)
                             .onTapGesture { controller.dismiss() }
+                    }
+                    if let delivery = controller.deliveryOutcome, !delivery.isVerified {
+                        Text(delivery.reason)
+                            .font(MM.Fonts.secondary)
+                            .foregroundStyle(MM.Colors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Text(text)
                         .font(MM.Fonts.bodyInput)
@@ -628,10 +633,10 @@ struct VoicePillView: View {
                 .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(pillBlack))
                 .overlay(alignment: .bottom) {
-                    // Drains in sync with the 3s auto-dismiss; hidden once
+                    // Give uncertain delivery longer to review; hidden once
                     // hover locks the card open.
                     if !hoveringResult {
-                        CountdownBar(duration: 3, color: .white.opacity(0.3))
+                        CountdownBar(duration: controller.resultLingerSeconds, color: .white.opacity(0.3))
                             .padding(.horizontal, 20)
                             .padding(.bottom, 4)
                     }
