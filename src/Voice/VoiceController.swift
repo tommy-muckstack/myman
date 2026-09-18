@@ -279,6 +279,7 @@ final class VoiceController: ObservableObject {
     }
 
     private func stopAndTranscribe() {
+        let releasedAt = Date()
         agentSessionID = nil
         if let escHotkeyID {
             HotkeyCenter.shared.unregister(escHotkeyID)
@@ -311,6 +312,7 @@ final class VoiceController: ObservableObject {
         }
 
         transcriptionTask = Task { @MainActor in
+            let recognitionStarted = Date()
             // Long takes NEVER go to the ASR in one piece — models sized for
             // utterances hang or truncate on minutes of audio. 60s chunks,
             // like meetings.
@@ -360,8 +362,11 @@ final class VoiceController: ObservableObject {
                 return
             }
             guard !Task.isCancelled, !isShuttingDown else { return }
+            let recognitionMS = Int(Date().timeIntervalSince(recognitionStarted) * 1000)
+            let cleanupStarted = Date()
             let text = await DictationCleanup.clean(rawText, tone: DictationAppStyles.tone(for: targetApp?.bundleIdentifier, fallback: SettingsStore.shared.dictationTone),
                                                     targetBundleID: targetApp?.bundleIdentifier)
+            let cleanupMS = Int(Date().timeIntervalSince(cleanupStarted) * 1000)
             guard !Task.isCancelled, !isShuttingDown else { return }
             let dictationID = UUID().uuidString
             // History, not a note: dictations are throwaway-but-recoverable.
@@ -404,6 +409,9 @@ final class VoiceController: ObservableObject {
                 "auto_pasted": delivery.state == "verified",
                 "delivery_state": delivery.state,
                 "delivery_ms": delivery.milliseconds,
+                "recognition_ms": recognitionMS,
+                "cleanup_ms": cleanupMS,
+                "release_to_result_ms": Int(Date().timeIntervalSince(releasedAt) * 1000),
             ])
             phase = .done(text)
             if let panel {
