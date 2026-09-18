@@ -23,6 +23,30 @@ final class AudioCapture: @unchecked Sendable {
     private var buffers: [UUID: [Float]] = [:]
     private var modes: [UUID: Mode] = [:]
     private let lock = NSLock()
+    private var shuttingDown = false // guarded by lock
+
+    /// Synchronous fence: permission/model callbacks may still be pending.
+    /// Existing sessions can drain, but no callback can acquire a new one.
+    func preventNewSessions() {
+        lock.lock(); shuttingDown = true; lock.unlock()
+        cancelIdleRelease()
+    }
+
+    private var isShuttingDown: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return shuttingDown
+    }
+
+    func shutdown() async {
+        preventNewSessions()
+        await withCheckedContinuation { continuation in
+            Self.engineQueue.async { [self] in
+                lock.lock(); buffers.removeAll(); modes.removeAll(); lock.unlock()
+                discardEngine()
+                continuation.resume()
+            }
+        }
+    }
 
     /// Every AVAudioEngine and CoreAudio call that can block lives on this
     /// queue, and the engine object is only ever touched from it. Starting or
@@ -71,6 +95,7 @@ final class AudioCapture: @unchecked Sendable {
 
     /// MUST run on `engineQueue` (or the idle-release path that owns it).
     private func prepare() throws {
+        guard !isShuttingDown else { throw CancellationError() }
         prepareLock.lock()
         defer { prepareLock.unlock() }
         guard engine == nil else { return }
@@ -217,7 +242,7 @@ final class AudioCapture: @unchecked Sendable {
     /// the hop so the engine sees the mode it has to satisfy.
     func begin(_ mode: Mode) async throws -> UUID {
         cancelIdleRelease()
-        let id = register(mode)
+        let id = try register(mode)
         do {
             try await withCheckedThrowingContinuation { continuation in
                 Self.engineQueue.async { [self] in
@@ -228,15 +253,20 @@ final class AudioCapture: @unchecked Sendable {
             unregister(id)
             throw error
         }
+        guard !isShuttingDown, !Task.isCancelled else {
+            _ = end(id)
+            throw CancellationError()
+        }
         return id
     }
 
-    private func register(_ mode: Mode) -> UUID {
+    private func register(_ mode: Mode) throws -> UUID {
         let id = UUID()
         lock.lock()
+        defer { lock.unlock() }
+        guard !shuttingDown else { throw CancellationError() }
         buffers[id] = []
         modes[id] = mode
-        lock.unlock()
         return id
     }
 
@@ -253,7 +283,7 @@ final class AudioCapture: @unchecked Sendable {
         let rate = inputRate()
         lock.lock()
         let raw = buffers[id] ?? []
-        buffers[id] = []
+        if buffers[id] != nil { buffers[id] = [] }
         lock.unlock()
         return Self.finalize(raw, sampleRate: rate)
     }
@@ -270,7 +300,7 @@ final class AudioCapture: @unchecked Sendable {
         let rate = inputRate()
         lock.lock()
         let raw = buffers[id] ?? []
-        buffers[id] = []
+        if buffers[id] != nil { buffers[id] = [] }
         lock.unlock()
         return (raw, rate)
     }

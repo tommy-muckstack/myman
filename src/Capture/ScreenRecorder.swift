@@ -60,6 +60,37 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private var maximumDuration: Double?
     private var deadline: Date?
     private var durationTask: Task<Void, Never>?
+    private var startupTask: Task<Void, Never>?
+    private var isShuttingDown = false
+
+    func prepareForQuit() {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
+        startupTask?.cancel()
+        durationTask?.cancel()
+        selection?.hideAll(); selection = nil
+        confirmPanel?.orderOut(nil); confirmPanel = nil
+        countdownPanel?.orderOut(nil); countdownPanel = nil
+        pendingRegion = nil
+        if isRecording { stop() }
+        else if stream == nil, sessionState != "starting", sessionState != "finalizing" { isBusy = false }
+        WebcamBubble.shared.shutdown()
+    }
+
+    func finishQuitting() async {
+        prepareForQuit()
+        while isBusy, !Task.isCancelled {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
+    }
+
+    func preserveBeforeExit() {
+        narration.preserveForQuit()
+        if isBusy {
+            finishSession(state: "interrupted", error: recoveryError(
+                AgentError("APP_QUIT", "My Man quit before video finalization finished. Saved segments and narration are retained.")))
+        }
+    }
     private var changingSegment = false
     private var stopAfterTransition = false
     private var startedOutputs = Set<ObjectIdentifier>()
@@ -92,6 +123,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     func toggle() {
+        guard !isShuttingDown else { return }
         if isRecording {
             stop()
             return
@@ -121,7 +153,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private var borderPanel: NSPanel?
 
     private func beginRegionSelection() {
-        guard #available(macOS 15.0, *), !isBusy else { return }
+        guard #available(macOS 15.0, *), !isShuttingDown, !isBusy else { return }
         isBusy = true
         // The detector must never read our spin-up as a meeting starting.
         NotificationCenter.default.post(name: MeetingDetector.suppressNotification, object: nil)
@@ -152,6 +184,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 Toast.show("Microphone access is off — recording screen audio only", systemImage: "mic.slash")
             }
             let coordinator = SelectionOverlayCoordinator(frozenCapture: nil)
+            guard !self.isShuttingDown else { self.isBusy = false; return }
             coordinator.delegate = self
             self.selection = coordinator
             coordinator.showAll()
@@ -210,7 +243,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     @available(macOS 15.0, *)
     func startForAgent(region: CGRect?, windowID: String? = nil, maximumDuration: Double = 300, microphone: Bool, systemAudio: Bool = true, webcam: Bool = false) async throws {
-        guard !isBusy else { throw AgentError("BUSY", "A screen recording is already active or starting.") }
+        guard !isShuttingDown, !isBusy else { throw AgentError("BUSY", "A screen recording is active, starting, or My Man is quitting.") }
         guard maximumDuration.isFinite, (1...3600).contains(maximumDuration) else { throw AgentError("INVALID_ARGUMENTS", "Maximum duration must be 1–3600 seconds.") }
         guard windowID == nil || (region == nil && !webcam) else { throw AgentError("INVALID_ARGUMENTS", "Window recording cannot combine a region or webcam bubble.") }
         isBusy = true
@@ -221,6 +254,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         if webcam, AVCaptureDevice.authorizationStatus(for: .video) != .authorized {
             guard await AVCaptureDevice.requestAccess(for: .video) else { isBusy = false; throw AgentError("PERMISSION_REQUIRED", "Grant Camera access for the webcam bubble.") }
         }
+        guard !isShuttingDown else { isBusy = false; throw CancellationError() }
         agentSystemAudio = systemAudio; agentWantsCamera = webcam
         agentPreviousMicrophone = microphoneEnabled
         microphoneEnabled = microphone; agentHideCamera = !webcam
@@ -230,17 +264,20 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     @available(macOS 15.0, *)
     fileprivate func start(regionAppKit: CGRect?, windowID: String? = nil, resuming: Bool = false) {
+        guard !isShuttingDown else { return }
         if !resuming {
             agentSessionID = UUID().uuidString; sessionState = "starting"; sessionError = nil
             segmentURLs = []; completedSeconds = 0; lastSavedRecord = nil; activeWindowID = windowID; isPaused = false
         }
-        Task { @MainActor in
+        startupTask = Task { @MainActor in
             do {
+                try Task.checkCancellation()
                 if !resuming, maximumDuration != nil, let id = agentSessionID {
                     guard AgentJournal.shared.saveSession(id, result: ["session_id":id,"state":"interrupted","active":false,"error":["code":"APP_RESTARTED","message":"Recording did not finalize before restart. Inspect saved captures; do not start a replacement automatically."]]) else { throw AgentError("RECOVERY_UNAVAILABLE", "Cannot persist recording receipt; capture did not start.") }
                 }
                 let content = try await SCShareableContent
                     .excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                try Task.checkCancellation()
                 let cgRegion = regionAppKit.map(Self.cgRect(from:))
                 let display = content.displays.first(where: { d in
                     cgRegion.map { d.frame.contains(CGPoint(x: $0.midX, y: $0.midY)) } ?? false
@@ -315,6 +352,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // system audio + AECs the mic machine-wide — release it for
                 // the duration or the recording comes out faint and whistly.
                 await AudioCapture.shared.setSuppressVoiceProcessing(true)
+                try Task.checkCancellation()
 
                 let stream = SCStream(filter: filter, configuration: config, delegate: nil)
                 try stream.addRecordingOutput(output)
@@ -322,6 +360,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 self.stream = stream
                 self.outputURL = url
                 try await stream.startCapture()
+                try Task.checkCancellation()
                 try await self.waitForOutput(output, finished: false)
                 self.segmentStartedAt = Date()
                 if self.microphoneEnabled {
@@ -335,6 +374,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     }
                 }
 
+                try Task.checkCancellation()
                 self.stream = stream
                 self.streamConfiguration = config
                 self.recordingOutput = output
@@ -378,7 +418,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 NSLog("My Man [Record] start failed: \(error)")
                 try? await self.stream?.stopCapture()
                 self.stream = nil; self.recordingOutput = nil
-                self.narration.stopDiscarding()
+                if self.isShuttingDown { self.narration.preserveForQuit() }
+                else { self.narration.stopDiscarding() }
                 self.finishSession(state: "failed", error: self.recoveryError(error))
                 self.clearCaptureControls()
                 await AudioCapture.shared.setSuppressVoiceProcessing(false)
@@ -387,6 +428,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 if let previous = self.agentPreviousMicrophone { self.microphoneEnabled = previous; self.agentPreviousMicrophone = nil }
                 self.borderPanel?.orderOut(nil)
                 self.borderPanel = nil
+                if self.isShuttingDown { return }
                 Toast.show("Screen recording couldn't start — check Screen Recording access",
                            systemImage: "video.slash")
             }
@@ -593,6 +635,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     // MARK: Transcription → brain
 
     private func transcribeAndSync(_ record: ScreenRecording) {
+        guard !isShuttingDown else { return }
         transcriptionCount += 1
         Task { @MainActor in
             defer { transcriptionCount -= 1 }
@@ -952,6 +995,12 @@ final class WebcamBubble: ObservableObject {
     private var panel: NSPanel?
     private var lastFrame: NSRect?
     private var sessionRunner: CaptureSessionRunner?
+    private var isShuttingDown = false
+
+    func shutdown() {
+        isShuttingDown = true
+        turnOff()
+    }
 
     func toggle() {
         UserDefaults.standard.set(!isOn, forKey: "mm.webcamBubble")
@@ -959,7 +1008,7 @@ final class WebcamBubble: ObservableObject {
     }
 
     func turnOn() {
-        guard !isOn else { return }
+        guard !isShuttingDown, !isOn else { return }
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             begin()
@@ -981,6 +1030,7 @@ final class WebcamBubble: ObservableObject {
     }
 
     private func begin() {
+        guard !isShuttingDown else { return }
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device) else { return }
         let session = AVCaptureSession()

@@ -117,6 +117,20 @@ final class SystemAudioTap {
         teardown()
     }
 
+    /// One-way ownership handoff after the controller fences all starts and
+    /// stops. The caller must not touch the tap again until this returns.
+    func stopForQuit() async {
+        let handoff = QuitHandoff(tap: self)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                handoff.tap.stop()
+                continuation.resume()
+            }
+        }
+    }
+
+    private struct QuitHandoff: @unchecked Sendable { let tap: SystemAudioTap }
+
     private var formatListener: AudioObjectPropertyListenerBlock?
 
     private func installFormatListener() {
