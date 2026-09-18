@@ -56,6 +56,8 @@ final class VoiceController: ObservableObject {
     /// that landed mid-start so the mic goes straight back.
     private(set) var starting = false
     private var cancelledWhileStarting = false
+    private var isShuttingDown = false
+    private var transcriptionTask: Task<Void, Never>?
     private let notes = NotesStore()
 
     func toggle() {
@@ -116,7 +118,7 @@ final class VoiceController: ObservableObject {
     }
 
     private func start() {
-        guard !starting else { return }
+        guard !isShuttingDown, !starting else { return }
         agentSessionID = UUID().uuidString
         lastDictationID = nil
         deliveryOutcome = nil
@@ -165,6 +167,7 @@ final class VoiceController: ObservableObject {
     }
 
     private func startAuthorized() async {
+        guard !isShuttingDown else { return }
         let wanted = TranscriptionService.shared.dictationKind
         if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != wanted {
             phase = .preparing(0)
@@ -176,6 +179,7 @@ final class VoiceController: ObservableObject {
         }
         // If a call app already owns the mic (Zoom, Meet, …), our voice
         // processing would corrupt what the other side hears — join raw.
+        guard !isShuttingDown else { return }
         let othersOnMic = await AudioCapture.processesUsingMicOffMain()
             .contains { $0 != Bundle.main.bundleIdentifier }
         let started: UUID
@@ -191,7 +195,7 @@ final class VoiceController: ObservableObject {
         starting = false
         // Starting the device is a real wait; the take may have been called
         // off while we were in it. Hand the mic straight back if so.
-        guard !cancelledWhileStarting else {
+        guard !isShuttingDown, !cancelledWhileStarting else {
             cancelledWhileStarting = false
             _ = audio.end(started)
             return
@@ -306,7 +310,7 @@ final class VoiceController: ObservableObject {
             return
         }
 
-        Task { @MainActor in
+        transcriptionTask = Task { @MainActor in
             // Long takes NEVER go to the ASR in one piece — models sized for
             // utterances hang or truncate on minutes of audio. 60s chunks,
             // like meetings.
@@ -319,6 +323,7 @@ final class VoiceController: ObservableObject {
                 var parts: [String] = []
                 var index = 0
                 while index < samples.count {
+                    guard !Task.isCancelled, !isShuttingDown else { return }
                     // Cut at the quietest moment near the boundary, never
                     // mid-word — hard cuts amputated phrases on both sides.
                     let end = Self.silenceAlignedEnd(
@@ -354,8 +359,10 @@ final class VoiceController: ObservableObject {
                 phase = .idle
                 return
             }
+            guard !Task.isCancelled, !isShuttingDown else { return }
             let text = await DictationCleanup.clean(rawText, tone: DictationAppStyles.tone(for: targetApp?.bundleIdentifier, fallback: SettingsStore.shared.dictationTone),
                                                     targetBundleID: targetApp?.bundleIdentifier)
+            guard !Task.isCancelled, !isShuttingDown else { return }
             let dictationID = UUID().uuidString
             // History, not a note: dictations are throwaway-but-recoverable.
             let saved: Void? = try? await Database.shared.write { db in
@@ -368,6 +375,7 @@ final class VoiceController: ObservableObject {
                     """)
             }
             lastDictationID = saved == nil ? nil : dictationID
+            guard !Task.isCancelled, !isShuttingDown else { return }
             var delivery = DictationDelivery.Outcome(state: "clipboard", reason: "Your text was copied. Recovery history could not be saved.", milliseconds: 0)
             var entry = DictationHistory.Entry(id: dictationID, text: text, targetBundle: targetApp?.bundleIdentifier ?? "", createdAt: Date(), outcome: delivery)
             do {
@@ -433,6 +441,13 @@ final class VoiceController: ObservableObject {
         lingerTask?.cancel()
         dismissPill()
         phase = .idle
+    }
+
+    func shutdown() {
+        isShuttingDown = true
+        transcriptionTask?.cancel(); transcriptionTask = nil
+        dismiss()
+        starting = false
     }
 
     func dismiss() {

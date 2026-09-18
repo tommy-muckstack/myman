@@ -462,7 +462,7 @@ enum Brain {
         process.currentDirectoryURL = root
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try? process.run()
+        do { try AppChildProcesses.shared.run(process) } catch { return -1 }
         process.waitUntilExit()
         return process.terminationStatus
     }

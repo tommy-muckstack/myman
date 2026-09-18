@@ -21,6 +21,15 @@ final class MeetingNotesService: ObservableObject {
     }
     private var jobs: [String: Job] = [:]
     private var tail: Task<String, Never>?
+    private var isShuttingDown = false
+
+    func shutdown() {
+        isShuttingDown = true
+        jobs.values.forEach { $0.task.cancel() }
+        draftTasks.values.forEach { $0.cancel() }
+        jobs.removeAll(); draftTasks.removeAll(); tail = nil
+        stages.removeAll()
+    }
     private let database: DatabaseQueue?
     private let generate: Generate?
     private var db: DatabaseQueue { database ?? Database.shared }
@@ -50,7 +59,7 @@ final class MeetingNotesService: ObservableObject {
     /// Keep a provisional summary available during capture. Exact source
     /// windows are cached by GroundedMeetingNotes and reused on finalization.
     func updateDraft(_ meeting: Meeting) {
-        guard meeting.transcript.count >= 400, draftTasks[meeting.id] == nil,
+        guard !isShuttingDown, meeting.transcript.count >= 400, draftTasks[meeting.id] == nil,
               Date().timeIntervalSince(draftTimes[meeting.id] ?? .distantPast) >= 120 else { return }
         draftTimes[meeting.id] = Date()
         let previous = tail
@@ -90,7 +99,7 @@ final class MeetingNotesService: ObservableObject {
     }
 
     private func job(for id: String, replacing: Bool = false) -> Task<String, Never>? {
-        guard let meeting = try? db.read({ try Meeting.fetchOne($0, key: id) }),
+        guard !isShuttingDown, let meeting = try? db.read({ try Meeting.fetchOne($0, key: id) }),
               (replacing || meeting.summary.isEmpty), !meeting.transcript.isEmpty else { return nil }
         let input = [meeting.transcript, meeting.summary, meeting.kind, meeting.ownerName, meeting.participantsJSON].joined(separator: "\u{0}")
         if let current = jobs[id], current.input == input { return current.task }

@@ -48,6 +48,11 @@ final class AppUpdateCoordinator: NSObject, SPUUpdaterDelegate {
         timer?.tolerance = 1
     }
 
+    func stopMonitoring() {
+        timer?.invalidate(); timer = nil
+        clear()
+    }
+
     func updateReady(version: String, install: @escaping () -> Void) {
         hidePrompt()
         self.version = version
@@ -103,16 +108,6 @@ final class AppUpdateCoordinator: NSObject, SPUUpdaterDelegate {
         hidePrompt()
         guard isBusy() else { return false }
         deferredRelaunch = resume
-        return true
-    }
-
-    /// Final gate for the race between Sparkle's relaunch callback and the
-    /// actual AppKit termination request. Sparkle supports retrying its handler.
-    func shouldCancelTermination() -> Bool {
-        guard isRestarting, isBusy() else { return false }
-        isRestarting = false
-        deferredRelaunch = nil
-        remindAfter = .distantPast
         return true
     }
 

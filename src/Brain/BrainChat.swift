@@ -45,7 +45,7 @@ enum Chatterbox {
             process.arguments = [run.path]
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
-            try process.run()
+            try AppChildProcesses.shared.run(process)
             serverProcess = process
         }
         for _ in 0..<90 { // package + model startup can take a little while
@@ -82,7 +82,7 @@ enum Chatterbox {
                 if process.terminationStatus == 0 { continuation.resume() }
                 else { continuation.resume(throwing: NSError(domain: "MyMan.Chatterbox", code: Int(process.terminationStatus))) }
             }
-            do { try process.run() } catch { continuation.resume(throwing: error) }
+            do { try AppChildProcesses.shared.run(process) } catch { continuation.resume(throwing: error) }
         }
     }
 }

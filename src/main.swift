@@ -22,9 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var agentActions: AgentActions?
     private var agentBridge: AgentBridge?
     private var updater: SPUStandardUpdaterController?
+    private let termination = AppTerminationCoordinator()
     private var updateActivity: AppUpdateActivity { .current(voice: voice, meetings: meetings) }
     private lazy var updateCoordinator = AppUpdateCoordinator(
-        isBusy: { [weak self] in self?.updateActivity.isBusy ?? false },
+        isBusy: { [weak self] in
+            guard let self, !self.termination.isTerminating else { return false }
+            return self.updateActivity.isBusy
+        },
         blockingReason: { [weak self] in self?.updateActivity.description ?? "" },
         canCancelRecording: { [weak self] in self?.updateActivity.canCancelRecording ?? false },
         manageRecording: { [weak self] in
@@ -90,7 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch surface { case "note": self?.notesPanel.show(); case "settings": SettingsController.shared.show(); case "briefs": AgentBriefWindow.shared.open(); case "workflows": WorkflowCenter.shared.open(); default: self?.launcher.open() }
         }
         agentActions = actions
-        let bridge = AgentBridge { actions.receive($0) }
+        let bridge = AgentBridge { [weak self] request in
+            guard self?.termination.isTerminating == false else {
+                return ["ok": false, "error": AgentError("APP_QUITTING", "My Man is quitting.").json]
+            }
+            return actions.receive(request)
+        }
         do { try bridge.start(); agentBridge = bridge }
         catch { NSLog("My Man: local agent bridge unavailable: \(error.localizedDescription)") }
         setUpStatusItem()
@@ -265,7 +274,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        updateCoordinator.shouldCancelTermination() ? .terminateCancel : .terminateNow
+        termination.begin(prepare: {
+            // A deliberate Quit ends capture even if a stale busy flag was
+            // preventing an update. Fence callbacks before yielding to AppKit.
+            calendar.onPreMeeting = { _, _, _ in }
+            meetingDetector.onMeetingDetected = { _ in }
+            updateCoordinator.stopMonitoring()
+            meetings.prepareForQuit()
+            voice.shutdown()
+            ScreenRecorder.shared.prepareForQuit()
+            MeetingNotesService.shared.shutdown()
+            AudioCapture.shared.preventNewSessions()
+            AppChildProcesses.shared.prepareForQuit()
+        }, finish: { [self] in
+            async let meeting: Void = meetings.finishQuitting()
+            async let screen: Void = ScreenRecorder.shared.finishQuitting()
+            async let children: Void = AppChildProcesses.shared.finishQuitting()
+            _ = await (meeting, screen, children)
+            await AudioCapture.shared.shutdown()
+        }, reply: {
+            ScreenRecorder.shared.preserveBeforeExit()
+            AppChildProcesses.shared.forceStop()
+            sender.reply(toApplicationShouldTerminate: true)
+        })
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        AppChildProcesses.shared.forceStop()
     }
 
     private func launcherActions() -> [LauncherAction] {

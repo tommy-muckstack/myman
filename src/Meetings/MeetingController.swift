@@ -84,7 +84,10 @@ final class MeetingController: ObservableObject {
     /// True from the first permission callback until `phase` is set, which is
     /// no longer the same instant: bringing the mic up awaits CoreAudio.
     private(set) var isStarting = false
-    var canStartRecording: Bool { phase == .idle && !isStarting }
+    private var startupTask: Task<Void, Never>?
+    private let requestMicrophoneAccess: () async -> Bool
+    private(set) var isShuttingDown = false
+    var canStartRecording: Bool { !isShuttingDown && phase == .idle && !isStarting }
     /// Meetings whose audio is still being transcribed in the background.
     /// Transcription never occupies the recorder: stopping a meeting returns
     /// the phase to .idle immediately, so a back-to-back call can start while
@@ -92,6 +95,7 @@ final class MeetingController: ObservableObject {
     /// the ASR models aren't safe to share across concurrent transcriptions.
     @Published private(set) var transcribingTitles: [String] = []
     private var transcriptionChain: Task<Void, Never>?
+    private var transcriptionTasks: [String: Task<Void, Never>] = [:]
     private var transcriptionRevision = 0
     private let transcriptionWorker = MeetingTranscriptionWorker()
     private let transcriptionRunner: ((TranscriptionJob) async -> Void)?
@@ -167,7 +171,9 @@ final class MeetingController: ObservableObject {
     /// without starting microphones, process taps, or transcription models.
     init(recording: Meeting? = nil, titleDatabase: DatabaseQueue? = nil,
          transcriptionRunner: ((TranscriptionJob) async -> Void)? = nil,
-         transcriptionProcessor: ((TranscriptionJob) async throws -> MeetingTranscriptResult)? = nil) {
+         transcriptionProcessor: ((TranscriptionJob) async throws -> MeetingTranscriptResult)? = nil,
+         requestMicrophoneAccess: @escaping () async -> Bool = { await AVCaptureDevice.requestAccess(for: .audio) }) {
+        self.requestMicrophoneAccess = requestMicrophoneAccess
         self.transcriptionRunner = transcriptionRunner
         self.transcriptionProcessor = transcriptionProcessor
         self.titleDatabase = titleDatabase
@@ -323,12 +329,16 @@ final class MeetingController: ObservableObject {
     }
 
     func startForAgent(title: String?) async throws {
-        guard phase == .idle, !isStarting else { throw AgentError("BUSY", "A meeting is already recording or starting.") }
-        guard await AVCaptureDevice.requestAccess(for: .audio) else { throw AgentError("PERMISSION_REQUIRED", "Allow Microphone access in macOS settings.") }
+        guard canStartRecording else { throw AgentError("BUSY", "A meeting is recording, starting, or My Man is quitting.") }
+        isStarting = true
+        let allowed = await requestMicrophoneAccess()
+        isStarting = false
+        guard !isShuttingDown, !Task.isCancelled else { throw CancellationError() }
+        guard allowed else { throw AgentError("PERMISSION_REQUIRED", "Allow Microphone access in macOS settings.") }
         guard SystemAudioTap.hasPermission() else { throw AgentError("PERMISSION_REQUIRED", "Allow System Audio Recording access in My Man before starting a meeting through an agent.") }
         // A human may start recording while the permission prompt is open.
         // Never claim that unrelated take as the agent's new session.
-        guard phase == .idle, !isStarting else { throw AgentError("BUSY", "A meeting started while waiting for permission.") }
+        guard canStartRecording else { throw AgentError("BUSY", "Meeting startup was cancelled or another meeting started.") }
         pendingTitle = title
         await startAuthorized(pauseMusic: false)
         guard activeCaptureMeetingID != nil else { throw AgentError("CAPTURE_FAILED", "Meeting audio could not start. Inspect permissions and the selected microphone.") }
@@ -337,7 +347,7 @@ final class MeetingController: ObservableObject {
     /// Detection fires this: capture starts NOW so no words are lost, but
     /// only Save makes it real.
     func startProvisional(title: String? = nil, joinURL: URL? = nil) {
-        guard case .idle = phase else { return }
+        guard canStartRecording else { return }
         if let title { pendingTitle = title }
         provisionalJoinURL = joinURL
         start(provisional: true)
@@ -354,7 +364,7 @@ final class MeetingController: ObservableObject {
     }
 
     func keepProvisional() {
-        guard isProvisional, let meeting else { return }
+        guard !isShuttingDown, isProvisional, let meeting else { return }
         isProvisional = false
         defer { applyPillFrame() }
         provisionalJoinURL = nil
@@ -375,9 +385,10 @@ final class MeetingController: ObservableObject {
     /// Cancel an in-flight take without transcribing or retaining any audio.
     /// Auto-recorded detections are committed immediately, so this must work
     /// for both provisional and already-saved meeting rows.
-    func discardRecording() {
+    func discardRecording(quitting: Bool = false) {
+        guard !isShuttingDown || quitting else { return }
         guard case .recording = phase else { return }
-        guard recordingNote.discard() else {
+        guard recordingNote.discard() || quitting else {
             Toast.show("Couldn’t discard the note. Please try again.", systemImage: "exclamationmark.triangle")
             return
         }
@@ -426,7 +437,7 @@ final class MeetingController: ObservableObject {
             try? Database.shared.write { _ = try Meeting.deleteOne($0, key: discardedMeeting.id) }
             Brain.deleteMeeting(id: discardedMeeting.id, startedAt: discardedMeeting.startedAt)
         }
-        resumeMusicIfPaused()
+        if !quitting { resumeMusicIfPaused() }
         phase = .idle
         dismissPill()
         Analytics.track("meeting_discarded", ["provisional": wasProvisional])
@@ -434,11 +445,13 @@ final class MeetingController: ObservableObject {
     }
 
     private func start(provisional: Bool = false) {
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
-            Task { @MainActor in
-                guard granted else { return }
-                await self.startAuthorized(provisional: provisional)
-            }
+        guard canStartRecording else { return }
+        isStarting = true
+        startupTask = Task { @MainActor in
+            let granted = await requestMicrophoneAccess()
+            isStarting = false
+            guard granted, !isShuttingDown, !Task.isCancelled else { return }
+            await startAuthorized(provisional: provisional)
         }
     }
 
@@ -449,6 +462,7 @@ final class MeetingController: ObservableObject {
         // line: the second caller would sail past before the first sets it.
         guard canStartRecording else { return }
         guard SystemAudioTap.hasPermission() || promptForSystemAudio() else { return }
+        guard canStartRecording else { return }
         isStarting = true
         defer { isStarting = false }
 
@@ -457,8 +471,9 @@ final class MeetingController: ObservableObject {
         systemWriter = WavWriter(url: folder.appendingPathComponent("\(id)-others.wav"))
         micWriter = WavWriter(url: folder.appendingPathComponent("\(id)-you.wav"))
 
+        let writer = systemWriter
         tap.onSamples = { [weak self] samples in
-            self?.systemWriter?.append(samples)
+            writer?.append(samples)
             // Cheap RMS of this chunk feeds the pill waveform.
             guard !samples.isEmpty else { return }
             let rms = sqrt(samples.reduce(Float(0)) { $0 + $1 * $1 } / Float(samples.count))
@@ -471,10 +486,16 @@ final class MeetingController: ObservableObject {
         do {
             let tapStarted = Date()
             try tap.start()
-            micSession = try await AudioCapture.shared.begin(.raw)
+            let session = try await AudioCapture.shared.begin(.raw)
+            guard !isShuttingDown else {
+                _ = AudioCapture.shared.end(session)
+                return
+            }
+            micSession = session
             micStartLag = min(10, max(0, Date().timeIntervalSince(tapStarted)))
         } catch {
             NSLog("My Man [Meeting] start failed: \(error)")
+            guard !isShuttingDown else { return }
             tap.stop()
             _ = systemWriter?.close()
             _ = micWriter?.close()
@@ -522,9 +543,10 @@ final class MeetingController: ObservableObject {
                 Task { @MainActor in self?.discardProvisional() }
             }
         } else {
-            try? await Database.shared.write { [meeting] in
-                if let meeting { try meeting.insert($0) }
-            }
+            // This small commit must not suspend between constructing the
+            // recording and publishing its phase; quit could otherwise end
+            // it, then a late continuation would resurrect the busy state.
+            persistStartingMeeting()
             Analytics.track("meeting_started", ["has_system_audio": tap.isRunning])
         }
         phase = .recording(start: started)
@@ -576,6 +598,12 @@ final class MeetingController: ObservableObject {
     }
 
     // MARK: Meeting-end detection — the inverse of meeting-start
+
+    private func persistStartingMeeting() {
+        try? (titleDatabase ?? Database.shared).write { [meeting] in
+            if let meeting { try meeting.insert($0) }
+        }
+    }
 
     private func startEndWatch() {
         callAppSeenOnMic = false
@@ -774,13 +802,54 @@ final class MeetingController: ObservableObject {
         if final { self.micSession = nil }
     }
 
-    private func stop() {
+    /// Seal the recorder before any asynchronous shutdown work can yield.
+    func prepareForQuit() {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
+        startupTask?.cancel(); startupTask = nil
+        isStarting = false
+        stopEndWatch()
+        provisionalTimeout?.invalidate(); provisionalTimeout = nil
+        slideTimer?.invalidate(); slideTimer = nil
+        levelTimer?.invalidate(); levelTimer = nil
+        micDrainTimer?.invalidate(); micDrainTimer = nil
         if liveEditSaveFailed { saveLiveEdits(liveTranscript.corrections) }
-        guard !liveEditSaveFailed else {
+        liveTranscript.stop()
+        // Seal valid WAV headers before waiting on HAL teardown. A stuck
+        // driver must not leave the last recording unreadable at the deadline.
+        drainMic(final: true)
+        _ = systemWriter?.close()
+        _ = micWriter?.close()
+        flushRecordingTitle()
+        _ = recordingNote.flush()
+        for (id, task) in transcriptionTasks {
+            task.cancel()
+            MeetingTranscriptionStatus.shared.finish(meetingID: id)
+        }
+        transcriptionTasks.removeAll()
+        transcriptionChain = nil
+        transcribingTitles = []
+    }
+
+    func finishQuitting() async {
+        prepareForQuit()
+        // CoreAudio IPC may stall. Never put that wait on AppKit's thread,
+        // which also owns the bounded quit deadline.
+        await tap.stopForQuit()
+        if isProvisional { discardRecording(quitting: true) }
+        else { stop(quitting: true) }
+    }
+
+    private func stop(quitting: Bool = false) {
+        guard !isShuttingDown || quitting else { return }
+        if liveEditSaveFailed {
+            saveLiveEdits(quitting ? (meeting?.liveCorrections ?? []) : liveTranscript.corrections)
+        }
+        guard !liveEditSaveFailed || quitting else {
             Toast.show("Couldn’t save transcript edits. Recording continues so you can retry.", systemImage: "exclamationmark.triangle")
             return
         }
-        guard recordingNote.flush() else {
+        guard recordingNote.flush() || quitting else {
             Toast.show("Couldn’t save your note. Recording continues so you can retry.", systemImage: "exclamationmark.triangle")
             return
         }
@@ -805,7 +874,7 @@ final class MeetingController: ObservableObject {
         systemWriter = nil
         micWriter = nil
 
-        resumeMusicIfPaused()
+        if !quitting { resumeMusicIfPaused() }
 
         guard var finished = meeting else {
             phase = .idle
@@ -839,7 +908,13 @@ final class MeetingController: ObservableObject {
         pendingAttendees = []
         sessionAttendeeNames = .none
         phase = .idle
-        enqueueTranscription(job)
+        if quitting {
+            // The WAVs and endedAt are durable. Leave a zero-attempt job for
+            // normal startup recovery, including any live partial transcript.
+            if micURL != nil || systemURL != nil {
+                try? MeetingProcessingRecord(micLag: micStartLag).save(for: finished)
+            }
+        } else { enqueueTranscription(job) }
         dismissPill()
     }
 
@@ -858,7 +933,7 @@ final class MeetingController: ObservableObject {
     }
 
     func enqueueTranscription(_ job: TranscriptionJob) {
-        guard !MeetingTranscriptionStatus.shared.isPending(job.record.id) else { return }
+        guard !isShuttingDown, !MeetingTranscriptionStatus.shared.isPending(job.record.id) else { return }
         transcriptionRevision += 1
         let revision = transcriptionRevision
         transcribingTitles.append(job.record.title)
@@ -868,8 +943,11 @@ final class MeetingController: ObservableObject {
         let previous = transcriptionChain
         let queueTimer = MeetingProcessingTimer()
         transcriptionChain = Task(priority: .utility) { @MainActor in
+            defer { self.transcriptionTasks.removeValue(forKey: job.record.id) }
             await previous?.value
+            guard !Task.isCancelled, !self.isShuttingDown else { return }
             await job.liveCompletion?.value
+            guard !Task.isCancelled, !self.isShuttingDown else { return }
             queueTimer.finish("transcription_queue")
             if let runner = self.transcriptionRunner { await runner(job) }
             else { await self.runTranscription(job) }
@@ -880,6 +958,7 @@ final class MeetingController: ObservableObject {
             // Completion never touches the next meeting's recording widget.
             if self.transcriptionRevision == revision { self.transcriptionChain = nil }
         }
+        transcriptionTasks[job.record.id] = transcriptionChain
     }
 
     private func runTranscription(_ job: TranscriptionJob) async {
@@ -895,6 +974,7 @@ final class MeetingController: ObservableObject {
             return
         }
         while state.attempts < 3 {
+            guard !Task.isCancelled, !isShuttingDown else { return }
             state.attempts += 1
             state.phase = .running
             do {
@@ -906,6 +986,7 @@ final class MeetingController: ObservableObject {
                 let processed: MeetingTranscriptResult
                 if let transcriptionProcessor { processed = try await transcriptionProcessor(job) }
                 else { processed = try await transcriptionWorker.process(job) }
+                try Task.checkCancellation()
                 guard !processed.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw NSError(domain: "MyMan.Meeting", code: 1, userInfo: [NSLocalizedDescriptionKey: "No readable speech was returned. Your audio is saved."])
                 }
@@ -925,7 +1006,13 @@ final class MeetingController: ObservableObject {
                 MeetingNotesService.shared.prepare(meetingID: saved.id)
                 notifyDone(saved)
                 return
-            } catch is CancellationError { return }
+            } catch is CancellationError {
+                // A normal quit is not an ASR failure and must not consume
+                // one of the recording's three automatic recovery attempts.
+                state.attempts = max(0, state.attempts - 1)
+                try? state.save(for: record)
+                return
+            }
             catch {
                 state.error = error.localizedDescription
                 NSLog("My Man [Meeting] transcription attempt %d failed: %@", state.attempts, error.localizedDescription)
@@ -1758,7 +1845,7 @@ final class MeetingController: ObservableObject {
     /// failure): audio on disk + empty transcript. Finish the job at launch —
     /// a recording must never quietly rot into the 30-day sweep.
     func recoverOrphanedTranscriptions() {
-        guard !isRecoveringTranscripts else { return }
+        guard !isShuttingDown, !isRecoveringTranscripts else { return }
         isRecoveringTranscripts = true
         defer { isRecoveringTranscripts = false }
         let records = (try? Database.shared.read { try Meeting.fetchAll($0) }) ?? []

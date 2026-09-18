@@ -14,6 +14,17 @@ final class NarrationTrack {
     private var writer: WavWriter?
     private var drainTimer: Timer?
     private var muted = false
+    private var isShuttingDown = false
+
+    /// Preserve the sidecar if video finalization cannot finish before quit.
+    func preserveForQuit() {
+        isShuttingDown = true
+        drain()
+        if let session { _ = AudioCapture.shared.end(session) }
+        session = nil
+        drainTimer?.invalidate(); drainTimer = nil
+        _ = writer?.close(); writer = nil
+    }
     /// Seconds of video that had already elapsed when this take began —
     /// the mux inserts the track here (nonzero when the mic was switched
     /// on mid-recording).
@@ -28,8 +39,13 @@ final class NarrationTrack {
     }
 
     func start(alongside movieURL: URL, videoStartedAt: Date = Date()) async {
+        guard !isShuttingDown else { return }
         stopDiscarding()
         guard let id = try? await AudioCapture.shared.begin(.raw) else { return }
+        guard !isShuttingDown, !Task.isCancelled else {
+            _ = AudioCapture.shared.end(id)
+            return
+        }
         startOffsetSeconds = max(0, Date().timeIntervalSince(videoStartedAt))
         let rate = UInt32(AudioCapture.shared.nativeSampleRate())
         let url = movieURL.deletingPathExtension().appendingPathExtension("narration.wav")

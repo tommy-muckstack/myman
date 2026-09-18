@@ -9,6 +9,9 @@ final class WavWriter {
     private let handle: FileHandle
     private var dataBytes: UInt32 = 0
     private let sampleRate: UInt32
+    private let lock = NSLock()
+    private var closed = false
+    private var closedURL: URL?
 
     init?(url: URL, sampleRate: UInt32 = 16000) {
         self.sampleRate = sampleRate
@@ -22,6 +25,8 @@ final class WavWriter {
     }
 
     func append(_ samples: [Float]) {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return }
         guard !samples.isEmpty else { return }
         var data = Data(capacity: samples.count * 2)
         for sample in samples {
@@ -35,6 +40,9 @@ final class WavWriter {
     /// Patch the header with the real sizes and close. Returns nil (deleting
     /// the file) if nothing was ever written.
     func close() -> URL? {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return closedURL }
+        closed = true
         defer { try? handle.close() }
         guard dataBytes > 0 else {
             try? handle.close()
@@ -43,6 +51,7 @@ final class WavWriter {
         }
         try? handle.seek(toOffset: 0)
         try? handle.write(contentsOf: Self.header(dataSize: dataBytes, sampleRate: sampleRate))
+        closedURL = url
         return url
     }
 

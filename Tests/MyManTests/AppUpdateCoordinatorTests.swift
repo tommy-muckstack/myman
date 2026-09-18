@@ -116,19 +116,18 @@ final class AppUpdateCoordinatorTests: XCTestCase {
         XCTAssertEqual(resumed, 1)
     }
 
-    @MainActor func testFinalTerminationRaceCancelsAndAllowsRetryWhenIdle() {
+    @MainActor func testQuitClearsBusyUpdatePromptAndDeferredRelaunch() {
         var busy = false, installed = 0, shown = 0
         let coordinator = AppUpdateCoordinator(isBusy: { busy }, present: { _, _, _ in shown += 1 }, dismiss: {}, presentBlocked: { _, _, _, _, _ in })
         coordinator.updateReady(version: "2.0", install: { installed += 1 })
         coordinator.requestInstall()
-        XCTAssertFalse(coordinator.postponeRelaunch(until: { XCTFail("Idle relaunch should not be deferred") }))
         busy = true
-        XCTAssertTrue(coordinator.shouldCancelTermination())
+        XCTAssertTrue(coordinator.postponeRelaunch(until: { XCTFail("Quit must clear the deferred callback") }))
+        coordinator.stopMonitoring()
         XCTAssertFalse(coordinator.isRestarting)
         busy = false; coordinator.refresh(); coordinator.requestInstall()
-        XCTAssertEqual(shown, 2)
-        XCTAssertEqual(installed, 2)
-        XCTAssertFalse(coordinator.shouldCancelTermination())
+        XCTAssertEqual(shown, 1)
+        XCTAssertEqual(installed, 1)
     }
 
     @MainActor func testAbortedUpdateInvalidatesPromptAndDeferredRelaunch() {
@@ -140,6 +139,5 @@ final class AppUpdateCoordinatorTests: XCTestCase {
         coordinator.clear()
         busy = false; click?(); coordinator.refresh()
         XCTAssertFalse(coordinator.isRestarting)
-        XCTAssertFalse(coordinator.shouldCancelTermination())
     }
 }
