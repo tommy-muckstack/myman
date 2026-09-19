@@ -53,7 +53,7 @@ struct LauncherView: View {
     var libraryModel: CaptureLibraryModel? = nil
 
     @State private var query = ""
-    @StateObject private var libraryFilters = CaptureLibraryFilters()
+    @StateObject var libraryFilters = CaptureLibraryFilters()
     @State private var libraryMode: CaptureLibraryMode = .search
     @State private var selectedAction: Int?
     @State private var hoveredAction: String?
@@ -88,6 +88,10 @@ struct LauncherView: View {
             }
         }
         .frame(width: MM.Layout.panelWidth)
+        // Measure the complete content before AppKit grows the window. Using
+        // the old compact height compresses the header when suggestions enter,
+        // pulling the action icons up through the search-field divider.
+        .fixedSize(horizontal: false, vertical: true)
         .background(
             RoundedRectangle(cornerRadius: MM.Layout.radius, style: .continuous)
                 .fill(MM.Colors.background)
