@@ -460,11 +460,7 @@ struct MeetingDocumentView: View {
                                 .font(MM.Fonts.metadata)
                                 .foregroundStyle(MM.Colors.textTertiary)
                         }
-                        Text(turn.text)
-                            .font(MM.Fonts.body)
-                            .foregroundStyle(MM.Colors.textPrimary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
+                        SelectionTextBlock(text: turn.text)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }

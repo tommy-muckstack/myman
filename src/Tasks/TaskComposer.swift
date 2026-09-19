@@ -10,9 +10,9 @@ final class TaskComposerController {
     static let shared = TaskComposerController()
     private var panel: FloatingPanel?
 
-    func show(editing task: TaskItem? = nil) {
+    func show(editing task: TaskItem? = nil, draft: String? = nil) {
         panel?.orderOut(nil)
-        let view = TaskComposerView(task: task, onDone: { [weak self] in
+        let view = TaskComposerView(task: task, draft: draft, onDone: { [weak self] in
             self?.panel?.orderOut(nil)
             self?.panel = nil
         })
@@ -47,11 +47,13 @@ private struct TaskComposerView: View {
     @State private var dueDate: Date
     @FocusState private var titleFocused: Bool
 
-    init(task: TaskItem?, onDone: @escaping () -> Void) {
+    init(task: TaskItem?, draft: String?, onDone: @escaping () -> Void) {
         self.task = task
         self.onDone = onDone
-        _title = State(initialValue: task?.title ?? "")
-        _notes = State(initialValue: task?.notes ?? "")
+        let selection = (draft ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let heading = String((selection.components(separatedBy: .newlines).first ?? "").prefix(180))
+        _title = State(initialValue: task?.title ?? heading)
+        _notes = State(initialValue: task?.notes ?? (selection == heading ? "" : selection))
         _hasDueDate = State(initialValue: task?.dueDate != nil)
         _dueDate = State(initialValue: task?.dueDate
             ?? Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date())
