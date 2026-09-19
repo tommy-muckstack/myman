@@ -134,7 +134,7 @@ extension View {
     /// Every clickable in My Man: a hit area no smaller than `minSize` and a
     /// pointing-hand cursor on hover. Small icons stay visually small — the
     /// TARGET grows, not the glyph.
-    func clickable(minSize: CGFloat = 24) -> some View {
+    func clickable(minSize: CGFloat = 24, enabled: Bool = true) -> some View {
         self
             .frame(minWidth: minSize, minHeight: minSize)
             .contentShape(Rectangle())
@@ -142,7 +142,9 @@ extension View {
             // set() gets stomped by the window's cursor-update pass in our
             // non-activating panels (launcher, side panels), so the hand never
             // stuck there. Cursor rects are re-applied by AppKit itself.
-            .overlay(CursorRectOverlay())
+            .overlay {
+                if enabled { CursorRectOverlay() }
+            }
     }
 }
 
