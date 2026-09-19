@@ -206,6 +206,7 @@ struct LauncherView: View {
                         execute()
                     } label: { actionChip(action, selected: selectedAction == index) }
                     .buttonStyle(.plain).disabled(!action.enabled).accessibilityLabel(action.title)
+                    .clickable(enabled: action.enabled)
                     .onContinuousHover { phase in
                         switch phase {
                         case .active:
@@ -223,7 +224,6 @@ struct LauncherView: View {
                             showingTileSuggestions = action.captureKind != nil
                             selectedAction = index
                             libraryFilters.actionKind = action.captureKind
-                            NSCursor.pointingHand.set()
                         case .ended:
                             if hoveredAction == action.id {
                                 // Hover owns tile selection; leaving restores
@@ -231,7 +231,6 @@ struct LauncherView: View {
                                 if selectedAction == index { selectedAction = nil }
                                 hoveredAction = nil
                             }
-                            NSCursor.arrow.set()
                         }
                     }
             }
