@@ -167,8 +167,8 @@ struct CaptureDetailView: View {
                         if item.kind == "screenshot", !lines.isEmpty {
                             ForEach(textRegions.filter { line in query.isEmpty || CaptureText.words(query).contains(where: { line.text.localizedCaseInsensitiveContains($0) }) }) { line in
                                 HStack(alignment: .top) {
-                                    HighlightedCaptureText(text: line.text, terms: CaptureText.words(query)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                                        .onTapGesture { selected = line.id }
+                                    SelectionTextBlock(text: line.text, highlights: CaptureText.words(query), onInteract: { selected = line.id })
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                     Button { selected = line.id; copy(line.text) } label: { Image(systemName: "doc.on.doc").clickable() }.buttonStyle(.plain).help("Copy this text region")
                                 }.padding(6).background(selected == line.id ? MM.Colors.surface : .clear)
                             }
@@ -177,10 +177,10 @@ struct CaptureDetailView: View {
                                 HighlightedCaptureText(text: CaptureText.excerpt(item.body, query: query, length: 400), terms: CaptureText.words(query))
                                     .padding(MM.Layout.spacing).background(MM.Colors.surface).textSelection(.enabled)
                             }
-                            HighlightedCaptureText(text: item.body, terms: CaptureText.words(query)).textSelection(.enabled)
+                            SelectionTextBlock(text: item.body, highlights: CaptureText.words(query))
                             if !item.summary.isEmpty {
                                 Text("Notes & summary").font(MM.Fonts.body)
-                                HighlightedCaptureText(text: item.summary, terms: CaptureText.words(query)).textSelection(.enabled)
+                                SelectionTextBlock(text: item.summary, highlights: CaptureText.words(query))
                             }
                         }
                         ForEach(objects, id: \.self) { object in

@@ -140,7 +140,7 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
         scroll.autohidesScrollers = false
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
-        let text = NSTextView(frame: .zero)
+        let text = SelectionActionTextView(frame: .zero)
         context.coordinator.edit = edit
         text.delegate = context.coordinator
         text.linkTextAttributes = [.foregroundColor: NSColor(MM.Colors.accent), .underlineStyle: 0]

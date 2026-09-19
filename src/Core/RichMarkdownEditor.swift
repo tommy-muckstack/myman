@@ -755,7 +755,11 @@ final class RichNoteTextView: NSTextView {
                   onItalic: { [weak self] in self?.toggleItalicSelection() },
                   onUnderline: { [weak self] in self?.toggleUnderlineSelection() },
                   onStrike: { [weak self] in self?.toggleStrikeSelection() },
-                  onLink: { [weak self] in self?.editLink() })
+                  onLink: { [weak self] in self?.editLink() },
+                  selectedText: { [weak self] in
+                      guard let self else { return nil }
+                      return TextSelectionSnapshot.text(in: self.string, range: self.selectedRange())
+                  })
     }
 
     func updateFormatBar() {
@@ -764,7 +768,7 @@ final class RichNoteTextView: NSTextView {
         let range = selectedRange()
         guard range.length > 0, window != nil, slashRange == nil else { bar.isHidden = true; return }
         let rect = localRect(for: range)
-        let size = NSSize(width: 180, height: 36)
+        let size = NSSize(width: 214, height: 36)
         let visible = visibleRect
         let above = rect.minY - size.height - 8
         bar.frame = NSRect(x: min(max(visible.minX + 8, rect.midX - size.width / 2), max(8, visible.maxX - size.width - 8)), y: above < visible.minY ? rect.maxY + 8 : above, width: size.width, height: size.height)
@@ -807,6 +811,7 @@ private struct FormatBar: View {
     var onUnderline: () -> Void
     var onStrike: () -> Void
     var onLink: () -> Void
+    var selectedText: () -> String?
     var body: some View {
         HStack(spacing: 2) {
             button(.bold, "Bold (⌘B)", onBold)
@@ -814,6 +819,8 @@ private struct FormatBar: View {
             button(.underline, "Underline (⌘U)", onUnderline)
             button(.strikethrough, "Strikethrough", onStrike)
             button(.link, "Link (⌘K)", onLink)
+            Divider().frame(height: 16)
+            SelectedTextActionsMenu(text: selectedText)
         }
         .padding(4)
         .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
