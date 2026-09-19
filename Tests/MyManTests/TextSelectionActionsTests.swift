@@ -1,6 +1,9 @@
 import XCTest
 import AppKit
 import SwiftUI
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 @testable import MyMan
 
 final class TextSelectionActionsTests: XCTestCase {
@@ -35,6 +38,33 @@ final class TextSelectionActionsTests: XCTestCase {
         XCTAssertEqual(model.source, source)
         XCTAssertTrue(model.result.isEmpty)
         XCTAssertEqual(model.message, "Select a shorter passage to use this action.")
+    }
+
+    @MainActor
+    func testOnDeviceGenerationWhenExplicitlyRequested() async throws {
+        guard ProcessInfo.processInfo.environment["MYMAN_SELECTION_MODEL_SMOKE"] == "1" else {
+            throw XCTSkip("Opt-in Apple Intelligence integration check")
+        }
+        #if canImport(FoundationModels)
+        guard #available(macOS 26.0, *), case .available = SystemLanguageModel.default.availability else {
+            throw XCTSkip("Apple Intelligence is unavailable on this machine")
+        }
+        let source = "Alex: The launch is not approved. Maya will review the accessibility report on Friday. No release date has been decided."
+        for action in [SelectedTextAction.summarize, .explain] {
+            let model = SelectedTextResultModel(action: action, source: source)
+            defer { model.cancel() }
+            model.start()
+            let deadline = Date().addingTimeInterval(35)
+            while model.working, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+            XCTAssertFalse(model.working)
+            XCTAssertNil(model.message)
+            XCTAssertFalse(model.result.isEmpty)
+            XCTAssertEqual(model.source, source)
+            print("SELECTION_MODEL_\(action.rawValue): \(model.result)")
+        }
+        #else
+        throw XCTSkip("FoundationModels SDK is unavailable")
+        #endif
     }
 
     @MainActor
