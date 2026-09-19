@@ -8,6 +8,7 @@ final class SelectionOverlayFreezeTests: XCTestCase {
     /// outside is clearly darker than the pick.
     @MainActor func testSelectionKeepsTheFrozenFrameInsideTheRectangle() throws {
         _ = NSApplication.shared
+        MM.Fonts.registerFonts()
         let size = CGSize(width: 200, height: 120)
         let frozenImage = NSImage(size: size, flipped: false) { rect in NSColor.red.setFill(); rect.fill(); return true }
         let composite = CompositeCapture(image: frozenImage, combinedFrame: CGRect(origin: .zero, size: size), scaleFactor: 1)

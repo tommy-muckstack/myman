@@ -47,9 +47,9 @@ struct CaptureFilterMenu: View {
             Label { Text("Filters") } icon: { Image(nsImage: MMIcon.filter.menuImage) }
                 .labelStyle(.iconOnly)
                 .foregroundStyle(filters.active || mode == .themes ? MM.Colors.accent : MM.Colors.textTertiary)
-                .clickable(minSize: 28)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .clickable(minSize: 28)
         .help("Filter captures or browse Themes")
         .accessibilityLabel("Filter captures")
         .accessibilityValue(mode == .themes ? "Themes" : filters.active ? "Filters applied" : "All captures")

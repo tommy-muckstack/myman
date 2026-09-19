@@ -150,7 +150,8 @@ struct CalendarPanelView: View {
         let title: String
         let notes: String
         let attendeeNames: [String]
-        let hasMeetingLink: Bool
+        var joinURL: URL? = nil
+        var hasMeetingLink: Bool { joinURL != nil }
         /// A My Man recording whose time overlaps this event → entry point.
         var meetingID: String?
         /// Direct link to THIS event on calendar.google.com, when derivable.
@@ -311,66 +312,17 @@ struct CalendarPanelView: View {
     }
 
     private func eventCard(_ event: EventLite) -> some View {
-        @State var hovering = false
-        return VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
-                if event.hasMeetingLink {
-                    Circle().fill(MM.Colors.accent).frame(width: 5, height: 5)
-                }
-                Text(event.start.formatted(date: .omitted, time: .shortened))
-                    .font(MM.Fonts.metadata)
-                    .foregroundStyle(MM.Colors.textTertiary)
-                Spacer(minLength: 0)
-                if let meetingID = event.meetingID {
-                    // A Button, not an onTapGesture: the surrounding card's
-                    // own tap (open in Google Calendar) must never swallow
-                    // this — notes opens the meeting document, always.
-                    Button {
-                        MeetingDocumentController.shared.open(meetingID: meetingID)
-                    } label: {
-                        HStack(spacing: 3) {
-                            IconView(icon: .note, size: 11, color: MM.Colors.accent)
-                            Text("notes")
-                                .font(MM.Fonts.metadata)
-                                .foregroundStyle(MM.Colors.accent)
-                        }
-                        .contentShape(Rectangle())
-                        .clickable()
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open this meeting's notes")
-                }
-                if hovering {
-                    Button("Brief") { openBrief(event) }
-                        .buttonStyle(.plain)
-                        .font(MM.Fonts.metadata)
-                        .foregroundStyle(MM.Colors.accent)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(MM.Colors.background))
-                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
-                        .clickable()
-                        .help("Prepare meeting brief")
-                }
-            }
-            Text(event.title)
-                .font(MM.Fonts.secondary)
-                .foregroundStyle(MM.Colors.textPrimary)
-                .lineLimit(2)
-        }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
-                .fill(MM.Colors.surface)
-        )
-        .clickable()
-        .onHover { isHovering in
-            withAnimation(.easeInOut(duration: 0.14)) { hovering = isHovering }
-        }
-        .onTapGesture {
-            openInGoogleCalendar(event)
-        }
+        CalendarEventCard(event: event,
+            onOpen: { openInGoogleCalendar(event) },
+            onJoin: {
+                guard let url = event.joinURL else { return }
+                NSWorkspace.shared.open(url)
+            },
+            onBrief: { openBrief(event) },
+            onNotes: {
+                guard let id = event.meetingID else { return }
+                MeetingDocumentController.shared.open(meetingID: id)
+            })
     }
 
     private func openBrief(_ event: EventLite) {
@@ -450,8 +402,9 @@ struct CalendarPanelView: View {
                         notes: event.notes ?? "",
                         attendeeNames: (event.attendees ?? []).filter { !$0.isCurrentUser }
                             .compactMap(\.name),
-                        hasMeetingLink: CalendarWatcher.meetingLink(in: event) != nil,
-                        meetingID: matched?.id
+                        joinURL: CalendarWatcher.meetingURL(in: event),
+                        meetingID: matched?.id,
+                        googleURL: Self.googleEventURL(for: event)
                     )
                 }
             collected.append(DayEvents(id: "day-\(offset)", date: dayStart, events: Array(events)))

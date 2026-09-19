@@ -14,7 +14,7 @@ enum CaptureLibraryMode: String, CaseIterable { case search = "Search", themes =
     @Published var hasMore = false
     @Published var matchingThemeIDs = Set<String>()
     @Published var queryHint: String?
-    private let database: DatabaseQueue
+    let database: DatabaseQueue
     init(database: DatabaseQueue = Database.shared) { self.database = database }
     private var task: Task<Void, Never>?
     private var generation = 0

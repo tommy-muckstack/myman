@@ -57,6 +57,9 @@ struct LauncherView: View {
     @State private var libraryMode: CaptureLibraryMode = .search
     @State private var selectedAction: Int?
     @State private var hoveredAction: String?
+    @State private var hoveringSuggestions = false
+    @State private var showingTileSuggestions = false
+    @State private var openingMousePosition = NSEvent.mouseLocation
     /// On open, every tile's hotkey shows briefly, then fades (hover recalls it).
     @State private var showAllHints = false
     /// Chat is deliberately a quiet beta: reveal its switch from the search
@@ -68,13 +71,20 @@ struct LauncherView: View {
         !query.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    private var shouldDismissTileSuggestions: Bool {
+        showingTileSuggestions && hoveredAction == nil && !hoveringSuggestions
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             searchField
+                .onHover { if $0 { dismissTileSuggestions() } }
             Divider().overlay(MM.Colors.border)
             if !searching && libraryMode == .search { actionBar }
             if searching || libraryMode == .themes || libraryFilters.active || libraryFilters.isBrowsing {
                 CaptureLibraryView(query: $query, mode: $libraryMode, controls: libraryFilters, onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, model: libraryModel)
+                    .onHover { hoveringSuggestions = $0 }
+                    .onDisappear { hoveringSuggestions = false }
             }
         }
         .frame(width: MM.Layout.panelWidth)
@@ -97,27 +107,47 @@ struct LauncherView: View {
             query = ""
             selectedAction = nil
             hoveredAction = nil
-            libraryFilters.actionKind = nil
+            hoveringSuggestions = false
+            showingTileSuggestions = false
+            libraryFilters.reset()
+            libraryMode = .search
+            openingMousePosition = NSEvent.mouseLocation
             showChatSwitch = false
             focused = true
-            showAllHints = true
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(2))
-                // Shortcut labels are deliberately opacity-only. A spring here
-                // makes them look as though they rise out of the tile.
-                withAnimation(.easeInOut(duration: 0.16)) { showAllHints = false }
+        }
+        .task {
+            // Let the panel finish its first layout before fading the hints in.
+            // The view owns this task so dismissal cancels the pending sequence.
+            do {
+                try await Task.sleep(for: .milliseconds(150))
+                showAllHints = true
+                try await Task.sleep(for: .milliseconds(2300))
+                showAllHints = false
+            } catch {
+                return
             }
         }
         .onChange(of: query) { _, _ in
+            showingTileSuggestions = false
             selectedAction = nil
             hoveredAction = nil
             libraryFilters.actionKind = nil
         }
         .onChange(of: libraryMode) { _, _ in
+            showingTileSuggestions = false
             selectedAction = nil
             hoveredAction = nil
             libraryFilters.actionKind = nil
         }
+        .task(id: shouldDismissTileSuggestions) {
+            guard shouldDismissTileSuggestions else { return }
+            // Allow crossing the small gap into a result without collapsing it.
+            do { try await Task.sleep(for: .milliseconds(120)) }
+            catch { return }
+            guard shouldDismissTileSuggestions else { return }
+            dismissTileSuggestions()
+        }
+        .onHover { if !$0 { dismissTileSuggestions() } }
         .frame(maxHeight: .infinity, alignment: .top)
 
     }
@@ -176,15 +206,25 @@ struct LauncherView: View {
                         execute()
                     } label: { actionChip(action, selected: selectedAction == index) }
                     .buttonStyle(.plain).disabled(!action.enabled).accessibilityLabel(action.title)
-                    .onHover { hovering in
-                        if hovering {
-                            hoveredAction = action.id
-                            if action.enabled {
-                                selectedAction = index
-                                libraryFilters.actionKind = action.captureKind
-                                NSCursor.pointingHand.set()
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active:
+                            // Opening beneath a stationary pointer is not an
+                            // invitation to expand the launcher with recents.
+                            let mouse = NSEvent.mouseLocation
+                            guard hypot(mouse.x - openingMousePosition.x,
+                                        mouse.y - openingMousePosition.y) > 2 else { return }
+                            guard hoveredAction != action.id else { return }
+                            guard action.enabled else {
+                                dismissTileSuggestions()
+                                return
                             }
-                        } else {
+                            hoveredAction = action.id
+                            showingTileSuggestions = action.captureKind != nil
+                            selectedAction = index
+                            libraryFilters.actionKind = action.captureKind
+                            NSCursor.pointingHand.set()
+                        case .ended:
                             if hoveredAction == action.id {
                                 // Hover owns tile selection; leaving restores
                                 // Return to the selected search result.
@@ -219,8 +259,11 @@ struct LauncherView: View {
                 .font(MM.Fonts.metadata)
                 .foregroundStyle(MM.Colors.textTertiary)
                 .lineLimit(1)
-                .opacity(hintVisible ? 1 : 0)
-                .transaction { $0.animation = .easeInOut(duration: 0.16) }
+                // Scope animation to opacity so initial layout and text sizing
+                // cannot animate along with the hint's visibility.
+                .animation(.easeInOut(duration: 0.3)) { content in
+                    content.opacity(hintVisible ? 1 : 0)
+                }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
@@ -238,8 +281,17 @@ struct LauncherView: View {
 
     // MARK: Keyboard & execution
 
+    private func dismissTileSuggestions() {
+        guard showingTileSuggestions else { return }
+        showingTileSuggestions = false
+        hoveredAction = nil
+        selectedAction = nil
+        libraryFilters.actionKind = nil
+    }
+
     private func moveAction(_ delta: Int) -> KeyPress.Result {
         guard query.isEmpty, libraryMode == .search else { return .ignored }
+        showingTileSuggestions = false
         let enabledIndices = actions.indices.filter { actions[$0].enabled }
         guard !enabledIndices.isEmpty else { return .handled }
         if let current = selectedAction, let position = enabledIndices.firstIndex(of: current) {

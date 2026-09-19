@@ -63,6 +63,11 @@ enum MM {
             .custom("Gellix-\(weight == .bold ? "SemiBold" : weight.rawValue)", size: size)
         }
 
+        static func coreText(_ size: CGFloat, _ weight: GellixWeight = .regular) -> CTFont {
+            let face = weight == .bold ? "SemiBold" : weight.rawValue
+            return CTFontCreateWithName("Gellix-\(face)" as CFString, size, nil)
+        }
+
         static func native(_ size: CGFloat, _ weight: GellixWeight = .regular, italic: Bool = false) -> NSFont {
             let face = weight == .bold ? "SemiBold" : weight.rawValue
             return NSFont(name: "Gellix-\(face)\(italic ? "-Italic" : "")", size: size)
