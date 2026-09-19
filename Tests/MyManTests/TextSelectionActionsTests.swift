@@ -68,6 +68,33 @@ final class TextSelectionActionsTests: XCTestCase {
     }
 
     @MainActor
+    func testResultPreviewKeepsAStableSizeAndPreservesSource() async throws {
+        _ = NSApplication.shared
+        MM.Fonts.registerFonts()
+        let source = "Alex: The launch is not approved. Maya will review the accessibility report on Friday. No release date has been decided."
+        let model = SelectedTextResultModel(action: .summarize, source: source)
+        let host = NSHostingView(rootView: SelectedTextResultView(model: model, close: {}))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 360), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        for working in [true, false] {
+            model.working = working
+            model.result = working ? "" : "The launch remains unapproved. Maya will review accessibility on Friday; no release date is set."
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(host.fittingSize.width, 420, accuracy: 1)
+            XCTAssertEqual(host.fittingSize.height, 360, accuracy: 1)
+            XCTAssertEqual(model.source, source)
+        }
+        if let path = ProcessInfo.processInfo.environment["MYMAN_SELECTION_RESULT_RENDER"],
+           let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    @MainActor
     func testNativeReadingTextWrapsWithoutLosingSelection() async throws {
         _ = NSApplication.shared
         MM.Fonts.registerFonts()

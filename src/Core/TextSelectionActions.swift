@@ -234,7 +234,7 @@ struct SelectionTextBlock: NSViewRepresentable {
             var remaining = NSRange(location: 0, length: ns.length)
             while remaining.length > 0 {
                 let match = ns.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: remaining)
-                guard match.location != NSNotFound else { break }
+                guard match.location != NSNotFound, match.length > 0 else { break }
                 content.addAttribute(.backgroundColor, value: NSColor(MM.Colors.accent).withAlphaComponent(0.2), range: match)
                 remaining = NSRange(location: NSMaxRange(match), length: ns.length - NSMaxRange(match))
             }
@@ -325,16 +325,17 @@ private final class SelectedTextResultController {
     private func close() { model?.cancel(); panel?.dismiss(); panel = nil; model = nil }
 }
 
-private struct SelectedTextResultView: View {
+struct SelectedTextResultView: View {
     @ObservedObject var model: SelectedTextResultModel
     var close: () -> Void
+    @State private var showingSource = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(model.action.title).font(MM.Fonts.title)
                 Spacer()
-                Text("On-device").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                Text("On-device AI").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
                 Button(action: close) { Image(systemName: "xmark").frame(width: 24, height: 24).clickable() }
                     .buttonStyle(.plain).help("Close")
             }
@@ -347,6 +348,14 @@ private struct SelectedTextResultView: View {
                     .frame(maxHeight: 260)
             }
             HStack {
+                Button("Original") { showingSource = true }
+                    .buttonStyle(.plain).clickable()
+                    .popover(isPresented: $showingSource) {
+                        ScrollView {
+                            Text(model.source).font(MM.Fonts.body).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                        }.frame(width: 340, height: 220).background(MM.Colors.background)
+                    }
                 ForEach([SelectedTextAction.copy, .newNote, .newTask], id: \.self) { action in
                     Button(action.title) {
                         let text = model.result.isEmpty ? model.source : model.result
@@ -355,6 +364,8 @@ private struct SelectedTextResultView: View {
                     }.buttonStyle(.plain).clickable()
                 }
             }.font(MM.Fonts.secondary).disabled(model.working)
+            Text("AI-generated. Check against the original.")
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
         }.padding(MM.Layout.paddingLarge).frame(width: 420, height: 360, alignment: .topLeading)
             .background(MM.Colors.background).foregroundStyle(MM.Colors.textPrimary)
     }
