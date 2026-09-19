@@ -342,7 +342,7 @@ final class SelectionOverlayView: NSView {
         // Avoid NSString's AppKit font substitution path: on macOS 26 it
         // can raise an uncaught nil-attribute exception in TAttributes::ApplyFont.
         // Core Text owns both the concrete font and the drawing attributes.
-        let font = CTFontCreateWithName("Menlo-Medium" as CFString, 12, nil)
+        let font = MM.Fonts.coreText(12, .medium)
         let attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),

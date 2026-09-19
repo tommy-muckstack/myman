@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import GRDB
 
 struct HighlightedCaptureText: View {
     let text: String
@@ -64,6 +65,7 @@ private struct CaptureRowHighlight: ViewModifier {
 
 struct CaptureResultRow: View {
     let match: CaptureMatch
+    var database: DatabaseQueue? = nil
     var selected = false
     var keyboardFocused = false
     var onOpen: () -> Void = {}
@@ -126,8 +128,7 @@ struct CaptureResultRow: View {
 
     private var rowContent: some View {
         HStack(spacing: MM.Layout.spacing) {
-            if match.item.kind == "screenshot" { CaptureThumbnail(path: match.item.sourcePath, revision: match.item.revision) }
-            else { IconView(icon: match.item.icon).frame(width: 48) }
+            CaptureResultThumbnail(item: match.item, database: database)
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     HighlightedCaptureText(text: match.item.title, terms: match.matchedTerms).font(MM.Fonts.body).lineLimit(1)
@@ -225,7 +226,7 @@ struct CaptureLibraryView: View {
                                 ForEach(Array(visibleThemes.prefix(3))) { theme in themeRow(theme) }
                             }
                             ForEach(model.results) { match in
-                                CaptureResultRow(match: match, selected: model.selectedID == match.id,
+                                CaptureResultRow(match: match, database: model.database, selected: model.selectedID == match.id,
                                                  keyboardFocused: keyboardNavigation && model.selectedID == match.id,
                                                  onOpen: { open(match) })
                                 .id(match.id)

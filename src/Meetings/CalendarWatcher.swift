@@ -166,11 +166,14 @@ final class CalendarWatcher {
 
     /// The actual joinable URL, extracted from url/location/notes.
     nonisolated static func meetingURL(in event: EKEvent) -> URL? {
-        let haystack = [
+        meetingURL(in: [
             event.url?.absoluteString,
             event.location,
             event.notes,
-        ].compactMap { $0 }.joined(separator: " ")
+        ].compactMap { $0 }.joined(separator: " "))
+    }
+
+    nonisolated static func meetingURL(in haystack: String) -> URL? {
         let domains = ["zoom.us", "meet.google.com", "teams.microsoft.com",
                        "webex.com", "facetime.apple.com", "meet.jit.si"]
         guard let regex = try? NSRegularExpression(pattern: "https?://[^\\s<>\"]+") else { return nil }
@@ -178,8 +181,8 @@ final class CalendarWatcher {
         for match in regex.matches(in: haystack, range: NSRange(location: 0, length: ns.length)) {
             let candidate = ns.substring(with: match.range)
                 .trimmingCharacters(in: CharacterSet(charactersIn: ").,;"))
-            if domains.contains(where: { candidate.localizedCaseInsensitiveContains($0) }),
-               let url = URL(string: candidate) {
+            if let url = URL(string: candidate), let host = url.host?.lowercased(),
+               domains.contains(where: { host == $0 || host.hasSuffix("." + $0) }) {
                 return url
             }
         }
