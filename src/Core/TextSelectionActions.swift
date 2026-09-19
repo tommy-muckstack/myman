@@ -142,6 +142,7 @@ final class SelectionToolbarController: NSObject {
 
     @objc func selectionChanged() {
         guard let textView, let window = textView.window, window.isKeyWindow,
+              window.firstResponder === textView,
               let text = TextSelectionSnapshot.text(in: textView.string, range: textView.selectedRange()) else {
             hide(); return
         }
@@ -199,6 +200,12 @@ final class SelectionActionTextView: NSTextView {
         super.mouseDown(with: event)
         // NSTextView tracks a drag inside mouseDown until mouse-up.
         DispatchQueue.main.async { [weak self] in self?.selectionToolbar?.selectionChanged() }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { selectionToolbar?.hide() }
+        return resigned
     }
 
     override func keyDown(with event: NSEvent) {

@@ -99,7 +99,7 @@ final class TextSelectionActionsTests: XCTestCase {
         _ = NSApplication.shared
         MM.Fonts.registerFonts()
         let source = "Alex: The launch is not approved yet. We need Maya’s review before Friday. Keep the original transcript unchanged."
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = SelectionWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         defer { window.contentView = nil; window.close() }
         let host = NSHostingView(rootView: SelectionTextBlock(text: source).frame(width: 260))
@@ -112,12 +112,20 @@ final class TextSelectionActionsTests: XCTestCase {
         let text = try XCTUnwrap(find(host))
         XCTAssertGreaterThan(text.frame.height, 40)
         XCTAssertLessThan(text.frame.height, 250)
+        window.makeFirstResponder(text)
         let selection = (source as NSString).range(of: "not approved yet")
         text.setSelectedRange(selection)
         host.layoutSubtreeIfNeeded()
         XCTAssertEqual(text.selectedRange(), selection)
         XCTAssertEqual(text.string, source)
         XCTAssertFalse(text.isEditable)
+        let panel = try XCTUnwrap(window.childWindows?.first { $0.isVisible })
+        XCTAssertTrue(window.makeFirstResponder(nil))
+        XCTAssertFalse(panel.isVisible)
+        // Incoming text/selection notifications must not resurrect it while
+        // another control has focus in the same window.
+        text.setSelectedRange(NSRange(location: 0, length: 4))
+        XCTAssertFalse(panel.isVisible)
     }
 
     @MainActor
