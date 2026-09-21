@@ -45,6 +45,70 @@ final class MeetingRecordingTitleTests: XCTestCase {
         XCTAssertEqual(try CaptureIndex.lexical("Search redesign", database: queue).first?.id, "meeting-live")
     }
 
+    @MainActor func testOverlappingCalendarEventCannotReplaceRecordingAfterPossibleEndSignals() throws {
+        let (controller, queue) = try fixture()
+        let originalPhase = controller.phase
+        let originalSession = controller.recordingSessionID
+        controller.recordingNote.update("Notes from the original hour-long meeting")
+        XCTAssertTrue(controller.recordingNote.flush())
+        let originalNoteID = controller.recordingNote.note?.id
+
+        // A quiet stretch, a hidden call window, or lost mic attribution can
+        // coincide with the next calendar event. None gives it the recorder.
+        for signal in ["mic_attribution", "window_closed", "app_quit"] {
+            controller.handlePossibleMeetingEnd(reason: signal)
+            controller.handleRecordingSilence(seconds: 1800)
+            XCTAssertNil(controller.startProvisional(title: "Overlapping 30-minute meeting",
+                joinURL: URL(string: "https://meet.google.com/second-call")))
+            XCTAssertEqual(controller.phase, originalPhase)
+            XCTAssertEqual(controller.recordingSessionID, originalSession)
+            XCTAssertEqual(controller.activeCaptureMeetingID, "live")
+            XCTAssertEqual(controller.recordingTitle, "Calendar meeting")
+            XCTAssertEqual(controller.recordingNote.note?.id, originalNoteID)
+            XCTAssertFalse(controller.canStartRecording)
+            XCTAssertFalse(controller.isTranscribing)
+            XCTAssertNil(controller.pendingTitle)
+            XCTAssertNil(controller.provisionalJoinURL)
+        }
+        let stored = try XCTUnwrap(saved(queue))
+        XCTAssertNil(stored.endedAt)
+        XCTAssertEqual(stored.transcript, "Existing transcript")
+        XCTAssertEqual(stored.summary, "My notes")
+        XCTAssertEqual(try queue.read { try Meeting.fetchCount($0) }, 1)
+    }
+
+    @MainActor func testOverlappingCalendarEventCannotTakeOverPendingPermission() async {
+        var reply: CheckedContinuation<Bool, Never>?
+        let requested = expectation(description: "Microphone permission pending")
+        let controller = MeetingController(requestMicrophoneAccess: {
+            await withCheckedContinuation { continuation in
+                reply = continuation
+                requested.fulfill()
+            }
+        })
+        let firstSession = controller.startProvisional(title: "Original meeting")
+        await fulfillment(of: [requested], timeout: 2)
+        XCTAssertNotNil(firstSession)
+        XCTAssertNil(controller.startProvisional(title: "Overlapping meeting"))
+        XCTAssertEqual(controller.recordingSessionID, firstSession)
+        XCTAssertEqual(controller.pendingTitle, "Original meeting")
+        XCTAssertTrue(controller.isStarting)
+        controller.prepareForQuit()
+        reply?.resume(returning: false)
+    }
+
+    @MainActor func testDelayedCalendarCommitCannotClaimAnotherProvisionalRecording() throws {
+        let (controller, queue) = try fixture(persisted: false)
+        controller.isProvisional = true
+        let originalPhase = controller.phase
+        controller.keepProvisional(sessionID: UUID())
+        XCTAssertTrue(controller.isProvisional)
+        XCTAssertEqual(controller.phase, originalPhase)
+        XCTAssertEqual(controller.recordingTitle, "Calendar meeting")
+        XCTAssertNil(try saved(queue))
+        XCTAssertNil(controller.startProvisional(title: "Overlapping event"))
+    }
+
     @MainActor func testTypingAutosavesLatestName() async throws {
         let (controller, queue) = try fixture()
         controller.updateRecordingTitle("Search")

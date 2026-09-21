@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import SwiftUI
 
 extension NSAttributedString.Key {
@@ -159,9 +160,8 @@ enum MarkdownRich {
         if tableCell != nil { paragraph.paragraphSpacing = 0; paragraph.lineSpacing = 3 }
         if prefix.hasPrefix("-") || prefix.hasPrefix("*") || prefix.first?.isNumber == true || prefix == ">" {
             paragraph.firstLineHeadIndent = nesting * listIndent
-            paragraph.headIndent = 24 + nesting * listIndent
+            paragraph.headIndent = paragraph.firstLineHeadIndent
         }
-        text.addAttribute(.paragraphStyle, value: paragraph, range: whole)
         text.enumerateAttributes(in: whole) { attributes, range, _ in
             let code = attributes[.manCode] as? String
             let bold = attributes[.manBold] as? Bool == true
@@ -177,6 +177,16 @@ enum MarkdownRich {
                                     .foregroundColor: NSColor(prefix.contains("[ ]") ? MM.Colors.textSecondary : MM.Colors.accent)], range: marker)
             }
         }
+        let displayMarker = block(rawPrefix + "content").display
+        if !displayMarker.isEmpty, text.string.hasPrefix(displayMarker) {
+            // The first line contains the actual marker and spaces. Wrapped
+            // lines must start at that same text position, not a fixed 24 pt.
+            // Measure after fonts are applied, including the larger checkbox.
+            let marker = text.attributedSubstring(from: NSRange(location: 0, length: (displayMarker as NSString).length))
+            let width = CTLineGetTypographicBounds(CTLineCreateWithAttributedString(marker), nil, nil, nil)
+            paragraph.headIndent = paragraph.firstLineHeadIndent + CGFloat(width)
+        }
+        text.addAttribute(.paragraphStyle, value: paragraph, range: whole)
         if prefix.lowercased().contains("[x]") {
             let display = block(rawPrefix + "content").display
             let start = text.string.hasPrefix(display) ? (display as NSString).length : 0

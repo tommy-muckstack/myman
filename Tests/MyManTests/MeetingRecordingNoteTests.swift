@@ -1,8 +1,46 @@
 import GRDB
 import XCTest
+import AppKit
+import SwiftUI
 @testable import MyMan
 
 final class MeetingRecordingNoteTests: XCTestCase {
+    @MainActor func testRenderMeetingNoteControls() async throws {
+        guard ProcessInfo.processInfo.environment["MAN_RENDER_LIST_WRAPPING"] == "1" else {
+            throw XCTSkip("Opt-in native meeting note visual review")
+        }
+        _ = NSApplication.shared
+        MM.Fonts.registerFonts()
+        let (_, draft) = try fixture()
+        draft.update("- [ ] Send the follow-up information after the meeting\n- [x] Confirm the pilot scope\n- Adoption started well and then slowed when ownership changed. Review the next steps together.")
+        XCTAssertTrue(draft.flush())
+        let window = DocumentWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 440), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
+        window.contentView = NSHostingView(rootView: VStack(spacing: MM.Layout.spacing) {
+            Text("Project review").font(MM.Fonts.title).foregroundStyle(MM.Colors.textPrimary)
+            MeetingRecordingTabs(showingNote: .constant(true))
+            MeetingRecordingNoteView(draft: draft) { _ in }
+        }.padding(MM.Layout.padding).background(MM.Colors.background))
+        func capture(_ name: String) throws {
+            let view = try XCTUnwrap(window.contentView)
+            view.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/private/tmp/myman-meeting-note-\(name).png"))
+        }
+        window.appearance = NSAppearance(named: .darkAqua)
+        try await Task.sleep(for: .milliseconds(300))
+        try capture("saved-dark")
+        try await Task.sleep(for: .milliseconds(5300))
+        try capture("expired-dark")
+        draft.update(draft.text + "\n- [ ] Share the revised plan")
+        XCTAssertTrue(draft.flush())
+        window.appearance = NSAppearance(named: .aqua)
+        try await Task.sleep(for: .milliseconds(300))
+        try capture("saved-light")
+    }
+
     func testReleaseUpgradePreservesNotesAndEarlyDevelopmentSchema() throws {
         for earlyBuild in [false, true] {
             let db = try DatabaseQueue()
@@ -46,6 +84,7 @@ final class MeetingRecordingNoteTests: XCTestCase {
         draft.update("Ask about the launch date")
         XCTAssertTrue(draft.flush())
         let id = try XCTUnwrap(draft.note?.id)
+        XCTAssertEqual(draft.note?.title, "Project review")
         draft.update("Ask about the launch date\nSend the proposal tomorrow.")
         XCTAssertTrue(draft.flush())
         let notes = try db.read { try Note.fetchAll($0) }
@@ -53,9 +92,21 @@ final class MeetingRecordingNoteTests: XCTestCase {
         XCTAssertEqual(notes[0].id, id)
         XCTAssertEqual(notes[0].meetingID, "call")
         XCTAssertEqual(notes[0].body, draft.text)
+        XCTAssertEqual(notes[0].title, "Project review")
         XCTAssertNotNil(CaptureIndex.item("note-" + id, database: db))
         draft.reset(meetingID: "call")
         XCTAssertEqual(draft.note?.id, id)
+    }
+
+    @MainActor func testFullNoteEditPreservesMeetingTitleAndFirstBodyLine() throws {
+        let (db, draft) = try fixture()
+        draft.update("- [ ] Ask about the plan")
+        XCTAssertTrue(draft.flush())
+        let note = try XCTUnwrap(draft.note)
+        try NotesStore(database: db).updateDocument(note, body: "- [x] Ask about the plan\n- [ ] Share the proposal")
+        draft.reset(meetingID: "call")
+        XCTAssertEqual(draft.note?.title, "Project review")
+        XCTAssertEqual(draft.text, "- [x] Ask about the plan\n- [ ] Share the proposal")
     }
 
     @MainActor func testClearingDraftRemovesEmptyNoteAndDiscardCancelsPendingSave() async throws {

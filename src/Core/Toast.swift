@@ -113,8 +113,12 @@ private struct ToastView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .foregroundStyle(MM.Colors.accent)
+            if systemImage == "checklist" {
+                IconView(icon: .checklistChecked, color: MM.Colors.accent)
+            } else {
+                Image(systemName: systemImage)
+                    .foregroundStyle(MM.Colors.accent)
+            }
             Text(message)
                 .font(MM.Fonts.secondary)
                 .foregroundStyle(MM.Colors.textPrimary)

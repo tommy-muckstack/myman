@@ -63,7 +63,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
 struct EditorView: View {
     @ObservedObject var model: EditorModel
-    @State private var tool: EditorTool = .arrow
+    @State private var tool: EditorTool = .box
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
     @State private var pendingText: (origin: CGPoint, id: UUID)?

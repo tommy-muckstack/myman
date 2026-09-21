@@ -114,8 +114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         calendar.onPreMeeting = { [weak self] title, joinURL, startsAt in
             guard let self,
                   !ScreenRecorder.shared.isBusy,
-                  case .idle = self.meetings.phase else { return }
-            self.meetings.startProvisional(title: title, joinURL: joinURL)
+                  self.meetings.canStartRecording,
+                  let sessionID = self.meetings.startProvisional(title: title, joinURL: joinURL)
+            else { return }
             if SettingsStore.shared.autoRecordMeetings {
                 let delay = max(0, startsAt.timeIntervalSinceNow)
                 // Commit only once the take shows an actual call (call app on
@@ -127,9 +128,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .seconds(delay))
                     for _ in 0 ..< 20 {
-                        guard let self, self.meetings.isProvisional else { return }
+                        guard !Task.isCancelled, let self,
+                              self.meetings.recordingSessionID == sessionID,
+                              self.meetings.isProvisional else { return }
                         if !ScreenRecorder.shared.isBusy, self.meetings.hasCallEvidence {
-                            self.meetings.keepProvisional()
+                            self.meetings.keepProvisional(sessionID: sessionID)
                             return
                         }
                         try? await Task.sleep(for: .seconds(30))
@@ -144,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         meetingDetector.isOwnAudioActive = { [weak self] in
             guard let self else { return true }
             if case .idle = self.voice.phase {} else { return true }
-            if case .idle = self.meetings.phase {} else { return true }
+            if !self.meetings.canStartRecording { return true }
             // Selection, permission prompts, capture spin-up, and a live
             // recording are one exclusive screen-recording session. A meeting
             // detector event in any of those stages must not start a second
@@ -155,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         meetingDetector.onMeetingDetected = { [weak self] appName in
             guard let self,
                   !ScreenRecorder.shared.isBusy,
-                  case .idle = self.meetings.phase else { return }
+                  self.meetings.canStartRecording else { return }
             Analytics.track("meeting_detected", ["app": appName])
             if SettingsStore.shared.autoRecordMeetings {
                 self.meetings.toggle()
