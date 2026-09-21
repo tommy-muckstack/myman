@@ -26,20 +26,36 @@ enum MeetingNoteSections {
 
     /// Extractive by construction: quotes are exact source substrings, never
     /// model paraphrases. Rank beliefs/decisions, keeping coverage across time.
-    static func quotes(meeting: Meeting, limit: Int = 10, separation: Double = 45) -> String {
+    static func quotes(meeting: Meeting, limit: Int = 10, separation: Double = 20) -> String {
         let original = MeetingSource.notesTurns(MeetingSource.parse(meeting.transcript))
         let turns = original + MeetingSource.paragraphs(original)
         var candidates: [(source: MeetingSourceTurn, text: String, score: Int)] = []
         for turn in turns where !MeetingSource.genericSpeaker(turn.speaker) {
-            for originalSentence in sentences(turn.text) {
-                let sentence = originalSentence.replacingOccurrences(of: #"(?i)^(?:(?:for a while|a lot of|and so|so|um|uh|yeah)[, ]+)+"#, with: "", options: .regularExpression)
+            let parts = sentences(turn.text)
+            // ASR punctuation can split one thought into several sentences.
+            // Offer adjacent exact-source spans as well as single sentences.
+            var spans = parts
+            for index in parts.indices {
+                for count in 2...3 where index + count <= parts.count {
+                    let slice = Array(parts[index..<(index + count)])
+                    guard let first = turn.text.range(of: slice[0]),
+                          let last = turn.text.range(of: slice.last!, range: first.lowerBound..<turn.text.endIndex) else { continue }
+                    spans.append(String(turn.text[first.lowerBound..<last.upperBound]))
+                }
+            }
+            for originalSentence in spans {
+                let sentence = originalSentence.replacingOccurrences(of: #"(?i)^(?:(?:for a while|a lot of|and so|and|so|um|uh|yeah|like)[, ]+)+"#, with: "", options: .regularExpression)
                     .components(separatedBy: ", which ").first ?? originalSentence
                 let words = MeetingSource.words(sentence)
                 let completeText = originalSentence.contains(", which ") ? sentence + "." : sentence
-                guard (5...35).contains(words.count), !sentence.contains("?"), MeetingEvidence.legible(sentence),
+                let shortPrinciple = !Set(words).isDisjoint(with: ["need", "should", "strategy", "understanding", "important"])
+                guard (8...65).contains(words.count) || (5...7).contains(words.count) && shortPrinciple && quoteScore(sentence) >= 45,
+                      !sentence.contains("?"), MeetingEvidence.legible(sentence),
                       isSubstantive(sentence), completeSentence(completeText, minWords: 5), quoteHasSubject(sentence) else { continue }
-                let score = quoteScore(sentence)
-                guard score > 0 else { continue }
+                let owner = Set([meeting.ownerName, meeting.resolvedOwner, "You"])
+                let roleBonus = MeetingInterviewContext.isInterview(meeting.title) && !owner.contains(turn.speaker) ? 12 : 0
+                let score = quoteScore(sentence) + roleBonus
+                guard quoteScore(sentence) > 0 else { continue }
                 let anchor = quoteAnchor(sentence, paragraph: turn, originals: original)
                 candidates.append((anchor, sentence, score))
             }
@@ -70,14 +86,15 @@ enum MeetingNoteSections {
     static func quoteScore(_ sentence: String) -> Int {
         let words = MeetingSource.words(sentence)
         let lower = words.joined(separator: " ")
-        let introductions = ["background on myself", "background about myself", "i worked at", "i used to work", "i graduated", "among the actual", "i was thinking about just", "i was wondering", "nice to meet", "thanks for taking", "happy to answer", "i ll put it this way"]
+        let introductions = ["background on myself", "background about myself", "i worked at", "i used to work", "i graduated", "among the actual", "i was thinking about just", "i was wondering", "nice to meet", "thanks for taking", "happy to answer", "i ll put it this way", "i don t know if you", "you know it s not"]
         guard !introductions.contains(where: lower.contains) else { return 0 }
-        let beliefs: Set<String> = ["believe", "need", "important", "success", "focus", "decided", "should", "strategy"]
+        let beliefs: Set<String> = ["believe", "need", "important", "success", "focus", "decided", "should", "strategy", "want", "feel", "learned"]
         let contrasts = [" but ", " instead ", " rather ", " versus ", " not ", "wasn t", "can t", "don t", "doesn t"]
-        let contrast = contrasts.contains { (" " + lower + " ").contains($0) }
-        let strongContrast = ["can t", "cannot", "wasn t", "don t", "doesn t", "not ", "instead"].contains { lower.contains($0) }
+        let contrast = ["aren t", "isn t", "won t", "couldn t"].contains(where: lower.contains) || contrasts.contains { (" " + lower + " ").contains($0) }
+        let strongContrast = ["can t", "cannot", "wasn t", "don t", "doesn t", "not ", "instead", "aren t", "isn t", "won t", "couldn t"].contains { lower.contains($0) }
+            || (words.contains("right") && words.contains("wrong"))
         let belief = !Set(words).isDisjoint(with: beliefs)
-        let number = words.contains { $0.first?.isNumber == true || ["percent", "hundred", "thousand", "million", "billion"].contains($0) }
+        let number = words.contains { $0.first?.isNumber == true || ["percent", "hundred", "thousand", "million", "billion", "third", "fourth", "seven", "eight"].contains($0) }
         // Most quotes need eight words. A short, complete principle or contrast
         // can be the point itself; never pad it with surrounding filler.
         guard words.count >= 8 || ((belief || contrast) && words.count >= 5), belief || contrast || number else { return 0 }
@@ -87,7 +104,7 @@ enum MeetingNoteSections {
         let principle = ["we", "you", "people", "customers", "users", "teams"].contains(words.first ?? "")
         return (belief ? 24 : 0) + (strongContrast ? 24 : (contrast ? 10 : 0)) + (number ? 20 : 0) + (principle ? 10 : 0)
             + min(8, salience(sentence)) + (words.count <= 18 ? 8 : 0)
-            - words.filter { filler.contains($0) }.count * 3 - repeats * 12 - repeatedContent * 8
+            - words.filter { filler.contains($0) }.count * 3 - repeats * 6 - repeatedContent * 3
     }
 
     static func quoteHasSubject(_ sentence: String) -> Bool {

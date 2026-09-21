@@ -57,9 +57,17 @@ struct MeetingInterviewContext: Codable {
     }
 
     static func preparedPrompts(in content: String) -> [String] {
-        Array(content.components(separatedBy: .newlines).compactMap { line -> String? in
+        let lines = content.components(separatedBy: .newlines)
+        // A prep document also contains researched facts and reminders. When
+        // it has a questions section, only that section is the interview plan.
+        let start = lines.firstIndex { $0.hasPrefix("#") && $0.localizedCaseInsensitiveContains("questions to ask") }
+        let selected: [String]
+        if let start {
+            selected = Array(lines.dropFirst(start + 1).prefix { !$0.hasPrefix("## ") })
+        } else { selected = lines }
+        return Array(selected.compactMap { line -> String? in
             guard !line.hasPrefix("#") else { return nil }
-            let clean = line.replacingOccurrences(of: #"^\s*(?:[-*]|\d+[.)])\s*"#, with: "", options: .regularExpression)
+            let clean = line.replacingOccurrences(of: #"^\s*(?:[-*]|\d+[a-z]?[.)])\s*"#, with: "", options: .regularExpression)
                 .trimmingCharacters(in: .whitespaces)
             let lower = MeetingSource.normalized(clean)
             guard clean.contains("?") || ["how ", "what ", "why ", "where ", "when "].contains(where: lower.hasPrefix) else { return nil }
@@ -70,12 +78,48 @@ struct MeetingInterviewContext: Codable {
     static func unmatchedQuestions(for meeting: Meeting) -> String {
         let saved = url(for: meeting).flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(Self.self, from: $0) }
         guard let context = saved ?? discover(for: meeting) else { return "" }
-        let spoken = MeetingSource.paragraphs(MeetingSource.parse(meeting.transcript)).map { Set(MeetingSource.words($0.text).filter { $0.count > 3 }) }
-        let unmatched = context.questions.filter { question in
-            let words = Set(MeetingSource.words(question).filter { $0.count > 3 })
-            return words.count >= 3 && !spoken.contains { Double(words.intersection($0).count) / Double(words.count) >= 0.6 }
+        return comparison(context, answers: MeetingInterviewAnswers.exchanges(meeting))
+    }
+
+    static func comparison(_ context: Self, answers: [MeetingInterviewAnswer]) -> String {
+        let ownerQuestions = answers.filter { $0.ownerAnswer == false }.flatMap { [$0] + $0.followUps }
+        var asked: [String] = [], notAsked: [String] = [], partial: [String] = []
+        for question in context.questions {
+            let clauses = question.split(separator: "?").map(String.init).filter { MeetingSource.words($0).count >= 4 }
+            let matches = clauses.map { clause in
+                ownerQuestions.first { matchesPrepared(clause, spoken: $0.question) }
+            }
+            let count = matches.compactMap { $0 }.count
+            let stamps = Array(Set(matches.compactMap { $0?.questionTime })).sorted().map { "[" + $0 + "]" }.joined(separator: " ")
+            if count == clauses.count && count > 0 { asked.append("- " + question + " " + stamps) }
+            else if count > 0 { partial.append("- " + question + " — partial wording match " + stamps) }
+            else { notAsked.append("- " + question) }
         }
-        guard !unmatched.isEmpty else { return "" }
-        return "\n\n## Prepared questions to review\n\nThese questions from the linked prep file were not matched by wording; review whether the discussion answered them indirectly.\n\n" + unmatched.map { "- " + $0 }.joined(separator: "\n")
+        var text = "\n\n## From the prep: asked / not asked\n\nCompared with the owner’s detected questions using subject keywords. Unmatched wording needs review; it does not prove the subject was never discussed.\n\n### Asked\n\n"
+        text += asked.isEmpty ? "No complete question matches." : asked.joined(separator: "\n")
+        if !partial.isEmpty { text += "\n\n### Partly asked\n\n" + partial.joined(separator: "\n") }
+        text += "\n\n### Not asked / not matched\n\n" + (notAsked.isEmpty ? "None found." : notAsked.joined(separator: "\n"))
+        return text
+    }
+
+    static func matchesPrepared(_ prepared: String, spoken: String) -> Bool {
+        let stop: Set<String> = ["what", "where", "when", "which", "would", "could", "should", "have", "has", "been", "were", "there", "their", "they", "your", "with", "that", "this", "from", "about", "into", "does", "know", "think", "today", "here", "some", "more", "then", "them", "both", "you", "how", "why", "the", "and", "for", "are", "our", "can", "did", "but", "just", "like", "want", "really"]
+        func keywords(_ text: String) -> Set<String> {
+            Set(MeetingSource.words(text).filter { $0.count >= 3 && !stop.contains($0) }.map {
+                if ["ownership", "own", "owns", "scope"].contains($0) { return "scope" }
+                if ["engineering", "eng"].contains($0) { return "engineering" }
+                if ["moved", "moving", "brought", "motivations"].contains($0) { return "motivation" }
+                return $0.count > 4 && $0.hasSuffix("s") ? String($0.dropLast()) : $0
+            })
+        }
+        let p = MeetingSource.normalized(prepared), q = MeetingSource.normalized(spoken)
+        let subjects: [[String]] = [["learning curve"], ["scope", "product org", "ownership split"],
+                                  ["motivation", "brought you", "moving over"], ["ai in", "use of ai", "ai product"],
+                                  ["api", "webhook"], ["report to", "reporting line"], ["activation moment"],
+                                  ["outsourced", "distributed team"]]
+        if subjects.contains(where: { group in group.contains(where: p.contains) && group.contains(where: q.contains) }) { return true }
+        let wanted = keywords(prepared), heard = keywords(spoken)
+        let shared = wanted.intersection(heard).count
+        return shared >= 2 && Double(shared) / Double(max(1, wanted.count)) >= 0.45
     }
 }

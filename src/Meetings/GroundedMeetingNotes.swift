@@ -44,6 +44,7 @@ struct MeetingAnalysis: Codable, Sendable {
     var unclearPassages: Int = 0
     var correctedTranscript: String? = nil
     var omissionEnabled: Bool? = nil
+    var interviewAnswers: [MeetingInterviewAnswer]? = nil
 
     init(markdown: String, facts: [MeetingFact] = [], actions: [MeetingCommitment] = [],
          omittedPrivatePassages: Bool = false, unclearPassages: Int = 0) {
@@ -61,6 +62,7 @@ struct MeetingAnalysis: Codable, Sendable {
         unclearPassages = try container.decodeIfPresent(Int.self, forKey: .unclearPassages) ?? 0
         correctedTranscript = try container.decodeIfPresent(String.self, forKey: .correctedTranscript)
         omissionEnabled = try container.decodeIfPresent(Bool.self, forKey: .omissionEnabled)
+        interviewAnswers = try container.decodeIfPresent([MeetingInterviewAnswer].self, forKey: .interviewAnswers)
     }
 }
 
@@ -318,7 +320,7 @@ enum MeetingEvidence {
         return (result, nil)
     }
 
-    static let commitmentPhrases = ["i will ", "i ll ", "i am going to ", "i m going to ", "let me ", "i can send ", "i can share ", "i can introduce ",
+    static let commitmentPhrases = ["i will ", "i ll ", "i m gonna ", "i am going to ", "i m going to ", "let me ", "i can send ", "i can share ", "i can introduce ",
                                     "i can bring ", "i can talk ", "i ll talk ", "i can look ", "i can identify ", "i can go ", "i can put ", "i can set ",
                                     "i can reach ", "i can write ", "i can draft ", "i can pull ", "i can get ", "i can check ", "i can follow ", "i can map "]
     static let tentativePhrases = ["we should ", "we need to ", "someone should ", "somebody should ", "we ought to ", "we have to ", "it would be good to ", "we could "]
@@ -368,7 +370,7 @@ enum MeetingEvidence {
         guard owned != nil || shared != nil else { return nil }
         // Keep the speaker's own tokens (names, hyphens); drop the leading
         // modal words so the task starts at the verb.
-        let modal: Set<String> = ["i", "ill", "i ll", "will", "can", "am", "m", "going", "to", "let", "me", "we", "should", "need", "someone", "somebody",
+        let modal: Set<String> = ["i", "ill", "i ll", "i m", "gonna", "of", "course", "will", "can", "am", "m", "going", "to", "let", "me", "we", "should", "need", "someone", "somebody",
                                   "ought", "have", "it", "would", "be", "good", "could", "just", "also", "probably", "definitely", "then", "so"]
         var tokens = sentence.split(whereSeparator: \.isWhitespace).map(String.init)
         // Start at the phrase itself when it does not open the sentence.
@@ -452,7 +454,7 @@ enum MeetingEvidence {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !["\"", "“", "'"].contains(where: trimmed.hasPrefix) else { return false }
         let words = MeetingSource.words(trimmed)
-        let verbs: Set<String> = ["send", "share", "review", "introduce", "simplify", "instrument", "add", "fix", "schedule", "update", "write", "check", "prepare", "submit", "follow", "book", "create", "remove", "test", "contact", "email", "call", "confirm", "publish", "deploy", "resend", "grant", "provide", "set", "build", "implement", "investigate", "finish", "deliver", "complete", "invite", "connect", "upload", "read", "compare", "design", "document", "measure", "track", "audit", "launch", "move", "resolve", "plan", "ask", "collect", "export", "arrange", "bring", "raise", "talk", "identify", "map", "propose", "discuss", "draft", "pull", "look", "reach", "put", "find", "list", "gather", "align", "sync", "meet", "present", "walk", "clarify", "define", "scope", "estimate", "outline", "ship", "explore", "evaluate", "pilot", "run", "start", "kick", "loop", "circle", "coordinate", "secure", "get"]
+        let verbs: Set<String> = ["buy", "rebuy", "record", "do", "send", "share", "review", "introduce", "simplify", "instrument", "add", "fix", "schedule", "update", "write", "check", "prepare", "submit", "follow", "book", "create", "remove", "test", "contact", "email", "call", "confirm", "publish", "deploy", "resend", "grant", "provide", "set", "build", "implement", "investigate", "finish", "deliver", "complete", "invite", "connect", "upload", "read", "compare", "design", "document", "measure", "track", "audit", "launch", "move", "resolve", "plan", "ask", "collect", "export", "arrange", "bring", "raise", "talk", "identify", "map", "propose", "discuss", "draft", "pull", "look", "reach", "put", "find", "list", "gather", "align", "sync", "meet", "present", "walk", "clarify", "define", "scope", "estimate", "outline", "ship", "explore", "evaluate", "pilot", "run", "start", "kick", "loop", "circle", "coordinate", "secure", "get"]
         return (2...20).contains(words.count) && verbs.contains(words[0])
             && words.dropFirst().contains { !["it", "this", "that", "them", "the", "a", "to", "with", "up", "information", "stuff", "thing", "things", "something", "anything", "everything", "details", "work"].contains($0) }
     }
@@ -461,6 +463,10 @@ enum MeetingEvidence {
 enum GroundedMeetingNotes {
     static func generate(_ meeting: Meeting, corrections: [String: String] = [:], useLanguageModel: Bool = true,
                          progress: @escaping MeetingNotesService.Progress = { _ in }) async -> MeetingAnalysis {
+        if meeting.captureKind == .meeting, MeetingInterviewContext.isInterview(meeting.title),
+           UserDefaults.standard.bool(forKey: "meetingInterviewNotesExperimental") {
+            return await MeetingInterviewNotes.generate(meeting, useLanguageModel: useLanguageModel, progress: progress)
+        }
         if meeting.captureKind == .meeting, UserDefaults.standard.bool(forKey: "meetingTopicNotesExperimental") {
             return await MeetingTopicNotes.generate(meeting, corrections: corrections,
                 useLanguageModel: useLanguageModel, progress: progress)
@@ -468,7 +474,7 @@ enum GroundedMeetingNotes {
         let cacheURL = MeetingNotesCache.url(for: meeting)
         let parsed = MeetingSource.parse(meeting.transcript)
         let visibleTurns = MeetingSource.notesTurns(parsed)
-        let omitted = visibleTurns.count < parsed.filter { !MeetingSource.isBackchannel($0.text) }.count
+        let omitted = MeetingSource.omitPrivateNotes && MeetingSource.publicTurns(parsed).count < parsed.filter { !MeetingSource.isBackchannel($0.text) }.count
         let publicSource = MeetingSource.paragraphs(visibleTurns)
         // Spellings the meeting itself establishes (a phrase said clearly
         // several times) repair its one-off near-misses. Derived input only;

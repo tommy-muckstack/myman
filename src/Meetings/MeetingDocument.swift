@@ -421,17 +421,13 @@ struct MeetingDocumentView: View {
     /// everything they said until someone else spoke. Pauses inside a run
     /// never restart the clock.
     nonisolated static func grouped(_ turns: [TranscriptTurn]) -> [TranscriptTurn] {
-        var blocks: [TranscriptTurn] = []
-        for turn in turns {
-            if let last = blocks.last, last.speaker == turn.speaker, turn.speaker != "Speaker unclear" {
-                let joined = [last.text, turn.text].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }.joined(separator: " ")
-                blocks[blocks.count - 1] = TranscriptTurn(speaker: last.speaker, time: last.time, text: joined)
-            } else {
-                blocks.append(turn)
-            }
+        let source = turns.enumerated().map {
+            MeetingSourceTurn(id: $0.offset, speaker: $0.element.speaker,
+                              timestamp: $0.element.time, text: $0.element.text)
         }
-        return blocks
+        let noise = MeetingSource.contextualBackchannelIDs(source)
+        return MeetingSource.paragraphs(source.filter { !noise.contains($0.id) })
+            .map { TranscriptTurn(speaker: $0.speaker, time: $0.timestamp, text: $0.text) }
     }
 
     nonisolated static func speakerColors(for turns: [TranscriptTurn]) -> [String: Color] {
