@@ -66,7 +66,7 @@ final class NotesStore: ObservableObject {
     }
 
     func updateDocument(_ note: Note, body: String) throws {
-        let title = Note.deriveTitle(from: body)
+        let title = note.meetingID == nil ? Note.deriveTitle(from: body) : note.title
         let updatedAt = Date()
         try db.write { db in
             try db.execute(sql: "UPDATE note SET body = ?, title = ?, updatedAt = ? WHERE id = ?",

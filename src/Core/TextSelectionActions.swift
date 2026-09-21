@@ -65,7 +65,13 @@ struct SelectedTextActionsMenu: View {
             ForEach(SelectedTextAction.allCases, id: \.self) { action in
                 Button {
                     if let selected = text() { TextSelectionActions.perform(action, text: selected) }
-                } label: { Label(action.title, systemImage: action.symbol) }
+                } label: {
+                    if action == .newTask {
+                        Label { Text(action.title) } icon: { Image(nsImage: MMIcon.checklistChecked.menuImage) }
+                    } else {
+                        Label(action.title, systemImage: action.symbol)
+                    }
+                }
             }
         } label: {
             Image(systemName: "ellipsis").font(MM.Fonts.secondary)

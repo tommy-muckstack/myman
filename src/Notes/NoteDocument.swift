@@ -106,10 +106,17 @@ struct NoteDocumentView: View {
             .padding(.top, MM.Layout.paddingLarge)
             .padding(.bottom, MM.Layout.spacing)
             if let meetingID = note.meetingID { NoteMeetingLink(meetingID: meetingID) }
+            if note.meetingID != nil {
+                Text(note.title)
+                    .font(MM.Document.title)
+                    .foregroundStyle(MM.Colors.textPrimary)
+                    .padding(.horizontal, MM.Document.margin)
+                    .padding(.bottom, MM.Layout.spacing)
+            }
             RichMarkdownEditor(markdown: Binding(get: { body_ }, set: { text in
                 body_ = text
                 autosave.submit { try store.updateDocument(note, body: text) }
-            }), session: editor, showsEmptyPlaceholder: false, documentID: "note-" + note.id, focusAtEndOnOpen: focusAtEnd)
+            }), firstLineIsTitle: note.meetingID == nil, session: editor, showsEmptyPlaceholder: false, documentID: "note-" + note.id, focusAtEndOnOpen: focusAtEnd)
             .overlay {
                 if body_.isEmpty {
                     UtilityEmptyState(icon: .note, title: "Room for a thought", message: "Start typing, or drop something in.")

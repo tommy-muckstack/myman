@@ -745,7 +745,9 @@ enum AgentImages {
         let note = try Database.shared.write { db -> Note in
             guard var note = try Note.fetchOne(db, key: source.sourceID) else { throw AgentError("NOT_FOUND", "Note not found.") }
             guard AgentActions.date(note.updatedAt) == expected else { throw AgentError("EDIT_CONFLICT", "Note changed; read it again before updating.") }
-            note.body = body; note.title = Note.deriveTitle(from: body); note.updatedAt = Date()
+            note.body = body
+            if note.meetingID == nil { note.title = Note.deriveTitle(from: body) }
+            note.updatedAt = Date()
             try note.update(db); return note
         }
         Brain.syncNote(id: note.id, title: note.title, body: note.body, createdAt: note.createdAt, updatedAt: note.updatedAt)

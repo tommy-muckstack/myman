@@ -49,14 +49,14 @@ final class MeetingRecordingNote: ObservableObject {
         let previous = note
         do {
             let saved: Note? = try db.write { db in
-                guard try Meeting.fetchOne(db, key: meetingID) != nil else { throw CocoaError(.fileNoSuchFile) }
+                guard let meeting = try Meeting.fetchOne(db, key: meetingID) else { throw CocoaError(.fileNoSuchFile) }
                 if body.isEmpty {
                     if let previous { _ = try Note.deleteOne(db, key: previous.id) }
                     return nil
                 }
                 var updated = previous ?? Note(body: body)
                 updated.body = body
-                updated.title = Note.deriveTitle(from: body)
+                updated.title = previous?.title ?? meeting.title
                 updated.updatedAt = Date()
                 updated.meetingID = meetingID
                 if previous != nil {
