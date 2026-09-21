@@ -37,8 +37,7 @@ actor MeetingTranscriptionWorker {
         var record = job.record
         record.kind = result.kind.rawValue
         let finished = MeetingConversation.finish(result.transcript, meeting: record)
-        let names = MeetingPeopleContext.names(for: record)
-        return MeetingTranscriptResult(transcript: MeetingPeopleContext.correct(finished, names: names).text,
+        return MeetingTranscriptResult(transcript: finished,
                                        originalTranscript: result.originalTranscript, kind: result.kind)
     }
 }

@@ -86,16 +86,48 @@ enum MeetingSource {
     /// ASR emits five-second pieces. Read adjacent pieces as speech, without
     /// crossing speakers or time gaps. IDs/timestamps still anchor the first
     /// original piece; the stored transcript is never changed here.
-    static func paragraphs(_ turns: [MeetingSourceTurn]) -> [MeetingSourceTurn] {
+    static func paragraphs(_ turns: [MeetingSourceTurn], maximumGap: Double = 15) -> [MeetingSourceTurn] {
         var result: [MeetingSourceTurn] = []
         var previousSeconds: Double = -100
         for turn in turns {
             if let last = result.last, last.speaker == turn.speaker,
-               turn.seconds - previousSeconds <= 15, last.text.count + turn.text.count < 1800 {
+               turn.seconds >= previousSeconds, turn.seconds - previousSeconds <= maximumGap,
+               !genericSpeaker(turn.speaker), last.text.count + turn.text.count < 4000 {
                 result[result.count - 1] = .init(id: last.id, speaker: last.speaker,
                     timestamp: last.timestamp, text: last.text + " " + turn.text)
             } else { result.append(turn) }
             previousSeconds = turn.seconds
+        }
+        return result
+    }
+
+    /// These are presentation/summary exclusions, never transcript deletions.
+    /// Start-only legacy transcripts cannot prove a 1.5-second duration. Require
+    /// a tightly interleaved A/B/A pattern plus acknowledgment/noise wording;
+    /// short corrections, questions and commitments remain evidence.
+    static func contextualBackchannelIDs(_ turns: [MeetingSourceTurn]) -> Set<Int> {
+        guard turns.count >= 3 else { return [] }
+        let repeated = Dictionary(grouping: turns, by: { normalized($0.text) })
+        var result = Set<Int>()
+        for index in 1..<(turns.count - 1) {
+            let prior = turns[index - 1], turn = turns[index], next = turns[index + 1]
+            if ["cake", "ow"].contains(normalized(turn.text)), prior.speaker == turn.speaker,
+               next.speaker == turn.speaker, !prior.timestamp.isEmpty, !next.timestamp.isEmpty,
+               next.seconds >= prior.seconds, next.seconds - prior.seconds <= 8 {
+                result.insert(turn.id); continue
+            }
+            guard !turn.timestamp.isEmpty, !prior.timestamp.isEmpty, !next.timestamp.isEmpty,
+                  prior.speaker == next.speaker, turn.speaker != prior.speaker,
+                  !genericSpeaker(prior.speaker), turn.seconds >= prior.seconds,
+                  turn.seconds - prior.seconds <= 6, next.seconds >= turn.seconds,
+                  next.seconds - turn.seconds <= 6 else { continue }
+            let value = normalized(turn.text), count = words(turn.text).count
+            let acknowledgment = ["let s do it", "we have to do that", "cake", "ow", "awesome", "sure", "totally"]
+            let repeatedBoilerplate = count <= 9 && (repeated[value]?.count ?? 0) >= 2
+                && ["i think that s a good thing", "and i think that s a good thing"].contains(value)
+            if isBackchannel(turn.text) || (count <= 6 && acknowledgment.contains(value)) || repeatedBoilerplate {
+                result.insert(turn.id)
+            }
         }
         return result
     }
@@ -105,7 +137,8 @@ enum MeetingSource {
     }
 
     static func notesTurns(_ turns: [MeetingSourceTurn], omitPrivate: Bool = omitPrivateNotes) -> [MeetingSourceTurn] {
-        omitPrivate ? publicTurns(turns) : turns.filter { !isBackchannel($0.text) }
+        let noise = contextualBackchannelIDs(turns)
+        return (omitPrivate ? publicTurns(turns) : turns).filter { !isBackchannel($0.text) && !noise.contains($0.id) }
     }
 
     /// Omit flagged passages and their immediate conversational context before

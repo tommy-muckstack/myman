@@ -92,6 +92,14 @@ enum MeetingConversation {
         appendRun()
         let omissionsJSON = (try? JSONSerialization.data(withJSONObject: omitted, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         fields.append("omitted: \(omissionsJSON)")
+        let noise = MeetingSource.contextualBackchannelIDs(turns)
+        let backchannels = turns.filter { noise.contains($0.id) }.map {
+            ["timestamp": $0.timestamp, "speaker": $0.speaker, "text": $0.text,
+             "reason": "Possible interleaved backchannel; retained in raw transcript, excluded from notes and reading view."]
+        }
+        let noiseJSON = (try? JSONSerialization.data(withJSONObject: backchannels, options: [.sortedKeys]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+        fields.append("backchannel_candidates: \(noiseJSON)")
         return fields
     }
 }

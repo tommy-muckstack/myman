@@ -156,7 +156,8 @@ enum MeetingTopicNotes {
             }
         }
         #endif
-        let omitted = raw.count < MeetingSource.parse(meeting.transcript).filter { !MeetingSource.isBackchannel($0.text) }.count
+        let parsed = MeetingSource.parse(meeting.transcript)
+        let omitted = MeetingSource.omitPrivateNotes && MeetingSource.publicTurns(parsed).count < parsed.filter { !MeetingSource.isBackchannel($0.text) }.count
         var result = "## Overview\n\n"
         let substantive = topics.filter { !$0.facts.isEmpty }
         if substantive.isEmpty {

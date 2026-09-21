@@ -56,8 +56,22 @@ enum MeetingCompanyContext {
     }
 
     static func terms(for meeting: Meeting, folders: [String: String]? = nil) -> [MeetingContextTerm] {
-        terms(in: documents(for: meeting, folders: folders).map(\.text))
+        let documents = documents(for: meeting, folders: folders)
+        var result = terms(in: documents.map(\.text))
+        if MeetingInterviewContext.isInterview(meeting.title) {
+            result += standingTerms
+            let pair = MeetingConversation.explicitPair(title: meeting.title, owner: meeting.ownerName)
+            let names = meeting.participants.map(\.name) + [pair?.remote].compactMap { $0 }
+            result += names.flatMap { name in
+                name.split(separator: " ").filter { $0.count >= 4 }.map { .init(text: String($0), kind: .person) }
+            }
+        }
+        return Array(Dictionary(grouping: result, by: { $0.text.lowercased() }).values.compactMap(\.first))
     }
+
+    static let standingTerms: [MeetingContextTerm] =
+        ["Claude", "Cursor", "Grokbot", "Figma", "Statsig", "Mixpanel"].map { .init(text: $0, kind: .product) }
+        + ["PLG", "SVP", "MCP"].map { .init(text: $0, kind: .acronym) }
 
     static func terms(in documents: [String]) -> [MeetingContextTerm] {
         var counts: [String: Int] = [:]; var terms: [String: MeetingContextTerm] = [:]
@@ -66,7 +80,7 @@ enum MeetingCompanyContext {
                 $0.split(separator: " ").filter { $0.count >= 4 }.map { MeetingContextTerm(text: String($0), kind: .person) }
             }
             for (pattern, kind) in [(#"\b[A-Z]{2,6}\b"#, MeetingContextTerm.Kind.acronym),
-                                    (#"\*\*([A-Z][\p{L}]+(?: [A-Z][\p{L}]+){1,2})\*\*"#, .product)] {
+                                    (#"\*\*([A-Z][\p{L}]+(?: [A-Z][\p{L}]+){0,3})\*\*"#, .product)] {
                 guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
                 for match in regex.matches(in: document, range: NSRange(document.startIndex..., in: document)) {
                     let index = kind == .product ? 1 : 0
@@ -100,6 +114,7 @@ enum MeetingCompanyContext {
               zip(matches, recognized).allSatisfy({ ns.substring(with: $0.0.range).lowercased() == $0.1.0 }) else {
             return .init(text: text, corrections: [])
         }
+        let known = Set(terms.map { MeetingSource.normalized($0.text) })
         var edits: [(NSRange, String, String)] = []
         for index in matches.indices {
             var candidates: [(NSRange, String, String)] = []
@@ -110,24 +125,37 @@ enum MeetingCompanyContext {
                 let range = NSRange(location: slice.first!.range.location, length: NSMaxRange(slice.last!.range) - slice.first!.range.location)
                 let heard = ns.substring(with: range)
                 let tokens = MeetingSource.words(heard)
-                guard tokens != canonical, recognized[index..<(index + canonical.count)].contains(where: {
+                guard tokens != canonical, !known.contains(tokens.joined(separator: " ")), recognized[index..<(index + canonical.count)].contains(where: {
                     $0.1.isFinite && $0.1 < 0.6
                 }) else { continue }
                 switch term.kind {
                 case .acronym:
+                    // Edit distance alone confuses valid abbreviations (IPO/CPO,
+                    // SAS/SMS, EPD/EOD). Only recognized confusion pairs qualify.
+                    let confusions = ["PLD": "PLG", "SPP": "SVP"]
+                    guard confusions[heard] == term.text else { continue }
                     guard heard == heard.uppercased(), (2...6).contains(heard.count), DictationCleanup.editDistance(heard.lowercased(), term.text.lowercased()) == 1 else { continue }
                 case .person:
-                    guard heard.first?.isUppercase == true else { continue }
+                    guard canonical.count == 1, tokens.count == 1, heard.count >= 4,
+                          heard.first?.isUppercase == true else { continue }
                     let before = ns.substring(with: NSRange(location: max(0, range.location - 30), length: min(30, range.location)))
                     let after = ns.substring(from: NSMaxRange(range)).prefix(3)
-                    guard before.range(of: #"(?i)(?:with|to|ask|from|by)\s+$"#, options: .regularExpression) != nil || after.hasPrefix("'s") || after.hasPrefix("’s") else { continue }
+                    guard before.range(of: #"(?i)(?:with|to|ask|from|by|hey|hello|hi|thanks)\s+$"#, options: .regularExpression) != nil || after.hasPrefix("'s") || after.hasPrefix("’s") else { continue }
                     guard sound(tokens[0]) == sound(canonical[0]), DictationCleanup.editDistance(tokens[0], canonical[0]) <= 2 else { continue }
                 case .product:
-                    guard tokens.count >= 2, tokens.first == canonical.first else { continue }
+                    if tokens.count == 1 {
+                        // A near spelling of a distinctive product is eligible;
+                        // ordinary English words stay untouched even when uncertain.
+                        guard heard.first?.isUppercase == true, heard.count >= 5,
+                              !["cloud", "clot", "notion", "looker", "roof", "roofer", "market", "motion", "design", "cursor"].contains(heard.lowercased()),
+                              DictationCleanup.editDistance(tokens[0], canonical[0]) <= 1 else { continue }
+                    } else {
+                    guard tokens.first == canonical.first else { continue }
                     let contextStart = max(0, range.location - 45)
                     let context = ns.substring(with: NSRange(location: contextStart, length: range.location - contextStart)).lowercased()
                     guard ["product", "called", "named", "suite", "tool", "platform"].contains(where: context.contains),
                           zip(tokens, canonical).allSatisfy({ $0 == $1 || (abs($0.count - $1.count) <= 2 && DictationCleanup.editDistance(sound($0), sound($1)) <= 1) }) else { continue }
+                    }
                 }
                 candidates.append((range, heard, term.text))
             }

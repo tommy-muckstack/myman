@@ -33,3 +33,22 @@ Two owner-supplied recordings were evaluated locally. Their data and reviewed re
 5. Run both private acceptance checks, the regression suite, and debug/universal release builds. Review the settings UI before release.
 
 No new model runtime or model download has been added. A stronger on-device summarizer remains an option requiring a separate implementation and evaluation.
+
+## Interview v4 evaluation (2026-09-21)
+
+The v4 candidate carries the unfinished v2/v3 work forward. It is not a release or an acceptance pass. The new exchange-first interview format is gated by the off-by-default `meetingInterviewNotesExperimental` preference; the separate experimental topic pipeline remains gated as before.
+
+Changes under evaluation:
+
+- Detect punctuation-free questions and response invitations in both directions. Render separate owner-answer and peer-answer blocks, merge related follow-ups, and trim the next question out of the preceding answer.
+- Suppress tightly interleaved acknowledgment/noise candidates from summary inputs and the reading view. Preserve every raw turn and timestamp, and export the candidates and rationale separately. Legacy start-only timestamps cannot establish a measured sub-1.5-second duration.
+- Keep paragraph grouping bounded by a 15-second gap. Raw editing and timestamp lookup still use individual turns.
+- Exclude historical story answer spans from interview commitments. Recognize first-person future promises, including “I'm gonna”, and keep the inferred thank-you distinct from spoken commitments and generated tasks.
+- Compare actual prepared-question sections with questions the owner asked. Compound questions can be partly matched; research prose is not treated as an interview plan.
+- Include standing tool/acronym terms in CI context, while requiring occurrence-level recognizer confidence. Preserve canonical terms and restrict acronym substitutions to known confusion pairs. Reject multi-token person-name matches that could turn an abbreviation plus a common word into a name.
+- Use the on-device model to select bounded source passage indices. The application retrieves and timestamps the selected wording; the model cannot invent a paraphrase. These are explicitly labeled extractive digests, and missing coverage remains a failure rather than being padded with invented bullets.
+- Produce an interview draft with the owner's personal interpretation section blank. Its schema alone does not satisfy content acceptance.
+
+The paired private review calls `MeetingNotesService.generateBounded`, the production notes entry point, on an isolated SQLite snapshot. The same harness can opt into audio re-decoding into a separate checkpoint and audit the resulting occurrence-level confidence. No private recordings, expected answers, reviewed prose, or company files are repository fixtures.
+
+Reproduction uses `MAN_INTERVIEW_V4_DIR` (containing `input.sqlite`), `MAN_INTERVIEW_V4_IDS` (two comma-separated IDs), and `MAN_INTERVIEW_COMPANY_FOLDER`, with `swift test --filter MeetingSummaryV4Tests`. `MAN_INTERVIEW_RETRANSCRIBE=1` optionally produces private audio checkpoints; `MAN_INTERVIEW_USE_REDECODED=1` evaluates that candidate transcript. Neither replaces live meeting data. Test success means the harness ran; the generated files must still pass the content acceptance checks.
