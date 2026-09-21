@@ -85,6 +85,8 @@ final class MeetingController: ObservableObject {
     /// no longer the same instant: bringing the mic up awaits CoreAudio.
     private(set) var isStarting = false
     private var startupTask: Task<Void, Never>?
+    /// Scopes delayed calendar and end-detection work to its original take.
+    private(set) var recordingSessionID = UUID()
     private let requestMicrophoneAccess: () async -> Bool
     private(set) var isShuttingDown = false
     var canStartRecording: Bool { !isShuttingDown && phase == .idle && !isStarting }
@@ -331,6 +333,7 @@ final class MeetingController: ObservableObject {
     func startForAgent(title: String?) async throws {
         guard canStartRecording else { throw AgentError("BUSY", "A meeting is recording, starting, or My Man is quitting.") }
         isStarting = true
+        recordingSessionID = UUID()
         let allowed = await requestMicrophoneAccess()
         isStarting = false
         guard !isShuttingDown, !Task.isCancelled else { throw CancellationError() }
@@ -346,11 +349,13 @@ final class MeetingController: ObservableObject {
 
     /// Detection fires this: capture starts NOW so no words are lost, but
     /// only Save makes it real.
-    func startProvisional(title: String? = nil, joinURL: URL? = nil) {
-        guard canStartRecording else { return }
+    @discardableResult
+    func startProvisional(title: String? = nil, joinURL: URL? = nil) -> UUID? {
+        guard canStartRecording else { return nil }
         if let title { pendingTitle = title }
         provisionalJoinURL = joinURL
         start(provisional: true)
+        return recordingSessionID
     }
 
     /// Evidence that this take contains an actual call, not just an armed
@@ -363,7 +368,8 @@ final class MeetingController: ObservableObject {
         return callAppSeenOnMic || meetingWindowSeen || lastRemoteAudibleAt > start
     }
 
-    func keepProvisional() {
+    func keepProvisional(sessionID: UUID? = nil) {
+        guard sessionID == nil || sessionID == recordingSessionID else { return }
         guard !isShuttingDown, isProvisional, let meeting else { return }
         isProvisional = false
         defer { applyPillFrame() }
@@ -447,6 +453,7 @@ final class MeetingController: ObservableObject {
     private func start(provisional: Bool = false) {
         guard canStartRecording else { return }
         isStarting = true
+        recordingSessionID = UUID()
         startupTask = Task { @MainActor in
             let granted = await requestMicrophoneAccess()
             isStarting = false
@@ -575,20 +582,12 @@ final class MeetingController: ObservableObject {
 
                 // Silence watchdog. Provisional: 30s of nothing (no voices,
                 // no system audio) means it wasn't a meeting — vanish quietly.
-                // Committed: real meetings have quiet stretches, so give it
-                // 5 minutes before concluding everyone hung up.
+                // A saved meeting belongs to the user until they stop it.
+                // Quiet can prompt, but must never end or replace the take.
                 if level > 0.012 {
                     self.lastAudibleAt = Date()
                 } else {
-                    let silent = Date().timeIntervalSince(self.lastAudibleAt)
-                    if self.isProvisional, silent > 30 {
-                        Analytics.track("meeting_silence_timeout", ["provisional": true])
-                        self.discardProvisional()
-                    } else if !self.isProvisional, silent > 300 {
-                        Analytics.track("meeting_silence_timeout", ["provisional": false])
-                        Toast.show("Meeting ended after 5 minutes of silence")
-                        self.stop()
-                    }
+                    self.handleRecordingSilence(seconds: Date().timeIntervalSince(self.lastAudibleAt))
                 }
             }
         }
@@ -615,10 +614,8 @@ final class MeetingController: ObservableObject {
         endWatchTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollForMeetingEnd() }
         }
-        // Quitting the call app is the one unambiguous, instant hang-up
-        // signal — Granola stops here too. Only apps this recording actually
-        // saw on the mic count; an idle Zoom quitting during a Meet call
-        // must not end the meeting.
+        // Only apps this recording actually saw on the mic can suggest an
+        // end. Quitting or restarting an app must not stop a saved recording.
         appTerminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification,
             object: nil, queue: .main
@@ -638,38 +635,60 @@ final class MeetingController: ObservableObject {
         }
     }
 
-    /// A call app the mic had attributed just quit. If no other call app is
-    /// still holding the mic, everyone hung up — end now, not 30s from now.
+    /// A call app quitting is a possible end, never permission to stop a
+    /// saved take. Scope asynchronous observations to this recording.
     private func callAppTerminated(_ bundle: String) async {
         guard case .recording = phase, seenCallBundles.contains(bundle) else { return }
+        let sessionID = recordingSessionID
         let owners = await AudioCapture.processesUsingMicOffMain()
             .filter { $0 != Bundle.main.bundleIdentifier }
-        guard case .recording = phase else { return }
+        guard case .recording = phase, recordingSessionID == sessionID else { return }
         guard !owners.contains(where: { MeetingDetector.isCallBundle($0) && $0 != bundle })
         else { return }
-        endBecauseCallEnded(reason: "app_quit")
+        handlePossibleMeetingEnd(reason: "app_quit")
     }
 
-    /// The single hang-up exit: a committed meeting stops and transcribes, a
-    /// provisional one that was never opted into vanishes with its audio.
-    private func endBecauseCallEnded(reason: String) {
-        stopEndWatch()
+    func handleRecordingSilence(seconds: TimeInterval) {
+        guard case .recording = phase else { return }
+        if isProvisional, seconds > 30 {
+            handlePossibleMeetingEnd(reason: "silence")
+        } else if !isProvisional, seconds > 300 {
+            handlePossibleMeetingEnd(reason: "silence")
+        }
+    }
+
+    /// Unclaimed captures may expire; a saved recording only stops through
+    /// an explicit user action (or app shutdown), regardless of the calendar.
+    func handlePossibleMeetingEnd(reason: String) {
+        guard case .recording = phase else { return }
         if isProvisional {
             Analytics.track("meeting_auto_discarded", ["reason": reason])
             discardProvisional()
         } else {
-            Analytics.track("meeting_auto_stopped", ["reason": reason])
-            Toast.show("Meeting ended — transcribing", systemImage: "checkmark.circle")
-            stop()
+            nudgeMeetingEnd(reason: reason)
         }
+    }
+
+    private func nudgeMeetingEnd(reason: String) {
+        guard case .recording = phase, !isProvisional, !endNudgeShown else { return }
+        endNudgeShown = true
+        let sessionID = recordingSessionID
+        Analytics.track("meeting_end_nudged", ["source": reason])
+        Toast.show("Call may have ended. Still recording.", systemImage: "phone.down.fill",
+                   actionLabel: "Stop & save", action: { [weak self] in
+                       guard let self, self.recordingSessionID == sessionID else { return }
+                       self.stop()
+                   },
+                   secondaryLabel: "Keep recording", secondaryAction: { Toast.dismiss() }, duration: 14)
     }
 
     private func pollForMeetingEnd() async {
         guard case .recording = phase else { return }
+        let sessionID = recordingSessionID
         // Window-title signal, tracked every tick regardless of what the mic
         // says — it must be armed before it can fire.
         let windowPresent = await MeetingDetector.meetingWindowPresent()
-        guard case .recording = phase else { return }
+        guard case .recording = phase, recordingSessionID == sessionID else { return }
         if windowPresent {
             meetingWindowSeen = true
             meetingWindowMissingPolls = 0
@@ -679,7 +698,7 @@ final class MeetingController: ObservableObject {
 
         let owners = await AudioCapture.processesUsingMicOffMain()
             .filter { $0 != Bundle.main.bundleIdentifier }
-        guard case .recording = phase else { return }
+        guard case .recording = phase, recordingSessionID == sessionID else { return }
         let callOwners = owners.filter { MeetingDetector.isCallBundle($0) }
         if !callOwners.isEmpty {
             callAppSeenOnMic = true
@@ -688,11 +707,11 @@ final class MeetingController: ObservableObject {
             return
         }
         // When macOS did attribute the call app, three missing polls is a
-        // high-confidence hang-up and can end the recording automatically.
+        // possible hang-up. A saved recording still needs the user's stop.
         if callAppSeenOnMic {
             callAppMissingPolls += 1
             guard callAppMissingPolls >= 3 else { return } // ~30s after hang-up
-            endBecauseCallEnded(reason: "mic_attribution")
+            handlePossibleMeetingEnd(reason: "mic_attribution")
             return
         }
 
@@ -703,7 +722,7 @@ final class MeetingController: ObservableObject {
         // quiet too before calling it a hang-up.
         if meetingWindowSeen, meetingWindowMissingPolls >= 2,
            Date().timeIntervalSince(lastRemoteAudibleAt) > 20 {
-            endBecauseCallEnded(reason: "window_closed")
+            handlePossibleMeetingEnd(reason: "window_closed")
             return
         }
 
@@ -714,13 +733,7 @@ final class MeetingController: ObservableObject {
         let remoteQuietFor = Date().timeIntervalSince(lastRemoteAudibleAt)
         guard !endNudgeShown, !isProvisional,
               quietFor > 45, remoteQuietFor > 45 else { return }
-        endNudgeShown = true
-        Analytics.track("meeting_end_nudged", ["source": "quiet_call"])
-        Toast.show("Looks like you just ended a call", systemImage: "phone.down.fill",
-                   actionLabel: "Stop & save", action: { [weak self] in self?.stop() },
-                   secondaryLabel: "Keep recording", secondaryAction: { [weak self] in
-                       self?.endNudgeShown = false
-                   }, duration: 14)
+        nudgeMeetingEnd(reason: "quiet_call")
     }
 
     // MARK: Slides — periodic captures of the call window, deduped
