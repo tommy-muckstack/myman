@@ -2268,12 +2268,7 @@ struct MeetingPillView: View {
             if isRecording && controller.titleEditorVisible {
                 titleEditor
                 VStack(spacing: MM.Layout.spacing / 2) {
-                    Picker("Recording details", selection: $showingNote) {
-                        Text("Transcript").tag(false)
-                        Text("My note").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    MeetingRecordingTabs(showingNote: $showingNote)
                     if showingNote {
                         MeetingRecordingNoteView(draft: controller.recordingNote) { focused in
                             noteFocused = focused

@@ -4,6 +4,65 @@ import SwiftUI
 @testable import MyMan
 
 final class EditorBlocksTests: XCTestCase {
+    @MainActor func testTypedCheckboxInCompactMeetingNoteUsesSharedEditor() async throws {
+        let (window, text) = try await host("", firstLineIsTitle: false, compact: true)
+        defer { window.contentView = nil; window.close() }
+        XCTAssertTrue(text.layoutManager is ChecklistLayoutManager)
+        type("[] Follow up", into: text)
+        XCTAssertEqual(save(text), "- [ ] Follow up")
+        text.toggleChecklist(at: (text.string as NSString).lineRange(for: NSRange(location: 0, length: 0)))
+        XCTAssertEqual(save(text), "- [x] Follow up")
+        text.insertNewline(nil)
+        type("Another task", into: text)
+        XCTAssertEqual(save(text), "- [x] Follow up\n- [ ] Another task")
+        text.undoManager?.undo()
+        XCTAssertFalse(save(text).hasSuffix("Another task"))
+    }
+
+    @MainActor func testRenderCompactWrappedLists() async throws {
+        guard ProcessInfo.processInfo.environment["MAN_RENDER_LIST_WRAPPING"] == "1" else {
+            throw XCTSkip("Opt-in native list wrapping visual review")
+        }
+        let source = "Meeting notes\n- Will send follow-up information\n- Customer for six years. Adoption started well and dropped when ownership changed. The pilot may lead to an expansion.\n- A long list of sellers and requirements to review together\n  - An intentionally nested item stays nested when its text wraps\n- [ ] Share the updated proposal with the team after the meeting\n- [x] Send the meeting invitation"
+        let (window, text) = try await host(source)
+        defer { window.contentView = nil; window.close() }
+        window.setContentSize(NSSize(width: 390, height: 630))
+        window.appearance = NSAppearance(named: .darkAqua)
+        text.enforceTitleStyling()
+        try await Task.sleep(for: .milliseconds(200))
+        let view = try XCTUnwrap(window.contentView)
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/private/tmp/myman-list-wrapping.png"))
+        XCTAssertEqual(save(text), source)
+    }
+
+    @MainActor func testWrappedListTextAlignsWithFirstLineBody() throws {
+        MM.Fonts.registerFonts()
+        for prefix in ["- ", "  - ", "- [ ] ", "- [x] ", "123. ", "> "] {
+            let source = prefix + Array(repeating: "Keep the next step clear and easy to follow.", count: 4).joined(separator: " ")
+            let storage = NSTextStorage(attributedString: MarkdownRich.attributed(from: source))
+            let layout = NSLayoutManager()
+            let container = NSTextContainer(size: NSSize(width: 300, height: 1000))
+            container.lineFragmentPadding = 0
+            storage.addLayoutManager(layout)
+            layout.addTextContainer(container)
+            layout.ensureLayout(for: container)
+            let body = (storage.string as NSString).range(of: "Keep").location
+            let bodyGlyph = layout.glyphIndexForCharacter(at: body)
+            var firstLine = NSRange()
+            let firstRect = layout.lineFragmentRect(forGlyphAt: bodyGlyph, effectiveRange: &firstLine)
+            let secondGlyph = NSMaxRange(firstLine)
+            XCTAssertLessThan(secondGlyph, layout.numberOfGlyphs)
+            let secondRect = layout.lineFragmentRect(forGlyphAt: secondGlyph, effectiveRange: nil)
+            let bodyX = firstRect.minX + layout.location(forGlyphAt: bodyGlyph).x
+            let wrapX = secondRect.minX + layout.location(forGlyphAt: secondGlyph).x
+            XCTAssertEqual(wrapX, bodyX, accuracy: 0.5, prefix)
+            XCTAssertEqual(MarkdownRich.markdown(from: storage), source)
+        }
+    }
+
     @MainActor func testTypedCheckboxesCompleteNestAndContinueUnchecked() async throws {
         for shortcut in ["[]", "[ ]", "- []", "- [ ]"] {
             let (window, text) = try await host("Title\n")
@@ -69,13 +128,13 @@ final class EditorBlocksTests: XCTestCase {
         text.undoManager?.undo()
         XCTAssertTrue(text.string.hasSuffix("["), text.string)
     }
-    @MainActor private func host(_ source: String, assets: DocumentAssets = .shared) async throws -> (DocumentWindow, RichNoteTextView) {
+    @MainActor private func host(_ source: String, assets: DocumentAssets = .shared, firstLineIsTitle: Bool = true, compact: Bool = false) async throws -> (DocumentWindow, RichNoteTextView) {
         _ = NSApplication.shared
         MM.Fonts.registerFonts()
         let window = DocumentWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 900), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         var value = source
-        window.contentView = NSHostingView(rootView: RichMarkdownEditor(markdown: Binding(get: { value }, set: { value = $0 }), documentID: "note-test", assets: assets).background(MM.Colors.background))
+        window.contentView = NSHostingView(rootView: RichMarkdownEditor(markdown: Binding(get: { value }, set: { value = $0 }), firstLineIsTitle: firstLineIsTitle, documentID: "note-test", assets: assets, compact: compact).background(MM.Colors.background))
         try await Task.sleep(for: .milliseconds(150))
         window.contentView?.layoutSubtreeIfNeeded()
         func find(_ view: NSView) -> RichNoteTextView? { (view as? RichNoteTextView) ?? view.subviews.lazy.compactMap(find).first }

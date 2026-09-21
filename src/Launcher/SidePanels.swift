@@ -67,9 +67,8 @@ private struct TaskRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 9) {
             Button { TasksStore.shared.toggle(task) } label: {
-                Image(systemName: "circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(MM.Colors.textTertiary)
+                IconView(icon: task.done ? .checklistChecked : .checklistUnchecked,
+                         color: task.done ? MM.Colors.accent : MM.Colors.textTertiary)
                     .clickable()
             }
             .buttonStyle(.plain)

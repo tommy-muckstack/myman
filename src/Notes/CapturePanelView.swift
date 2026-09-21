@@ -126,7 +126,7 @@ struct CapturePanelView: View {
             guard store.update(note, body: draft) else { saveFailed = true; return }
             var updated = note
             updated.body = draft
-            updated.title = Note.deriveTitle(from: draft)
+            updated.title = note.meetingID == nil ? Note.deriveTitle(from: draft) : note.title
             saved = updated
         } else {
             guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }

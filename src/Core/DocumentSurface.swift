@@ -61,7 +61,13 @@ struct DocumentFooter: View {
         HStack(spacing: MM.Layout.spacing) {
             Menu {
                 ForEach(DocumentBlock.allCases) { block in
-                    Button { session.insert(block) } label: { Label(block.label, systemImage: block.symbol) }
+                    Button { session.insert(block) } label: {
+                        if block == .checklist {
+                            Label { Text(block.label) } icon: { Image(nsImage: MMIcon.checklistChecked.menuImage) }
+                        } else {
+                            Label(block.label, systemImage: block.symbol)
+                        }
+                    }
                 }
             } label: {
                 Label("Insert", systemImage: "plus").font(MM.Fonts.secondary).clickable(minSize: 28)

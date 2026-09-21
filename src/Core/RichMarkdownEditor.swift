@@ -63,6 +63,7 @@ struct RichMarkdownEditor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = RichNoteTextView()
+        textView.textContainer?.replaceLayoutManager(ChecklistLayoutManager())
         textView.compactMargins = compact
         textView.focusAtEndOnOpen = focusAtEndOnOpen
         textView.onFocusChanged = onFocusChanged
@@ -841,7 +842,11 @@ private struct BlockPicker: View {
             ForEach(Array(choices.enumerated()), id: \.element.id) { index, block in
                 Button { choose(block) } label: {
                     HStack(spacing: MM.Layout.spacing) {
-                        Image(systemName: block.symbol).frame(width: 22)
+                        if block == .checklist {
+                            IconView(icon: .checklistChecked).frame(width: 22)
+                        } else {
+                            Image(systemName: block.symbol).frame(width: 22)
+                        }
                         Text(block.label)
                         Spacer()
                         if index == selected { Text("↵").foregroundStyle(MM.Colors.textTertiary) }
