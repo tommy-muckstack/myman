@@ -159,6 +159,7 @@ struct CaptureDetailView: View {
                         let scale = min(geo.size.width / image.size.width, geo.size.height / image.size.height)
                         Image(nsImage: image).resizable().frame(width: image.size.width * scale, height: image.size.height * scale)
                             .overlay { OCRLocationOverlay(lines: textRegions, query: query, selected: selected) }
+                            .contextMenu { Button("Copy") { CaptureActions.copy(item) } }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }.frame(minWidth: 260)
                 }

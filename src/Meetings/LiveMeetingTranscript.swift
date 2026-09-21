@@ -286,6 +286,7 @@ final class LiveMeetingTranscript: ObservableObject {
         let speaker: String
         let timestamp: String
         let text: String
+        var start: TimeInterval = 0
         var suggestedName: String? = nil
         var turnIDs: [String] = []
         /// Names read off the call window, offered as one-tap choices.
@@ -579,7 +580,7 @@ final class LiveMeetingTranscript: ObservableObject {
         func flush() {
             guard let row = pending else { return }
             built.append(Row(id: row.id, speaker: row.speaker, timestamp: row.timestamp,
-                             text: fragments.joined(separator: " "), suggestedName: row.suggestedName,
+                             text: fragments.joined(separator: " "), start: row.start, suggestedName: row.suggestedName,
                              turnIDs: members, callParticipants: row.callParticipants))
         }
         for (index, pair) in zip(turns, named).enumerated() {
@@ -607,7 +608,7 @@ final class LiveMeetingTranscript: ObservableObject {
             }
             flush()
             pending = Row(id: id, speaker: speaker, timestamp: MeetingSource.stamp(named.start),
-                          text: "", suggestedName: suggested,
+                          text: "", start: named.start, suggestedName: suggested,
                           callParticipants: speaker == MeetingController.ownerLabel || speaker.hasSuffix("(you)") ? [] : others)
             fragments = [corrected ?? named.text]
             members = [id] + (membersByGroup[id] ?? [])

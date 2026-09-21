@@ -1,33 +1,56 @@
 import AppKit
 
-/// Owns one recording's slide pipeline. Only completed files belong to a
-/// meeting; a capture still running when it stops must clean up after itself.
-@MainActor
-final class MeetingSlideCapture {
-    typealias Writer = @Sendable (CGImage, [Float]?, URL) throws -> [Float]?
+struct MeetingSlide: Codable, Equatable, Identifiable, Sendable {
+    var path: String
+    var capturedAt: Date?
+    var offset: TimeInterval?
+    var automatic: Bool = true
+    var id: String { path }
+    var timestamp: String { offset.map { MeetingSource.stamp($0) } ?? "Time unavailable" }
+}
 
+/// Only completed, persisted files belong to the meeting. Session tokens
+/// prevent late work from changing the next recording.
+@MainActor
+final class MeetingSlideCapture: ObservableObject {
+    typealias Writer = @Sendable (CGImage, [Float]?, URL) throws -> [Float]?
+    enum Result: Equatable {
+        case saved(MeetingSlide), unchanged, busy, noWindow, limit, failed, cancelled
+    }
     private struct Session {
         let token = UUID()
         let meetingID: String
         let folder: URL
+        let startedAt: Date
     }
-
+    var onChange: (String, [MeetingSlide]) throws -> Void = { _, _ in }
     private let writer: Writer
+    private let removeFile: (URL) throws -> Void
+    private let automaticLimit: Int
     private var session: Session?
-    private var busy = false
+    @Published private(set) var busy = false
+    @Published private(set) var slides: [MeetingSlide] = []
+    var paths: [String] { slides.map(\.path) }
     private var pendingWrite: Task<[Float]?, Never>?
     private var lastFingerprint: [Float]?
-    private(set) var paths: [String] = []
+    private var nextIndex = 0
 
-    init(writer: @escaping Writer = { image, previous, url in
+    init(removeFile: @escaping (URL) throws -> Void = {
+        if FileManager.default.fileExists(atPath: $0.path) {
+            try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
+        }
+    }, automaticLimit: Int = 120, writer: @escaping Writer = { image, previous, url in
         try MeetingSlideWriter.saveIfChanged(image, previous: previous, url: url)
     }) {
         self.writer = writer
+        self.removeFile = removeFile
+        self.automaticLimit = automaticLimit
     }
 
-    func start(meetingID: String, folder: URL) {
+    func start(meetingID: String, folder: URL, startedAt: Date = Date(), slides: [MeetingSlide] = []) {
         _ = finish()
-        session = Session(meetingID: meetingID, folder: folder)
+        session = Session(meetingID: meetingID, folder: folder, startedAt: startedAt)
+        self.slides = slides
     }
 
     func finish() -> [String] {
@@ -36,41 +59,65 @@ final class MeetingSlideCapture {
         pendingWrite = nil
         busy = false
         lastFingerprint = nil
+        nextIndex = 0
         let saved = paths
-        paths = []
+        slides = []
         return saved
     }
 
-    func capture(meetingID: String, image: () async -> CGImage?,
-                 inspect: (CGImage) async -> Void) async {
-        guard let session, session.meetingID == meetingID, !busy else { return }
+    func remove(path: String, meetingID: String) throws {
+        guard session?.meetingID == meetingID, slides.contains(where: { $0.path == path }) else { return }
+        let remaining = slides.filter { $0.path != path }
+        try onChange(meetingID, remaining)
+        do { try removeFile(URL(fileURLWithPath: path)) }
+        catch { try onChange(meetingID, slides); throw error }
+        slides = remaining
+        // Keep the last fingerprint so the next automatic tick does not
+        // immediately re-add the unchanged image the user just removed.
+    }
+
+    @discardableResult
+    func capture(meetingID: String, force: Bool = false, now: () -> Date = Date.init,
+                 image: () async -> CGImage?, inspect: (CGImage) async -> Void) async -> Result {
+        guard let session, session.meetingID == meetingID else { return .cancelled }
+        guard !busy else { return .busy }
         busy = true
         defer {
             if self.session?.token == session.token { busy = false; pendingWrite = nil }
         }
-        guard let image = await image(), self.session?.token == session.token else { return }
+        guard let image = await image() else { return .noWindow }
+        let capturedAt = now()
+        guard self.session?.token == session.token else { return .cancelled }
         await inspect(image)
-        guard self.session?.token == session.token, paths.count < 24 else { return }
+        guard self.session?.token == session.token else { return .cancelled }
+        guard force || slides.filter(\.automatic).count < automaticLimit else { return .limit }
 
-        let url = session.folder.appendingPathComponent("\(meetingID)-slide-\(paths.count).png")
-        let previous = lastFingerprint
+        // Each attempt has its own name, including after deletion or a
+        // restarted session. Never derive a destination from the array count.
+        let url = session.folder.appendingPathComponent("\(meetingID)-slide-\(nextIndex)-\(UUID().uuidString).png")
+        nextIndex += 1
+        let previous = force ? nil : lastFingerprint
         let writer = self.writer
-        // A Task inheriting this actor would still encode PNGs on the UI
-        // thread. Keep fingerprinting, encoding and disk I/O detached.
         let work = Task.detached(priority: .utility) {
             autoreleasepool { try? writer(image, previous, url) }
         }
         pendingWrite = work
         let fingerprint = await work.value
         guard self.session?.token == session.token else {
-            await Task.detached(priority: .utility) {
-                try? FileManager.default.removeItem(at: url)
-            }.value
-            return
+            await Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: url) }.value
+            return .cancelled
         }
-        guard let fingerprint else { return }
+        guard let fingerprint else { return force ? .failed : .unchanged }
+        let slide = MeetingSlide(path: url.path, capturedAt: capturedAt,
+                                 offset: max(0, capturedAt.timeIntervalSince(session.startedAt)), automatic: !force)
+        do { try onChange(meetingID, slides + [slide]) }
+        catch {
+            try? FileManager.default.removeItem(at: url)
+            return .failed
+        }
         lastFingerprint = fingerprint
-        paths.append(url.path)
+        slides.append(slide)
+        return .saved(slide)
     }
 }
 

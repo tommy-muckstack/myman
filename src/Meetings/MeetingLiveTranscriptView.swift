@@ -1,12 +1,16 @@
 import AppKit
 import SwiftUI
 
+struct MeetingTranscriptSeek: Equatable {
+    let id = UUID()
+    let offset: TimeInterval
+}
+
 struct MeetingLiveTranscriptView: View {
     @ObservedObject var transcript: LiveMeetingTranscript
     var saveFailed = false
     var retry: () -> Void
-    var meetingID: String? = nil
-    @ObservedObject private var notes = MeetingNotesService.shared
+    var seek: MeetingTranscriptSeek? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
@@ -18,9 +22,11 @@ struct MeetingLiveTranscriptView: View {
                 if transcript.status == .preparing {
                     ProgressView().controlSize(.mini)
                 }
-                Text(statusLabel)
-                    .font(MM.Fonts.metadata)
-                    .foregroundStyle(MM.Colors.textSecondary)
+                if let statusLabel {
+                    Text(statusLabel)
+                        .font(MM.Fonts.metadata)
+                        .foregroundStyle(MM.Colors.textSecondary)
+                }
             }
             if saveFailed {
                 Text("Edits haven’t saved yet. Stop will retry.")
@@ -40,7 +46,7 @@ struct MeetingLiveTranscriptView: View {
                     .padding(MM.Layout.padding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    LiveTranscriptScrollView(rows: transcript.rows, edit: { transcript.editingRowID = $0 })
+                    LiveTranscriptScrollView(rows: transcript.rows, edit: { transcript.editingRowID = $0 }, seek: seek)
                 }
             }
             .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
@@ -55,12 +61,6 @@ struct MeetingLiveTranscriptView: View {
             }
             if let message = transcript.voiceLearningMessage {
                 Text(message).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
-            }
-            if let meetingID, let draft = notes.drafts[meetingID], !draft.isEmpty {
-                DisclosureGroup("Summary so far · draft") {
-                    ScrollView { Text(draft).font(MM.Fonts.secondary).textSelection(.enabled) }
-                        .frame(maxHeight: 120)
-                }.font(MM.Fonts.metadata)
             }
         }
         .sheet(isPresented: Binding(get: { transcript.editingRowID != nil },
@@ -79,11 +79,11 @@ struct MeetingLiveTranscriptView: View {
             .clickable()
     }
 
-    private var statusLabel: String {
+    private var statusLabel: String? {
         switch transcript.status {
         case .waiting: "Listening"
         case .preparing: "Preparing…"
-        case .live: "Updating live"
+        case .live: nil
         case .unavailable: "Paused"
         }
     }
@@ -102,6 +102,7 @@ struct MeetingLiveTranscriptView: View {
 struct LiveTranscriptScrollView: NSViewRepresentable {
     let rows: [LiveMeetingTranscript.Row]
     var edit: (String) -> Void = { _ in }
+    var seek: MeetingTranscriptSeek? = nil
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var rows: [LiveMeetingTranscript.Row] = []
@@ -109,6 +110,7 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
         /// Pinned to the newest words until the reader scrolls up on
         /// purpose; scrolling back to the end re-pins.
         var followsLatest = true
+        var lastSeekID: UUID?
         private var observer: NSObjectProtocol?
 
         func watchUserScrolling(_ scroll: NSScrollView) {
@@ -164,9 +166,36 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.edit = edit
-        guard context.coordinator.rows != rows, let text = scroll.documentView as? NSTextView else { return }
-        context.coordinator.rows = rows
-        Self.update(text, in: scroll, rows: rows, follow: context.coordinator.followsLatest)
+        guard let text = scroll.documentView as? NSTextView else { return }
+        if context.coordinator.rows != rows {
+            context.coordinator.rows = rows
+            Self.update(text, in: scroll, rows: rows, follow: context.coordinator.followsLatest)
+        }
+        if let seek, seek.id != context.coordinator.lastSeekID, !rows.isEmpty {
+            context.coordinator.lastSeekID = seek.id
+            context.coordinator.followsLatest = false
+            Self.seek(to: seek.offset, rows: rows, text: text, scroll: scroll)
+        }
+    }
+
+    static func rowForTimestamp(_ offset: TimeInterval, rows: [LiveMeetingTranscript.Row]) -> LiveMeetingTranscript.Row? {
+        rows.last(where: { $0.start <= offset }) ?? rows.first
+    }
+
+    static func seek(to offset: TimeInterval, rows: [LiveMeetingTranscript.Row], text: NSTextView, scroll: NSScrollView) {
+        guard let row = rowForTimestamp(offset, rows: rows), let storage = text.textStorage else { return }
+        var range: NSRange?
+        storage.enumerateAttribute(NSAttributedString.Key("meetingTranscriptRow"),
+                                   in: NSRange(location: 0, length: storage.length)) { value, found, stop in
+            if value as? String == row.id { range = found; stop.pointee = true }
+        }
+        guard let range, let container = text.textContainer, let layout = text.layoutManager else { return }
+        layout.ensureLayout(for: container)
+        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        text.setSelectedRange(range)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, rect.minY + text.textContainerInset.height)))
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     static func isAtBottom(_ scroll: NSScrollView, of text: NSView) -> Bool {
@@ -182,6 +211,7 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
         let content = NSMutableAttributedString()
         for (index, row) in rows.enumerated() {
             if index > 0 { content.append(NSAttributedString(string: "\n\n")) }
+            let rowStart = content.length
             content.append(NSAttributedString(string: row.speaker, attributes: [
                 .font: MM.Fonts.native(13, .semiBold), .foregroundColor: NSColor(MM.Colors.textPrimary)
             ]))
@@ -206,6 +236,8 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
             content.append(NSAttributedString(string: row.text, attributes: [
                 .font: MM.Fonts.native(13), .foregroundColor: NSColor(MM.Colors.textPrimary)
             ]))
+            content.addAttribute(NSAttributedString.Key("meetingTranscriptRow"), value: row.id,
+                                 range: NSRange(location: rowStart, length: content.length - rowStart))
         }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = MM.Layout.spacing / 4

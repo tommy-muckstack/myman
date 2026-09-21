@@ -28,6 +28,30 @@ private actor RetryingLiveReader: LiveMeetingTranscriptReading {
 }
 
 final class LiveMeetingTranscriptTests: XCTestCase {
+    @MainActor func testScreenshotTimestampSeeksToMatchingTranscriptAndPreservesReadingPosition() throws {
+        let rows: [LiveMeetingTranscript.Row] = (0..<20).map { index in
+            let start = Double(index * 10)
+            return LiveMeetingTranscript.Row(id: "row-\(index)", speaker: "Speaker \(index % 2)",
+                timestamp: MeetingSource.stamp(start), text: "Discussion of the chart at \(index).", start: start)
+        }
+        XCTAssertEqual(LiveTranscriptScrollView.rowForTimestamp(145, rows: rows)?.id, "row-14")
+        XCTAssertEqual(LiveTranscriptScrollView.rowForTimestamp(0, rows: rows)?.id, "row-0")
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 200))
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 360, height: 200))
+        text.isVerticallyResizable = true
+        text.textContainer?.widthTracksTextView = true
+        scroll.documentView = text
+        LiveTranscriptScrollView.update(text, in: scroll, rows: rows, follow: false)
+        LiveTranscriptScrollView.seek(to: 145, rows: rows, text: text, scroll: scroll)
+        let selected = (text.string as NSString).substring(with: text.selectedRange())
+        XCTAssertTrue(selected.contains("2:20"))
+        XCTAssertTrue(selected.contains("chart at 14"))
+        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+        let position = scroll.contentView.bounds.origin
+        LiveTranscriptScrollView.update(text, in: scroll, rows: rows + [.init(id: "new", speaker: "Peer", timestamp: "4:00", text: "More words", start: 240)], follow: false)
+        XCTAssertEqual(scroll.contentView.bounds.origin, position)
+    }
+
     @MainActor func testRetryKeepsHumanEditsAndSpeakerIdentity() async throws {
         let transcript = LiveMeetingTranscript(automaticRetryDelays: [])
         transcript.start(reader: RetryingLiveReader(), ownerName: "Alex", candidates: .none)

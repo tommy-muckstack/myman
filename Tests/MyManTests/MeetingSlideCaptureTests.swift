@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import GRDB
 import XCTest
 @testable import MyMan
 
@@ -33,6 +34,92 @@ final class MeetingSlideCaptureTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    @MainActor func testManualCaptureTimestampDeletionAndRecordingPersistence() async throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let db = try DatabaseQueue()
+        try Database.migrator.migrate(db)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let record = Meeting(id: "timestamped", title: "Screen share", startedAt: start, transcript: "Existing words")
+        try await db.write { try record.insert($0) }
+        let capture = MeetingSlideCapture(removeFile: { try FileManager.default.removeItem(at: $0) })
+        let controller = MeetingController(recording: record, titleDatabase: db, slideCapture: capture)
+        capture.start(meetingID: record.id, folder: folder, startedAt: start)
+        let firstImage = try image(), secondImage = try image(white: 1)
+        await capture.capture(meetingID: record.id, now: { start.addingTimeInterval(65) }, image: { firstImage }, inspect: { _ in })
+        await capture.capture(meetingID: record.id, force: true, now: { start.addingTimeInterval(75) }, image: { firstImage }, inspect: { _ in })
+        XCTAssertEqual(capture.slides.map(\.offset), [65, 75])
+        XCTAssertEqual(capture.slides.map(\.automatic), [true, false])
+        XCTAssertEqual(capture.slides.first?.timestamp, "1:05")
+        let old = capture.paths
+        let keptData = try Data(contentsOf: URL(fileURLWithPath: old[1]))
+        controller.removeRecordingScreenshot(old[0])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old[0]))
+        await capture.capture(meetingID: record.id, now: { start.addingTimeInterval(125) }, image: { secondImage }, inspect: { _ in })
+        XCTAssertEqual(capture.paths.count, 2)
+        XCTAssertEqual(capture.paths.first, old[1])
+        XCTAssertFalse(capture.paths.last == old[0] || capture.paths.last == old[1])
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: old[1])), keptData)
+        let fetched = try await db.read { try Meeting.fetchOne($0, key: record.id) }
+        let saved = try XCTUnwrap(fetched)
+        XCTAssertEqual(saved.slidePaths, capture.paths)
+        XCTAssertEqual(saved.capturedSlides.map(\.offset), [75, 125])
+        XCTAssertEqual(saved.capturedSlides.first?.capturedAt, start.addingTimeInterval(75))
+        XCTAssertEqual(saved.transcript, "Existing words")
+        XCTAssertNil(saved.endedAt)
+        XCTAssertEqual(capture.finish(), saved.slidePaths)
+    }
+
+    @MainActor func testDeletedAutomaticImageIsNotImmediatelyRecapturedAndManualCanOverride() async throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let capture = MeetingSlideCapture(removeFile: { try FileManager.default.removeItem(at: $0) })
+        capture.start(meetingID: "call", folder: folder)
+        let image = try image()
+        await capture.capture(meetingID: "call", image: { image }, inspect: { _ in })
+        try capture.remove(path: XCTUnwrap(capture.paths.first), meetingID: "call")
+        await capture.capture(meetingID: "call", image: { image }, inspect: { _ in })
+        XCTAssertTrue(capture.paths.isEmpty)
+        await capture.capture(meetingID: "call", force: true, image: { image }, inspect: { _ in })
+        XCTAssertEqual(capture.paths.count, 1)
+        XCTAssertFalse(try XCTUnwrap(capture.slides.first).automatic)
+    }
+
+    @MainActor func testPersistenceAndDeleteFailuresDoNotLoseScreenshots() async throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let capture = MeetingSlideCapture(removeFile: { _ in throw CocoaError(.fileWriteNoPermission) })
+        capture.start(meetingID: "call", folder: folder)
+        let image = try image()
+        capture.onChange = { _, _ in throw CocoaError(.fileWriteNoPermission) }
+        let failed = await capture.capture(meetingID: "call", force: true, image: { image }, inspect: { _ in })
+        XCTAssertEqual(failed, .failed)
+        XCTAssertTrue(capture.paths.isEmpty)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
+        var persisted: [MeetingSlide] = []
+        capture.onChange = { _, slides in persisted = slides }
+        await capture.capture(meetingID: "call", image: { image }, inspect: { _ in })
+        let original = capture.slides
+        XCTAssertThrowsError(try capture.remove(path: XCTUnwrap(capture.paths.first), meetingID: "call"))
+        XCTAssertEqual(capture.slides, original)
+        XCTAssertEqual(persisted, original)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original[0].path))
+    }
+
+    func testTimestampMigrationPreservesLegacyScreenshotsWithoutInventingTimes() throws {
+        let db = try DatabaseQueue()
+        try Database.migrator.migrate(db, upTo: "v18-recording-notes")
+        try db.write {
+            try $0.execute(sql: "INSERT INTO meeting(id,title,startedAt,transcript,slides) VALUES(?,?,?,?,?)",
+                           arguments: ["legacy", "Call", Date(), "", "[\"/tmp/legacy-slide.png\"]"])
+        }
+        try Database.migrator.migrate(db)
+        let record = try XCTUnwrap(db.read { try Meeting.fetchOne($0, key: "legacy") })
+        XCTAssertEqual(record.capturedSlides.map(\.path), ["/tmp/legacy-slide.png"])
+        XCTAssertNil(record.capturedSlides.first?.offset)
+        XCTAssertEqual(record.capturedSlides.first?.timestamp, "Time unavailable")
     }
 
     @MainActor func testSlowWriterLeavesMainActorResponsiveAndSkipsOverlappingCaptures() async throws {
@@ -85,12 +172,13 @@ final class MeetingSlideCaptureTests: XCTestCase {
         XCTAssertEqual(capture.finish(), [])
         capture.start(meetingID: "second", folder: folder)
         await capture.capture(meetingID: "second", image: { image }, inspect: { _ in })
-        let second = folder.appendingPathComponent("second-slide-0.png").path
+        let second = try XCTUnwrap(capture.paths.first)
+        XCTAssertTrue(URL(fileURLWithPath: second).lastPathComponent.hasPrefix("second-slide-"))
         XCTAssertEqual(capture.paths, [second])
         gate.signal()
         await pending.value
         XCTAssertEqual(capture.paths, [second])
-        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("first-slide-0.png").path))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: folder.path).contains { $0.hasPrefix("first-slide-") })
         XCTAssertTrue(FileManager.default.fileExists(atPath: second))
         XCTAssertEqual(capture.finish(), [second])
     }
@@ -152,7 +240,7 @@ final class MeetingSlideCaptureTests: XCTestCase {
         let folder = try folder()
         defer { try? FileManager.default.removeItem(at: folder) }
         let black = try image(), white = try image(white: 1)
-        let capture = MeetingSlideCapture()
+        let capture = MeetingSlideCapture(automaticLimit: 24)
         capture.start(meetingID: "first", folder: folder)
         var inspections = 0
         for _ in 0..<2 {

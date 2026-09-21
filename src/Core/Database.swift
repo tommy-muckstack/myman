@@ -304,6 +304,11 @@ enum Database {
                 t.column("updatedAt", .datetime).notNull()
             }
         }
+        migrator.registerMigration("v19-meeting-slide-timestamps") { db in
+            try db.alter(table: "meeting") { t in
+                t.add(column: "slideMetadataJSON", .text).notNull().defaults(to: "[]")
+            }
+        }
         return migrator
     }
 }

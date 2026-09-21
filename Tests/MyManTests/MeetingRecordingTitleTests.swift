@@ -109,6 +109,157 @@ final class MeetingRecordingTitleTests: XCTestCase {
         XCTAssertNil(controller.startProvisional(title: "Overlapping event"))
     }
 
+    @MainActor func testNotesStaysOpenAndExpandedHeightSurvivesCollapseAndNewController() throws {
+        let suite = "myman.recording-layout." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = Meeting(id: "resize", title: "Original meeting", startedAt: Date(), transcript: "")
+        let controller = MeetingController(recording: record, recordingLayoutDefaults: defaults)
+        controller.setTitleEditorVisible(true)
+        controller.setNotesTabSelected(true)
+        controller.setTitleEditorVisible(false, automatically: true)
+        XCTAssertTrue(controller.titleEditorVisible, "Notes must stay open when the pointer or focus leaves")
+
+        controller.beginResizingPill()
+        controller.setTitleEditorVisible(false, automatically: true)
+        XCTAssertTrue(controller.titleEditorVisible)
+        controller.finishResizingPill(height: 680)
+        XCTAssertEqual(controller.recordingPanelSize(availableHeight: 1000), CGSize(width: 400, height: 680))
+        controller.finishTitleEditing()
+        XCTAssertFalse(controller.titleEditorVisible, "Explicit collapse must still work with Notes selected")
+        XCTAssertEqual(controller.recordingPanelSize(availableHeight: 1000), CGSize(width: 186, height: 44))
+        controller.setTitleEditorVisible(true)
+        XCTAssertEqual(controller.recordingPanelSize(availableHeight: 1000).height, 680)
+        controller.setNotesTabSelected(false)
+        controller.setTitleEditorVisible(false, automatically: true)
+        XCTAssertFalse(controller.titleEditorVisible, "Transcript retains its hover-collapse behavior")
+        controller.setTitleEditorVisible(true)
+        XCTAssertEqual(controller.recordingPanelSize(availableHeight: 1000).height, 680)
+
+        // A smaller display constrains the window without erasing the chosen
+        // height; returning to the larger display restores it.
+        XCTAssertEqual(controller.recordingPanelSize(availableHeight: 600).height, 552)
+        XCTAssertEqual(controller.expandedPillHeight, 680)
+        let reopened = MeetingController(recording: record, recordingLayoutDefaults: defaults)
+        reopened.setTitleEditorVisible(true)
+        XCTAssertEqual(reopened.recordingPanelSize(availableHeight: 1000).height, 680)
+        XCTAssertEqual(reopened.activeCaptureMeetingID, record.id)
+    }
+
+    @MainActor func testResizeGripKeepsTopAndWidthAnchoredAndStaysOnScreen() {
+        let original = NSRect(x: 700, y: 500, width: 400, height: 444)
+        let screen = NSRect(x: 0, y: 40, width: 1200, height: 960)
+        let taller = RecordingResizeGrip.resizedFrame(original, verticalDelta: 236, visibleFrame: screen)
+        XCTAssertEqual(taller.height, 680)
+        XCTAssertEqual(taller.maxY, original.maxY)
+        XCTAssertEqual(taller.minX, original.minX)
+        XCTAssertEqual(taller.width, 400)
+        XCTAssertEqual(RecordingResizeGrip.resizedFrame(original, verticalDelta: -1000, visibleFrame: screen).height, 444)
+        XCTAssertEqual(RecordingResizeGrip.resizedFrame(original, verticalDelta: 2000, visibleFrame: screen).minY, screen.minY + 24)
+    }
+
+    @MainActor func testNativeGripDragResizesWindowAndRemembersHeight() async throws {
+        _ = NSApplication.shared
+        let suite = "myman.recording-drag." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = Meeting(id: "resize-drag", title: "Meeting", startedAt: Date(), transcript: "")
+        let controller = MeetingController(recording: record, recordingLayoutDefaults: defaults)
+        controller.setTitleEditorVisible(true)
+        let screen = try XCTUnwrap(NSScreen.main).visibleFrame
+        let window = FloatingPanel(content: MeetingPillView(controller: controller), fixedSize: true)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
+        window.setFrame(NSRect(x: screen.minX + 30, y: screen.maxY - 24 - 444, width: 400, height: 444), display: false)
+        let host = try XCTUnwrap(window.contentView)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        func findGrip(_ view: NSView) -> RecordingResizeGrip? {
+            if let grip = view as? RecordingResizeGrip { return grip }
+            return view.subviews.lazy.compactMap(findGrip).first
+        }
+        let grip = try XCTUnwrap(findGrip(host))
+        let origin = window.frame
+        let start = window.convertPoint(toScreen: grip.convert(NSPoint(x: grip.bounds.midX, y: grip.bounds.midY), to: nil))
+        func event(_ type: NSEvent.EventType, point: NSPoint) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: window.convertPoint(fromScreen: point),
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        }
+        grip.mouseDown(with: try event(.leftMouseDown, point: start))
+        XCTAssertTrue(controller.isResizingPill)
+        controller.setTitleEditorVisible(false, automatically: true)
+        XCTAssertTrue(controller.titleEditorVisible)
+        let end = NSPoint(x: start.x, y: start.y - 150)
+        grip.mouseDragged(with: try event(.leftMouseDragged, point: end))
+        XCTAssertEqual(window.frame, RecordingResizeGrip.resizedFrame(origin, verticalDelta: 150, visibleFrame: screen))
+        grip.mouseUp(with: try event(.leftMouseUp, point: end))
+        XCTAssertFalse(controller.isResizingPill)
+        XCTAssertEqual(controller.expandedPillHeight, window.frame.height)
+        XCTAssertEqual(defaults.double(forKey: "meetingExpandedPanelHeight"), window.frame.height)
+        XCTAssertEqual(window.frame.maxY, origin.maxY)
+    }
+
+    @MainActor func testRenderAllRecordingTabsAtCustomHeight() async throws {
+        guard let folder = ProcessInfo.processInfo.environment["MAN_SCREENSHOT_UI_REVIEW"] else { throw XCTSkip("Opt-in native visual review") }
+        _ = NSApplication.shared
+        MM.Fonts.registerFonts()
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let (controller, _) = try fixture()
+        controller.setTitleEditorVisible(true)
+        controller.recordingNote.update("Review the launch plan.\n\n- [ ] Send the proposal\n- [x] Confirm the timeline")
+        XCTAssertTrue(controller.recordingNote.flush())
+        let turns: [MeetingTurn] = (0..<20).map { index in
+            let start = Double(index * 10)
+            let speaker = index % 2 == 0 ? "You" : "Speaker 2"
+            return MeetingTurn(start: start, end: start + 5, speaker: speaker,
+                               text: "We are reviewing the launch timeline and the next steps for the project.")
+        }
+        controller.liveTranscript.append(turns, ownerName: "Alex", candidates: .none)
+        let screenshotFolder = URL(fileURLWithPath: folder).appendingPathComponent("slides")
+        try FileManager.default.createDirectory(at: screenshotFolder, withIntermediateDirectories: true)
+        let startedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        controller.slideCapture.start(meetingID: "live", folder: screenshotFolder, startedAt: startedAt)
+        let screen = NSImage(size: NSSize(width: 960, height: 600), flipped: false) { rect in
+            NSColor(calibratedWhite: 0.95, alpha: 1).setFill(); rect.fill()
+            NSColor.systemBlue.setFill(); NSRect(x: 90, y: 90, width: 140, height: 180).fill()
+            NSColor.systemTeal.setFill(); NSRect(x: 300, y: 90, width: 140, height: 280).fill()
+            NSColor.systemOrange.setFill(); NSRect(x: 510, y: 90, width: 140, height: 350).fill()
+            ("Quarterly product review" as NSString).draw(at: NSPoint(x: 80, y: 510),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 40), .foregroundColor: NSColor.black])
+            return true
+        }
+        let screenshot = try XCTUnwrap(screen.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        await controller.slideCapture.capture(meetingID: "live", now: { startedAt.addingTimeInterval(135) }, image: { screenshot }, inspect: { _ in })
+        await controller.slideCapture.capture(meetingID: "live", force: true, now: { startedAt.addingTimeInterval(155) }, image: { screenshot }, inspect: { _ in })
+        for tab in MeetingRecordingTab.allCases {
+            var editorHeight: CGFloat?
+            for height in [444.0, 680.0] {
+                let panel = FloatingPanel(content: MeetingPillView(controller: controller, selectedTab: tab), fixedSize: true)
+                panel.isReleasedWhenClosed = false
+                defer { panel.contentView = nil; panel.close() }
+                panel.appearance = NSAppearance(named: .darkAqua)
+                panel.setFrame(NSRect(x: 100, y: 100, width: 400, height: height), display: false)
+                let host = try XCTUnwrap(panel.contentView)
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(150))
+                host.layoutSubtreeIfNeeded()
+                func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+                let grip = try XCTUnwrap(descendants(host).compactMap { $0 as? RecordingResizeGrip }.first)
+                XCTAssertEqual(grip.bounds.height, 12)
+                if tab == .notes {
+                    let editor = try XCTUnwrap(descendants(host).compactMap { $0 as? NSTextView }.first)
+                    let viewport = try XCTUnwrap(editor.enclosingScrollView).contentSize.height
+                    if let editorHeight { XCTAssertEqual(viewport - editorHeight, 236, accuracy: 2) }
+                    else { editorHeight = viewport }
+                }
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: folder).appendingPathComponent("recording-\(tab.rawValue.lowercased())-\(Int(height)).png"))
+            }
+        }
+    }
+
     @MainActor func testTypingAutosavesLatestName() async throws {
         let (controller, queue) = try fixture()
         controller.updateRecordingTitle("Search")
@@ -237,7 +388,7 @@ final class MeetingRecordingTitleTests: XCTestCase {
         XCTAssertTrue(controller.recordingNote.flush())
         controller.setTitleEditorVisible(true)
         for showingNote in [false, true] {
-            let window = FloatingPanel(content: MeetingPillView(controller: controller, showingNote: showingNote), becomesKey: true, fixedSize: true)
+            let window = FloatingPanel(content: MeetingPillView(controller: controller, selectedTab: showingNote ? .notes : .transcript), becomesKey: true, fixedSize: true)
             window.isReleasedWhenClosed = false
             defer { window.contentView = nil; window.close() }
             window.appearance = NSAppearance(named: .darkAqua)

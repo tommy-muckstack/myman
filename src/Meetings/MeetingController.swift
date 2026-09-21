@@ -18,6 +18,7 @@ struct Meeting: Codable, FetchableRecord, PersistableRecord, Sendable {
     var summary: String = ""
     /// JSON array of slide-screenshot paths captured during the meeting.
     var slides: String = ""
+    var slideMetadataJSON: String = "[]"
     var kind: String = MeetingKind.meeting.rawValue
     var ownerName: String = ""
     var participantsJSON: String = "[]"
@@ -36,6 +37,13 @@ struct Meeting: Codable, FetchableRecord, PersistableRecord, Sendable {
     var resolvedOwner: String {
         let full = ownerName.isEmpty ? NSFullUserName() : ownerName
         return full.split(separator: " ").first.map(String.init) ?? "Owner"
+    }
+
+    var capturedSlides: [MeetingSlide] {
+        let metadata = (try? JSONDecoder().decode([MeetingSlide].self, from: Data(slideMetadataJSON.utf8))) ?? []
+        return slidePaths.map { path in
+            metadata.first(where: { $0.path == path }) ?? MeetingSlide(path: path)
+        }
     }
 
     var slidePaths: [String] {
@@ -111,6 +119,10 @@ final class MeetingController: ObservableObject {
     @Published var levels: [Float] = []
     @Published private(set) var recordingTitle = ""
     @Published private(set) var titleEditorVisible = false
+    @Published private(set) var expandedPillHeight: CGFloat
+    private let recordingLayoutDefaults: UserDefaults
+    private(set) var notesTabSelected = false
+    private(set) var isResizingPill = false
     @Published var stopConfirmationVisible = false
     let liveTranscript = LiveMeetingTranscript()
     let recordingNote: MeetingRecordingNote
@@ -124,7 +136,10 @@ final class MeetingController: ObservableObject {
     /// the user may keep speaking or typing after everyone else leaves.
     private var lastRemoteAudibleAt = Date()
     private var slideTimer: Timer?
-    private let slideCapture = MeetingSlideCapture()
+    private var screenshotCueTask: Task<Void, Never>?
+    private var screenshotCues = MeetingScreenshotCueTracker()
+    let slideCapture: MeetingSlideCapture
+    @Published private(set) var screenshotMessage: String?
     private var systemLevel: Float = 0
     private var levelTimer: Timer?
 
@@ -142,6 +157,7 @@ final class MeetingController: ObservableObject {
         return meeting?.id
     }
     private var meeting: Meeting?
+    var recordingSummary: String { meeting?.summary ?? "" }
     private var panel: FloatingPanel?
     private var pausedMusic = false
     /// Set by the calendar nudge before starting — the event's real name.
@@ -174,7 +190,13 @@ final class MeetingController: ObservableObject {
     init(recording: Meeting? = nil, titleDatabase: DatabaseQueue? = nil,
          transcriptionRunner: ((TranscriptionJob) async -> Void)? = nil,
          transcriptionProcessor: ((TranscriptionJob) async throws -> MeetingTranscriptResult)? = nil,
+         recordingLayoutDefaults: UserDefaults = .standard,
+         slideCapture: MeetingSlideCapture? = nil,
          requestMicrophoneAccess: @escaping () async -> Bool = { await AVCaptureDevice.requestAccess(for: .audio) }) {
+        self.slideCapture = slideCapture ?? MeetingSlideCapture()
+        self.recordingLayoutDefaults = recordingLayoutDefaults
+        let savedHeight = recordingLayoutDefaults.double(forKey: "meetingExpandedPanelHeight")
+        expandedPillHeight = savedHeight.isFinite ? max(444, savedHeight) : 444
         self.requestMicrophoneAccess = requestMicrophoneAccess
         self.transcriptionRunner = transcriptionRunner
         self.transcriptionProcessor = transcriptionProcessor
@@ -186,6 +208,14 @@ final class MeetingController: ObservableObject {
             phase = .recording(start: recording.startedAt)
             recordingNote.reset(meetingID: recording.id)
         }
+        self.slideCapture.onChange = { [weak self] id, slides in
+            guard let self else { throw CancellationError() }
+            try self.persistSlides(slides, meetingID: id)
+        }
+        if let recording {
+            self.slideCapture.start(meetingID: recording.id, folder: Self.recordingsFolder,
+                               startedAt: recording.startedAt, slides: recording.capturedSlides)
+        }
         liveTranscript.onEditsChanged = { [weak self] edits in self?.saveLiveEdits(edits) }
         liveTranscript.onTextCorrected = { text in DictationCleanup.learn(from: text) }
         liveTranscript.onProgress = { [weak self] turns in
@@ -193,6 +223,7 @@ final class MeetingController: ObservableObject {
             let cleaned = MeetingChannelDedupe.clean(mic: turns.filter { $0.speaker == Self.ownerLabel },
                                                      system: turns.filter { $0.speaker != Self.ownerLabel })
             let sorted = (cleaned.mic + cleaned.system).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+            self.considerScreenshotCue(sorted, meeting: record)
             record.kind = cleaned.kind.rawValue
             record.transcript = MeetingSource.render(Self.nameSpeakers(in: sorted, candidates: self.sessionAttendeeNames))
             MeetingNotesService.shared.updateDraft(record)
@@ -248,7 +279,9 @@ final class MeetingController: ObservableObject {
         }
     }
 
-    func setTitleEditorVisible(_ visible: Bool) {
+    func setTitleEditorVisible(_ visible: Bool, automatically: Bool = false) {
+        guard visible || !isResizingPill else { return }
+        guard visible || !automatically || !notesTabSelected else { return }
         guard visible || (!stopConfirmationVisible && liveTranscript.editingRowID == nil) else { return }
         let visible = visible && !isProvisional && phase != .idle
         guard titleEditorVisible != visible else { return }
@@ -421,6 +454,7 @@ final class MeetingController: ObservableObject {
         stopEndWatch()
         provisionalTimeout?.invalidate()
         provisionalTimeout = nil
+        screenshotCueTask?.cancel(); screenshotCueTask = nil
         slideTimer?.invalidate()
         slideTimer = nil
         for path in slideCapture.finish() { try? FileManager.default.removeItem(atPath: path) }
@@ -739,22 +773,74 @@ final class MeetingController: ObservableObject {
     // MARK: Slides — periodic captures of the call window, deduped
 
     private func startSlideCapture(meetingID: String) {
-        slideCapture.start(meetingID: meetingID, folder: Self.recordingsFolder)
+        screenshotMessage = nil
+        screenshotCues = MeetingScreenshotCueTracker()
+        screenshotCueTask?.cancel()
+        slideCapture.start(meetingID: meetingID, folder: Self.recordingsFolder, startedAt: meeting?.startedAt ?? Date())
         participantScanner = CallParticipantScanner()
-        slideTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+        slideTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.captureSlide(meetingID: meetingID) }
+        }
+    }
+
+    private func considerScreenshotCue(_ turns: [MeetingTurn], meeting record: Meeting) {
+        guard screenshotCues.shouldCapture(turns: turns, elapsed: Date().timeIntervalSince(record.startedAt)) else { return }
+        screenshotCueTask?.cancel()
+        screenshotCueTask = Task { @MainActor [weak self] in
+            // Give the presenter a moment to reveal the thing they mention.
+            do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
+            guard let self, !Task.isCancelled, self.activeCaptureMeetingID == record.id else { return }
+            await self.captureSlide(meetingID: record.id)
         }
     }
 
     private var participantScanner = CallParticipantScanner()
 
-    private func captureSlide(meetingID: String) async {
-        guard case .recording = phase, meeting?.id == meetingID else { return }
-        await slideCapture.capture(meetingID: meetingID, image: {
+    @discardableResult
+    private func captureSlide(meetingID: String, force: Bool = false) async -> MeetingSlideCapture.Result {
+        guard !isShuttingDown, case .recording = phase, meeting?.id == meetingID else { return .cancelled }
+        return await slideCapture.capture(meetingID: meetingID, force: force, image: {
             await self.captureCallWindow()
         }, inspect: { image in
             await self.scanCallParticipants(image, meetingID: meetingID)
         })
+    }
+
+    func captureSharedScreen() async -> MeetingSlide? {
+        guard let id = activeCaptureMeetingID else { return nil }
+        screenshotMessage = nil
+        let result = await captureSlide(meetingID: id, force: true)
+        guard activeCaptureMeetingID == id else { return nil }
+        switch result {
+        case .saved(let slide): return slide
+        case .noWindow: screenshotMessage = "Bring the call or shared screen into view, then try again."
+        case .failed: screenshotMessage = "Couldn’t save this screenshot. Try again."
+        case .busy: screenshotMessage = "A screenshot is already being captured."
+        default: break
+        }
+        return nil
+    }
+
+    func removeRecordingScreenshot(_ path: String) {
+        guard let id = activeCaptureMeetingID else { return }
+        do {
+            try slideCapture.remove(path: path, meetingID: id)
+            screenshotMessage = nil
+        } catch { screenshotMessage = "Couldn’t delete this screenshot. Try again." }
+    }
+
+    private func persistSlides(_ slides: [MeetingSlide], meetingID: String) throws {
+        guard var record = meeting, record.id == meetingID else { throw CancellationError() }
+        record.slides = String(decoding: try JSONEncoder().encode(slides.map(\.path)), as: UTF8.self)
+        record.slideMetadataJSON = String(decoding: try JSONEncoder().encode(slides), as: UTF8.self)
+        if !isProvisional {
+            try (titleDatabase ?? Database.shared).write { db in
+                try db.execute(sql: "UPDATE meeting SET slides = ?, slideMetadataJSON = ? WHERE id = ?",
+                               arguments: [record.slides, record.slideMetadataJSON, meetingID])
+                guard db.changesCount > 0 else { throw CocoaError(.fileNoSuchFile) }
+            }
+        }
+        meeting = record
     }
 
     /// Names on the call window are the best evidence of who is talking.
@@ -784,10 +870,14 @@ final class MeetingController: ObservableObject {
             .union(MeetingDetector.browserBundles)
         let candidates = content.windows.filter { window in
             guard let bundle = window.owningApplication?.bundleIdentifier else { return false }
+            let title = window.title ?? ""
+            let browser = MeetingDetector.browserBundles.contains(bundle)
             return callBundles.contains(bundle) && window.isOnScreen
+                && (!browser || MeetingDetector.isMeetingWindowTitle(title))
                 && window.frame.width > 400 && window.frame.height > 300
         }
-        guard let window = candidates.max(by: {
+        let meetingWindows = candidates.filter { MeetingDetector.isMeetingWindowTitle($0.title ?? "") }
+        guard let window = (meetingWindows.isEmpty ? candidates : meetingWindows).max(by: {
             $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
         }) else { return nil }
 
@@ -823,6 +913,7 @@ final class MeetingController: ObservableObject {
         isStarting = false
         stopEndWatch()
         provisionalTimeout?.invalidate(); provisionalTimeout = nil
+        screenshotCueTask?.cancel(); screenshotCueTask = nil
         slideTimer?.invalidate(); slideTimer = nil
         levelTimer?.invalidate(); levelTimer = nil
         micDrainTimer?.invalidate(); micDrainTimer = nil
@@ -874,6 +965,7 @@ final class MeetingController: ObservableObject {
         stopEndWatch()
         levelTimer?.invalidate()
         levelTimer = nil
+        screenshotCueTask?.cancel(); screenshotCueTask = nil
         slideTimer?.invalidate()
         slideTimer = nil
         let slidePaths = slideCapture.finish()
@@ -1918,12 +2010,41 @@ final class MeetingController: ObservableObject {
     /// fittingSize lies pre-layout (collapsed pill, "S" button) and
     /// GeometryReader only reports the space it was GIVEN, so a too-small
     /// panel stays crushed and thrashes. Fixed sizes end the whole saga.
-    static func pillSize(provisional: Bool, editingTitle: Bool = false) -> CGSize {
+    static func pillSize(provisional: Bool, editingTitle: Bool = false, expandedHeight: CGFloat = 444) -> CGSize {
         // The provisional card includes Cancel; a kept recording reveals
         // its name editor and Cancel together when expanded on hover.
         if provisional { return CGSize(width: 320, height: 186) }
-        if editingTitle { return CGSize(width: 400, height: 444) }
+        if editingTitle { return CGSize(width: 400, height: max(444, expandedHeight)) }
         return CGSize(width: 186, height: 44)
+    }
+
+    func setNotesTabSelected(_ selected: Bool) { notesTabSelected = selected }
+
+    func beginResizingPill() {
+        guard titleEditorVisible, !isProvisional else { return }
+        isResizingPill = true
+        pillFrameRevision += 1
+    }
+
+    func finishResizingPill(height: CGFloat) {
+        guard isResizingPill else { return }
+        isResizingPill = false
+        guard height.isFinite else { return }
+        expandedPillHeight = max(444, height)
+        recordingLayoutDefaults.set(Double(expandedPillHeight), forKey: "meetingExpandedPanelHeight")
+    }
+
+    func adjustPillHeight(by amount: CGFloat) {
+        guard titleEditorVisible, !isProvisional else { return }
+        let available = max(444, ((panel?.screen ?? NSScreen.main)?.visibleFrame.height ?? 900) - 48)
+        beginResizingPill()
+        finishResizingPill(height: min(available, expandedPillHeight + amount))
+        applyPillFrame()
+    }
+
+    func recordingPanelSize(availableHeight: CGFloat) -> CGSize {
+        Self.pillSize(provisional: isProvisional, editingTitle: titleEditorVisible,
+                      expandedHeight: min(expandedPillHeight, max(444, availableHeight - 48)))
     }
 
     var pointerIsInsidePill: Bool { panel?.frame.contains(NSEvent.mouseLocation) == true }
@@ -1933,8 +2054,8 @@ final class MeetingController: ObservableObject {
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         pillFrameRevision += 1
         let revision = pillFrameRevision
-        let size = Self.pillSize(provisional: isProvisional, editingTitle: titleEditorVisible)
         let visible = screen.visibleFrame
+        let size = recordingPanelSize(availableHeight: visible.height)
         let frame = NSRect(x: visible.maxX - size.width - 24,
                            y: visible.maxY - size.height - 24,
                            width: size.width, height: size.height)
@@ -1960,15 +2081,15 @@ final class MeetingController: ObservableObject {
             self?.flushRecordingTitle()
             guard self?.recordingNote.flush() != false else { return }
             guard self?.stopConfirmationVisible != true else { return }
-            self?.setTitleEditorVisible(false)
+            self?.setTitleEditorVisible(false, automatically: true)
         }
         pill.onDismiss = { [weak self] in self?.panel = nil }
         panel = pill
         // Top-right, out of the way — a meeting indicator, not a dialog.
         // Frame comes from the fixed size table, never from measurement.
-        let size = Self.pillSize(provisional: isProvisional)
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
+            let size = recordingPanelSize(availableHeight: visible.height)
             pill.setFrame(
                 NSRect(x: visible.maxX - size.width - 24, y: visible.maxY - size.height - 24,
                        width: size.width, height: size.height),
@@ -2021,14 +2142,15 @@ struct MeetingPillView: View {
     @State private var titleDraft = ""
     @State private var hovering = false
     @State private var noteFocused = false
-    @State private var showingNote = false
+    @State private var selectedTab: MeetingRecordingTab = .transcript
+    @State private var transcriptSeek: MeetingTranscriptSeek?
     @State private var collapseTask: Task<Void, Never>?
     @FocusState private var titleFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(controller: MeetingController, showingNote: Bool = false) {
+    init(controller: MeetingController, selectedTab: MeetingRecordingTab = .transcript) {
         self.controller = controller
-        _showingNote = State(initialValue: showingNote)
+        _selectedTab = State(initialValue: selectedTab)
     }
 
     private var fixedSize: CGSize {
@@ -2041,18 +2163,20 @@ struct MeetingPillView: View {
     }
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    var body: some View {
+    private var panelSurface: some View {
         // The AppKit window is the only animation driver. Fill its actual
         // bounds instead of immediately laying out at the destination size.
-        GeometryReader { _ in
+        GeometryReader { geometry in
             Group {
                 if case .recording(let start) = controller.phase, controller.isProvisional {
                     provisionalCard(start: start)
                 } else {
-                    pillRow
+                    pillRow(detailsHeight: max(290, geometry.size.height - 154))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .frame(width: fixedSize.width, height: fixedSize.height, alignment: .top)
+                        .frame(width: fixedSize.width,
+                               height: controller.titleEditorVisible ? max(444, geometry.size.height) : 44,
+                               alignment: .top)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -2072,28 +2196,29 @@ struct MeetingPillView: View {
                 }
             }
         )
-        .contentShape(Rectangle())
-        .onAppear { titleDraft = controller.recordingTitle }
-        .onHover { inside in
-            hovering = inside
-            collapseTask?.cancel()
-            if inside {
-                controller.setTitleEditorVisible(true)
-            } else if !titleFocused && !noteFocused {
-                // Resizing under the pointer can briefly produce an exit.
-                collapseTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(400))
-                    guard !Task.isCancelled, !hovering, !titleFocused, !noteFocused,
-                          !controller.stopConfirmationVisible, !controller.pointerIsInsidePill else { return }
-                    controller.setTitleEditorVisible(false)
-                }
+        .overlay(alignment: .bottom) {
+            if isRecording && controller.titleEditorVisible && !controller.isProvisional {
+                MeetingRecordingResizeHandle(controller: controller)
+                    .frame(height: 12)
+                    .padding(.horizontal, 14)
             }
         }
+    }
+
+    private var interactiveSurface: some View {
+        panelSurface
+        .contentShape(Rectangle())
+        .onAppear {
+            titleDraft = controller.recordingTitle
+            updateSelectedTab(selectedTab)
+        }
+        .onChange(of: selectedTab) { (_: MeetingRecordingTab, selected: MeetingRecordingTab) in updateSelectedTab(selected) }
+        .onHover(perform: handleHover)
         .onChange(of: titleFocused) { _, focused in
             if !focused {
                 controller.flushRecordingTitle()
                 titleDraft = controller.recordingTitle
-                if !hovering && !noteFocused && !controller.pointerIsInsidePill { controller.setTitleEditorVisible(false) }
+                if !hovering && !noteFocused && !controller.pointerIsInsidePill { controller.setTitleEditorVisible(false, automatically: true) }
             }
         }
         .onChange(of: controller.recordingTitle) { _, title in
@@ -2106,8 +2231,12 @@ struct MeetingPillView: View {
             }
         }
         .onChange(of: controller.stopConfirmationVisible) { _, visible in
-            if !visible && !hovering && !titleFocused && !noteFocused { controller.setTitleEditorVisible(false) }
+            if !visible && !hovering && !titleFocused && !noteFocused { controller.setTitleEditorVisible(false, automatically: true) }
         }
+    }
+
+    var body: some View {
+        interactiveSurface
         .confirmationDialog("Stop this meeting?", isPresented: $controller.stopConfirmationVisible,
                             titleVisibility: .visible) {
             Button("Stop & transcribe") { controller.confirmStopRecording() }
@@ -2122,6 +2251,28 @@ struct MeetingPillView: View {
         }
         .onDisappear { collapseTask?.cancel() }
         .onReceive(clock) { now = $0 }
+    }
+
+    private func updateSelectedTab(_ tab: MeetingRecordingTab) {
+        switch tab {
+        case .notes, .screenshots: controller.setNotesTabSelected(true)
+        default: controller.setNotesTabSelected(false)
+        }
+    }
+
+    private func handleHover(_ inside: Bool) {
+        hovering = inside
+        collapseTask?.cancel()
+        if inside {
+            controller.setTitleEditorVisible(true)
+        } else if !titleFocused && !noteFocused {
+            collapseTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled, !hovering, !titleFocused, !noteFocused,
+                      !controller.stopConfirmationVisible, !controller.pointerIsInsidePill else { return }
+                controller.setTitleEditorVisible(false, automatically: true)
+            }
+        }
     }
 
     private func finishEditing() {
@@ -2250,7 +2401,7 @@ struct MeetingPillView: View {
             .animation(reduceMotion ? nil : MM.Motion.silky, value: expanded)
     }
 
-    private var pillRow: some View {
+    private func pillRow(detailsHeight: CGFloat) -> some View {
         VStack(spacing: 5) {
             HStack(spacing: 10) {
             switch controller.phase {
@@ -2262,6 +2413,15 @@ struct MeetingPillView: View {
                 timerText(since: start)
                 if controller.titleEditorVisible {
                     Spacer(minLength: 0)
+                    Button { finishEditing() } label: {
+                        Image(systemName: "chevron.up")
+                            .font(MM.Fonts.metadata)
+                            .foregroundStyle(MM.Colors.textSecondary)
+                            .clickable(minSize: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Collapse recording details")
+                    .help("Collapse recording details")
                     Button {
                         controller.requestStopRecording()
                     } label: {
@@ -2281,19 +2441,27 @@ struct MeetingPillView: View {
             if isRecording && controller.titleEditorVisible {
                 titleEditor
                 VStack(spacing: MM.Layout.spacing / 2) {
-                    MeetingRecordingTabs(showingNote: $showingNote)
-                    if showingNote {
+                    MeetingRecordingTabs(selection: $selectedTab)
+                    switch selectedTab {
+                    case .notes:
                         MeetingRecordingNoteView(draft: controller.recordingNote) { focused in
                             noteFocused = focused
                         }
-                    } else {
+                    case .summary:
+                        MeetingRecordingSummaryView(meetingID: controller.activeCaptureMeetingID,
+                                                    savedSummary: controller.recordingSummary)
+                    case .screenshots:
+                        MeetingRecordingScreenshotsView(controller: controller) { offset in
+                            transcriptSeek = MeetingTranscriptSeek(offset: offset)
+                            selectedTab = .transcript
+                        }
+                    case .transcript:
                         MeetingLiveTranscriptView(transcript: controller.liveTranscript,
                                                   saveFailed: controller.liveEditSaveFailed,
-                                                  retry: { controller.liveTranscript.retry() },
-                                                  meetingID: controller.activeCaptureMeetingID)
+                                                  retry: { controller.liveTranscript.retry() }, seek: transcriptSeek)
                     }
                 }
-                    .frame(height: 302)
+                    .frame(height: detailsHeight)
                     .transition(.opacity)
                 Button {
                     controller.discardRecording()

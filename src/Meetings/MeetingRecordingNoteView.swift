@@ -1,12 +1,45 @@
 import SwiftUI
 
+enum MeetingRecordingTab: String, CaseIterable {
+    case transcript = "Transcript"
+    case summary = "Summary"
+    case notes = "Notes"
+    case screenshots = "Screenshots"
+}
+
 struct MeetingRecordingTabs: View {
-    @Binding var showingNote: Bool
+    @Binding var selection: MeetingRecordingTab
+    @Namespace private var highlight
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 2) {
-            tab("Transcript", note: false)
-            tab("My note", note: true)
+            ForEach(MeetingRecordingTab.allCases, id: \.self) { tab in
+                let selected = selection == tab
+                Button {
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.1) : .spring(response: 0.38, dampingFraction: 0.62)) {
+                        selection = tab
+                    }
+                } label: {
+                    Text(tab.rawValue)
+                        .lineLimit(1)
+                        .font(MM.Fonts.secondary)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .foregroundStyle(selected ? MM.Colors.accent : MM.Colors.textSecondary)
+                        .padding(.horizontal, MM.Layout.spacing * 0.65)
+                        .padding(.vertical, MM.Layout.spacing / 2)
+                        .background {
+                            if selected {
+                                RoundedRectangle(cornerRadius: MM.Layout.radiusSmall - 3)
+                                    .fill(MM.Colors.accent.opacity(0.12))
+                                    .matchedGeometryEffect(id: "selected-tab", in: highlight, properties: reduceMotion ? [] : .frame)
+                            }
+                        }
+                        .clickable(minSize: 28)
+                }
+                .buttonStyle(RecordingTabPressStyle(reduceMotion: reduceMotion))
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
         }
         .padding(3)
         .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
@@ -14,21 +47,14 @@ struct MeetingRecordingTabs: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Recording details")
     }
+}
 
-    private func tab(_ title: String, note: Bool) -> some View {
-        let selected = showingNote == note
-        return Button { showingNote = note } label: {
-            Text(title)
-                .font(MM.Fonts.secondary)
-                .foregroundStyle(selected ? MM.Colors.accent : MM.Colors.textSecondary)
-                .padding(.horizontal, MM.Layout.spacing)
-                .padding(.vertical, MM.Layout.spacing / 2)
-                .background(selected ? MM.Colors.accent.opacity(0.12) : .clear,
-                            in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall - 3))
-                .clickable(minSize: 28)
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+private struct RecordingTabPressStyle: ButtonStyle {
+    let reduceMotion: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.9 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.55), value: configuration.isPressed)
     }
 }
 

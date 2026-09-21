@@ -19,7 +19,7 @@ final class MeetingRecordingNoteTests: XCTestCase {
         defer { window.contentView = nil; window.close() }
         window.contentView = NSHostingView(rootView: VStack(spacing: MM.Layout.spacing) {
             Text("Project review").font(MM.Fonts.title).foregroundStyle(MM.Colors.textPrimary)
-            MeetingRecordingTabs(showingNote: .constant(true))
+            MeetingRecordingTabs(selection: .constant(.notes))
             MeetingRecordingNoteView(draft: draft) { _ in }
         }.padding(MM.Layout.padding).background(MM.Colors.background))
         func capture(_ name: String) throws {
