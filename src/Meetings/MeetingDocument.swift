@@ -151,6 +151,7 @@ struct MeetingDocumentView: View {
     @State private var summary: String
     @State private var transcript: String
     @State private var slidePaths: [String]
+    @State private var capturedSlides: [MeetingSlide]
     @State private var showTranscript = false
     @State private var isSummarizing = false
     @StateObject private var autosave: DocumentAutosave
@@ -180,6 +181,7 @@ struct MeetingDocumentView: View {
         _summary = State(initialValue: meeting.summary)
         _transcript = State(initialValue: meeting.transcript)
         _slidePaths = State(initialValue: meeting.slidePaths)
+        _capturedSlides = State(initialValue: meeting.capturedSlides)
         _endedAt = State(initialValue: meeting.endedAt)
     }
 
@@ -265,6 +267,7 @@ struct MeetingDocumentView: View {
                     if !hasEditedNotes { summary = saved.summary }
                     endedAt = saved.endedAt
                     slidePaths = saved.slidePaths
+                    capturedSlides = saved.capturedSlides
                     if automaticallySummarize { generateSummaryIfMissing() }
                 }
             } catch { /* Keep the editable document available if observation fails. */ }
@@ -489,6 +492,14 @@ struct MeetingDocumentView: View {
                             .onTapGesture {
                                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
                             }
+                            .overlay(alignment: .bottomLeading) {
+                                if let offset = capturedSlides.first(where: { $0.path == path })?.offset {
+                                    Text(MeetingSource.stamp(offset))
+                                        .font(MM.Fonts.metadata).foregroundStyle(.white)
+                                        .padding(4).background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
+                                        .padding(4)
+                                }
+                            }
                             .overlay(alignment: .topTrailing) {
                                 Button {
                                     removeSlide(path)
@@ -640,9 +651,11 @@ struct MeetingDocumentView: View {
             .map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         try? FileManager.default.trashItem(
             at: URL(fileURLWithPath: path), resultingItemURL: nil)
-        try? Database.shared.write { db in
-            try db.execute(sql: "UPDATE meeting SET slides = ? WHERE id = ?",
-                           arguments: [encoded, meeting.id])
+        try? db.write { db in
+            guard let current = try Meeting.fetchOne(db, key: meeting.id) else { return }
+            let metadata = String(decoding: try JSONEncoder().encode(current.capturedSlides.filter { $0.path != path }), as: UTF8.self)
+            try db.execute(sql: "UPDATE meeting SET slides = ?, slideMetadataJSON = ? WHERE id = ?",
+                           arguments: [encoded, metadata, meeting.id])
         }
         Analytics.track("meeting_slide_removed")
     }

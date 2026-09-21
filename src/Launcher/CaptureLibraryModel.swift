@@ -115,8 +115,7 @@ enum CaptureThumbnailCache {
         // not silently replace an image with OCR text or erase the user's copy.
         if !textOnly, item.kind == "screenshot" {
             guard let image = NSImage(contentsOfFile: item.sourcePath) else { return false }
-            pasteboard.clearContents()
-            return pasteboard.writeObjects([image])
+            return copyImage(image, pasteboard: pasteboard)
         } else if !textOnly, item.kind == "recording" {
             guard FileManager.default.fileExists(atPath: item.sourcePath) else { return false }
             pasteboard.clearContents()
@@ -127,6 +126,12 @@ enum CaptureThumbnailCache {
             pasteboard.clearContents()
             return pasteboard.setString(text, forType: .string)
         }
+    }
+
+    @discardableResult static func copyImage(_ image: NSImage, pasteboard: NSPasteboard = .general) -> Bool {
+        guard image.isValid else { return false }
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([image])
     }
 
     static func fileURL(for item: CaptureItem, brainRoot: URL = Brain.root) -> URL? {

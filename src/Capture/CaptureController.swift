@@ -301,6 +301,7 @@ private struct ThumbnailView: View {
     var onDismiss: () -> Void
     var onHoverChanged: (Bool) -> Void
     @State private var hovering = false
+    @State private var contextMenuOpen = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -330,12 +331,18 @@ private struct ThumbnailView: View {
         .animation(MM.Motion.gentle, value: hovering)
         .onHover { h in
             hovering = h
-            onHoverChanged(h)
+            onHoverChanged(h || contextMenuOpen)
         }
         .onTapGesture { onEdit() }
         .accessibilityAction(named: Text("Edit screenshot"), onEdit)
         .draggable(fileURL)
-        .help("Copied to clipboard — click to edit, drag anywhere")
+        .contextMenu {
+            Button("Copy") { CaptureActions.copyImage(image) }
+                .onAppear { contextMenuOpen = true; onHoverChanged(true) }
+                .onDisappear { contextMenuOpen = false; onHoverChanged(hovering) }
+        }
+        .accessibilityAction(named: Text("Copy screenshot")) { CaptureActions.copyImage(image) }
+        .help("Click to edit, right-click to copy, or drag anywhere")
     }
 
     private var hoverActions: some View {
