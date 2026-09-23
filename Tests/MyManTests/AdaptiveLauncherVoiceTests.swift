@@ -1,0 +1,160 @@
+import XCTest
+@testable import MyMan
+
+final class AdaptiveLauncherVoiceTests: XCTestCase {
+    func testEndpointBoundsIdleBuffersAndIgnoresClicks() {
+        let start = Date(timeIntervalSince1970: 0)
+        var endpoint = AdaptiveSpeechEndpoint(startedAt: start)
+        XCTAssertEqual(endpoint.sample(level: 0.03, now: start.addingTimeInterval(0.1)), .keepListening)
+        XCTAssertEqual(endpoint.sample(level: 0, now: start.addingTimeInterval(1.2)), .keepListening)
+        XCTAssertEqual(endpoint.sample(level: 0, now: start.addingTimeInterval(5)), .discardSilence)
+        XCTAssertEqual(endpoint.sample(level: 0, now: start.addingTimeInterval(10)), .discardSilence)
+    }
+
+    func testEndpointRecognizesPausesAndCapsLongUtterances() {
+        let start = Date(timeIntervalSince1970: 0)
+        var endpoint = AdaptiveSpeechEndpoint(startedAt: start)
+        for tick in 1...4 { XCTAssertEqual(endpoint.sample(level: 0.03, now: start.addingTimeInterval(Double(tick) / 10)), .keepListening) }
+        XCTAssertEqual(endpoint.sample(level: 0, now: start.addingTimeInterval(0.5)), .keepListening)
+        XCTAssertEqual(endpoint.sample(level: 0, now: start.addingTimeInterval(1.4)), .keepListening)
+        XCTAssertEqual(endpoint.sample(level: 0, now: start.addingTimeInterval(1.6)), .transcribe)
+        endpoint = AdaptiveSpeechEndpoint(startedAt: start)
+        for tick in 1..<200 { _ = endpoint.sample(level: 0.03, now: start.addingTimeInterval(Double(tick) / 10)) }
+        XCTAssertEqual(endpoint.sample(level: 0.03, now: start.addingTimeInterval(20)), .transcribe)
+    }
+
+    @MainActor func testDeniedPermissionDoesNotPrepareOrOpenMicrophone() async throws {
+        let fake = FakeVoice()
+        fake.allowed = false
+        let voice = fake.controller()
+        defer { voice.stop() }
+        voice.start()
+        try await eventually { voice.phase == .denied }
+        XCTAssertFalse(voice.enabled)
+        XCTAssertEqual(fake.preparations, 0)
+        XCTAssertEqual(fake.beginnings, 0)
+    }
+
+    @MainActor func testCloseDuringModelPreparationDoesNotStartMicrophone() async throws {
+        let fake = FakeVoice()
+        fake.holdPreparation = true
+        let voice = fake.controller()
+        voice.start()
+        try await eventually { fake.preparation != nil }
+        voice.stop()
+        fake.preparation?.resume(returning: true)
+        await Task.yield()
+        XCTAssertEqual(fake.beginnings, 0)
+        XCTAssertFalse(voice.enabled)
+        XCTAssertEqual(voice.phase, .off)
+    }
+
+    @MainActor func testLateMicrophoneStartupIsImmediatelyReleased() async throws {
+        let fake = FakeVoice()
+        fake.holdBegin = true
+        let voice = fake.controller()
+        voice.start()
+        try await eventually { fake.beginning != nil }
+        voice.stop()
+        fake.beginning?.resume(returning: fake.session)
+        try await eventually { fake.ended == [fake.session] }
+        XCTAssertEqual(voice.phase, .off)
+        XCTAssertNil(voice.utterance)
+    }
+
+    @MainActor func testCloseDiscardsLateTranscriptionAndDoesNotReopen() async throws {
+        let fake = FakeVoice()
+        fake.holdTranscription = true
+        let voice = fake.controller()
+        voice.start()
+        try await eventually { voice.phase == .listening }
+        speakThenPause(voice, fake: fake)
+        try await eventually { fake.transcription != nil }
+        voice.stop()
+        fake.transcription?.resume(returning: "find my checklist")
+        await Task.yield()
+        XCTAssertNil(voice.utterance)
+        XCTAssertEqual(fake.beginnings, 1)
+        XCTAssertEqual(fake.ended, [fake.session])
+        XCTAssertEqual(voice.phase, .off)
+    }
+
+    @MainActor func testSpeechIsDeliveredAndListeningResumesUntilStopped() async throws {
+        let fake = FakeVoice()
+        let voice = fake.controller()
+        defer { voice.stop() }
+        voice.start()
+        try await eventually { voice.phase == .listening }
+        speakThenPause(voice, fake: fake)
+        try await eventually { voice.utterance != nil && voice.phase == .listening }
+        XCTAssertEqual(voice.utterance?.text, "find my checklist")
+        XCTAssertEqual(fake.beginnings, 2)
+        voice.stop()
+        XCTAssertEqual(fake.ended.count, 2)
+        XCTAssertFalse(voice.enabled)
+    }
+
+    @MainActor func testSpeechAppendsToTextTypedWhileTranscribing() {
+        XCTAssertEqual(AdaptiveLauncherVoice.appending(" launch notes ", to: "find my"), "find my launch notes")
+        XCTAssertEqual(AdaptiveLauncherVoice.appending("launch notes", to: "find my "), "find my launch notes")
+        XCTAssertEqual(AdaptiveLauncherVoice.appending("  ", to: "typed text"), "typed text")
+        XCTAssertEqual(AdaptiveLauncherVoice.appending("find my notes", to: ""), "find my notes")
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("Take a screenshot."), .action("screenshot"))
+        XCTAssertEqual(QuickToolParser.parse("25 min focus."), .timer(1_500))
+    }
+
+    @MainActor private func speakThenPause(_ voice: AdaptiveLauncherVoice, fake: FakeVoice) {
+        fake.volume = 0.03
+        for time in [0.1, 0.2, 0.3] { fake.time = time; voice.sample() }
+        fake.volume = 0
+        for time in [0.4, 1.5] { fake.time = time; voice.sample() }
+    }
+
+    @MainActor private func eventually(_ predicate: () -> Bool) async throws {
+        for _ in 0..<100 {
+            if predicate() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Timed out waiting for voice lifecycle transition")
+    }
+}
+
+@MainActor private final class FakeVoice {
+    let session = UUID()
+    var allowed = true
+    var preparations = 0
+    var beginnings = 0
+    var ended: [UUID] = []
+    var volume: Float = 0
+    var time: TimeInterval = 0
+    var holdPreparation = false
+    var holdBegin = false
+    var holdTranscription = false
+    var preparation: CheckedContinuation<Bool, Never>?
+    var beginning: CheckedContinuation<UUID, Never>?
+    var transcription: CheckedContinuation<String, Never>?
+
+    func controller() -> AdaptiveLauncherVoice {
+        AdaptiveLauncherVoice(dependencies: .init(
+            authorize: { self.allowed },
+            prepare: {
+                self.preparations += 1
+                if self.holdPreparation { return await withCheckedContinuation { self.preparation = $0 } }
+                return true
+            },
+            begin: {
+                self.beginnings += 1
+                if self.holdBegin { return await withCheckedContinuation { self.beginning = $0 } }
+                return self.session
+            },
+            end: { self.ended.append($0); return Array(repeating: 0.01, count: 16_000) },
+            discard: { _ in },
+            level: { _ in self.volume },
+            transcribe: { _ in
+                if self.holdTranscription { return await withCheckedContinuation { self.transcription = $0 } }
+                return "find my checklist"
+            },
+            now: { Date(timeIntervalSince1970: self.time) }
+        ), automaticallyPoll: false)
+    }
+}

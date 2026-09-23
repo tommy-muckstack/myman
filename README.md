@@ -30,6 +30,33 @@ Everything you capture lands in **`~/MyManBrain`** as plain markdown in a git re
 
 ## Finding and remembering
 
+An optional **Settings → General → Appearance → Adaptive launcher (experimental)**
+starts My Man with one input field. It is **off by default**; the classic launcher
+remains the default. Reopen the launcher after changing the setting. Explicit
+“find…” requests search saved captures; “make…” requests preview a new note or
+tool. Ambiguous text offers **Search existing** and **Create new**, and either
+choice can override the suggested route. Screenshots and recordings start only
+from a labeled action.
+Type `/` for the action list, tasks, calendar and Quick Tools.
+
+With Adaptive enabled, opening the launcher starts local voice-to-text listening
+after microphone permission and model readiness. Pause after speaking to append
+words to the same field; typing remains available. The mic button stops listening,
+and closing the launcher releases its microphone session and discards pending
+speech. Dictation does not submit the request or start a recording. It does not
+listen while the launcher is hidden. First use may download the existing Parakeet
+speech model; recognition runs on-device.
+
+Quick Tools recognizes checklists, timers, arithmetic, length/weight/temperature
+conversions, bill splits and hex colors. Cards can be copied or saved to Notes;
+saved results are Markdown, not persistent interactive widgets. A started timer
+continues while My Man is running and sounds when it finishes. Timers do not
+survive quitting the app. Simple requests use local rules; ambiguous phrasing may
+use Apple's on-device Foundation Models on supported Macs with Apple Intelligence
+enabled. No hosted classifier or API key is used. This is a bounded adaptive
+interface, not an arbitrary mini-app generator. See the
+[implementation and local-model options](docs/adaptive-launcher.md).
+
 Press **⌥Space** and type what you remember. Results show the matching passage
 and its source; use **↑/↓**, **Return**, **⌘Y** to preview, or **⇧⌘C** to copy.
 Quoted phrases stay exact. The funnel menu narrows results by type/date or opens Themes.
