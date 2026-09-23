@@ -6,6 +6,7 @@ final class LauncherPanelController {
     private var panel: FloatingPanel?
     private var tasksPanel: FloatingPanel?
     private var calendarPanel: FloatingPanel?
+    private var adaptiveVoice: AdaptiveLauncherVoice?
     private let makeActions: () -> [LauncherAction]
     private let openNote: (Note) -> Void
     private let openScreenshot: (URL) -> Void
@@ -56,9 +57,30 @@ final class LauncherPanelController {
             onSizeChange: { [weak self] size in self?.applyContentSize(size) }
         )
         panel?.dismiss()
-        let launcherPanel = FloatingPanel(content: view, fixedSize: true)
+        adaptiveVoice?.stop()
+        adaptiveVoice = nil
+        let adaptive = UserDefaults.standard.bool(forKey: "adaptiveLauncher")
+        let content: AnyView
+        if adaptive {
+            let voice = AdaptiveLauncherVoice()
+            adaptiveVoice = voice
+            let quickTools = LauncherAction(id: "quick_tools", icon: .agent, title: "Quick Tools", hint: nil, enabled: true) {
+                QuickToolsController.shared.show()
+            }
+            content = AnyView(AdaptiveLauncherView(
+                actions: makeActions() + [quickTools],
+                voice: voice,
+                onSaveQueryAsNote: { [weak self] text in self?.saveQueryAsNote(text) },
+                onDismiss: { [weak self] in self?.panel?.dismiss() },
+                onSizeChange: { [weak self] size in self?.applyContentSize(size) }
+            ))
+        } else { content = AnyView(view) }
+        let launcherPanel = FloatingPanel(content: content, fixedSize: true)
         launcherPanel.isMovable = false
-        launcherPanel.onDismiss = { [weak self] in self?.hideSidePanels() }
+        launcherPanel.onDismiss = { [weak self] in
+            self?.adaptiveVoice?.stop()
+            self?.hideSidePanels()
+        }
         panel = launcherPanel
         launcherPanel.present()
         if let screen = launcherPanel.screen {
@@ -70,7 +92,8 @@ final class LauncherPanelController {
             launcherPanel.setFrameOrigin(NSPoint(x: visible.midX - size.width / 2,
                 y: max(visible.minY + 16, top - size.height)))
         }
-        showSidePanels()
+        if !adaptive { showSidePanels() }
+        if adaptive, launcherPanel.isVisible { adaptiveVoice?.start() }
     }
 
     /// Tasks pinned left, calendar pinned right — the ⌥Space heads-up display.

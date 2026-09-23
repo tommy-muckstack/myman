@@ -297,6 +297,7 @@ struct SettingsPanelView: View {
     @State private var vocabularySuggestions: [String] = []
     @State private var knownPeople: [Person] = []
     @AppStorage("interfaceTextScale") private var interfaceTextScale = 1.0
+    @AppStorage("adaptiveLauncher") private var adaptiveLauncher = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -305,8 +306,11 @@ struct SettingsPanelView: View {
                     .font(MM.Fonts.title)
                     .foregroundStyle(MM.Colors.textPrimary)
                 Spacer()
-                Button(action: onDismiss) { IconView(icon: .close, size: 16, color: MM.Colors.textTertiary) }
-                    .buttonStyle(.plain).accessibilityLabel("Close settings").clickable(minSize: 32)
+                Button(action: onDismiss) {
+                    IconView(icon: .close, size: 16, color: MM.Colors.textTertiary)
+                        .clickable(minSize: 32)
+                }
+                .buttonStyle(.plain).accessibilityLabel("Close settings")
             }
             .padding(.horizontal, MM.Layout.paddingLarge)
             .padding(.vertical, MM.Layout.padding)
@@ -448,6 +452,10 @@ struct SettingsPanelView: View {
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Appearance") {
+                Toggle("Adaptive launcher (experimental)", isOn: $adaptiveLauncher)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+                Text("Start with one text box for search, new notes, and tools. Listens for speech while the launcher is open; you can also type or turn the microphone off. Applies the next time you open My Man.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                 Picker("Interface text size", selection: $interfaceTextScale) {
                     Text("Standard").tag(1.0); Text("Larger").tag(1.25); Text("Largest").tag(1.5)
                 }.clickable()
