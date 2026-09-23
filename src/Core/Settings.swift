@@ -293,6 +293,7 @@ struct SettingsPanelView: View {
     @State private var settingsPage: SettingsPage = .general
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
+    @AppStorage("learnDictationCorrections") private var learnDictationCorrections = false
     @State private var automationCopied = false
     @State private var vocabularySuggestions: [String] = []
     @State private var knownPeople: [Person] = []
@@ -507,6 +508,10 @@ struct SettingsPanelView: View {
             Toggle("Noise suppression on the mic", isOn: $store.enhanceMicrophone)
                 .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
             Text("Turns down other apps' audio while you dictate — macOS only offers this by putting the whole machine in call mode.")
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            Toggle("Learn from my corrections", isOn: $learnDictationCorrections)
+                .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+            Text("Correct a word within 45 seconds of dictation to add its spelling to your dictionary. The toast offers Undo. Works here and in apps that expose their text through Accessibility.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             TextEditor(text: $vocabularyText).font(MM.Fonts.secondary).frame(height: 130).accessibilityLabel("Personal vocabulary, one term per line")
                 .scrollContentBackground(.hidden).padding(6)

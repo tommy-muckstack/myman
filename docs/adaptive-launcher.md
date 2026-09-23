@@ -104,10 +104,11 @@ The listening footer says “Speak or type” and uses the meeting recorder’s 
 Only the enabled adaptive launcher's controller automatically starts listening,
 after the panel is visible. It uses a raw session on `AudioCapture.shared`, avoiding
 a second microphone engine or a new voice-processing request. Parakeet transcribes
-utterances locally after a pause. The microphone pauses during transcription and
-resumes afterward while the launcher remains open. Text is appended to the latest
-input and never submitted automatically. Editing the input stops listening immediately
-and rejects pending transcription. Programmatic speech updates do not stop listening.
+utterances locally after a pause. The microphone stops at the first pause (about one second), transcribes that
+request once, and stays off. The completed text is routed immediately to its result.
+Spoken arithmetic such as “what’s one plus one” uses the local calculator.
+Capture, reminder creation, and note saving still use their explicit controls. Editing the input stops listening immediately
+and rejects pending transcription.
 Turning off the microphone explicitly persists a one-hour pause in UserDefaults
 (`adaptiveListeningPausedUntil`). New panels respect that timestamp; automatic
 listening resumes on the next opening after expiry. It never interrupts ongoing
@@ -121,6 +122,26 @@ Idle buffers are discarded every five seconds, and utterances are capped at twen
 seconds per slice. Audio remains in memory and is not saved as a capture. Permission
 denial or model failure leaves typing available. Microphone input is an energy-based
 endpoint detector, not speaker identification or wake-word detection.
+
+## Learning corrected words
+
+Settings → Dictation → **Learn from my corrections** is off by default. When enabled,
+correcting a small word or spelling within 45 seconds of dictation adds the settled
+correction to the local `~/MyManBrain/vocabulary.md` dictionary. A short toast names
+the word and offers Undo. Existing words are not added twice. Appending text, deleting
+words, punctuation changes, and larger rewrites are ignored. This is a conservative
+spelling heuristic, not a semantic guarantee; Undo and the editable dictionary remain
+available for unwanted suggestions.
+
+The Adaptive input tracks manual edits directly. Dictation into another app can learn
+only after verified insertion into a readable Accessibility text field, while that same
+field remains focused. Watching stops after 45 seconds, focus changes, a new delivery,
+or disabling the setting. Only the dictated span is compared; keystroke contents and
+surrounding text are not stored. Opaque editors that only support paste cannot learn
+this way. Agent-originated dictation does not activate correction learning.
+
+The dictionary is used by ordinary dictation and Adaptive voice requests. Learning
+and correction stay on-device and require no additional service or subscription.
 
 ## Local model options researched on 2026-09-23
 
@@ -153,7 +174,7 @@ topics, capture routing, arithmetic, conversions, cent allocation, checklist edi
 timer lifecycle and search through a synthetic in-memory capture library.
 
 `swift test --filter AdaptiveLauncherVoiceTests` checks permission denial, late
-startup cleanup, cancellation during preparation/transcription, resumed listening,
+startup cleanup, cancellation during preparation/transcription, single-request listening,
 bounded silence buffers and preservation of typed input using injected audio
 dependencies. These tests do not open a physical microphone.
 

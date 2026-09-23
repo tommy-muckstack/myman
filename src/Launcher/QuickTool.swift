@@ -143,7 +143,7 @@ enum QuickToolParser {
         }
         if lower.hasPrefix("convert ") { return .incomplete("Converter", "Try “5 miles in km”, “150 lb to kg”, or “72 f to c”.") }
 
-        let expression = lower.replacingOccurrences(of: #"^(?:calculate|what is|what's)\s+"#, with: "", options: .regularExpression)
+        let expression = QuickSpokenMath.expression(lower) ?? lower.replacingOccurrences(of: #"^(?:calculate|what is|what[’']?s)\s+"#, with: "", options: .regularExpression)
         if let parts = groups(#"^(-?\d+(?:\.\d+)?)\s*%\s+(of|off)\s+(-?\d+(?:\.\d+)?)$"#, expression),
            let percent = Double(parts[1]), let amount = Double(parts[3]) {
             let result = parts[2] == "off" ? amount * (1 - percent / 100) : amount * percent / 100
