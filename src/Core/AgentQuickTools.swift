@@ -30,7 +30,7 @@ import Foundation
             }
             let date: Date
             if let seconds = args["seconds"] as? Double { date = Date().addingTimeInterval(seconds) }
-            else if let parsed = ISO8601DateFormatter().date(from: args["at"] as? String ?? "") { date = parsed }
+            else if let parsed = timestamp(args["at"] as? String ?? "") { date = parsed }
             else { throw AgentError("INVALID_ARGUMENTS", "at must be an ISO 8601 timestamp with a time-zone offset.") }
             return reminderJSON(try await reminders.create(.init(title: args["message"] as! String, date: date), owner: owner))
         case "reminder.list": return ["reminders": reminders.reminders.map(reminderJSON)]
@@ -44,8 +44,8 @@ import Foundation
         case "calendar.list":
             guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { throw AgentError("PERMISSION_REQUIRED", "Allow Calendar access in My Man settings.") }
             let formatter = ISO8601DateFormatter()
-            guard let start = formatter.date(from: args["after"] as? String ?? ""),
-                  let end = formatter.date(from: args["before"] as? String ?? ""),
+            guard let start = timestamp(args["after"] as? String ?? ""),
+                  let end = timestamp(args["before"] as? String ?? ""),
                   end > start, end.timeIntervalSince(start) <= 31 * 86400 else {
                 throw AgentError("INVALID_ARGUMENTS", "Provide ISO 8601 after/before timestamps spanning at most 31 days.")
             }
@@ -58,6 +58,13 @@ import Foundation
             }, "partial": events.count > 500]
         default: throw AgentError("UNKNOWN_ACTION", "Unknown quick tool action.")
         }
+    }
+
+    static func timestamp(_ text: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: text) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: text)
     }
 
     static func timerStatus(_ timer: QuickToolsModel) -> [String: Any] {

@@ -45,6 +45,9 @@ final class AgentQuickToolsTests: XCTestCase {
     }
 
     @MainActor func testToolEvaluationAndNativeBoundaryValidation() throws {
+        XCTAssertEqual(AgentQuickTools.timestamp("2026-09-23T10:00:00-04:00"), AgentQuickTools.timestamp("2026-09-23T14:00:00.000Z"))
+        XCTAssertNotNil(AgentQuickTools.timestamp("2026-09-23T14:00:00.500Z"))
+        XCTAssertNil(AgentQuickTools.timestamp("tomorrow"))
         XCTAssertEqual(AgentQuickTools.evaluate("18% of 240")["value"] as? Double, 43.2)
         XCTAssertEqual((AgentQuickTools.evaluate("#fffffd")["palette"] as? [String])?.count, 4)
         XCTAssertEqual(AgentQuickTools.evaluate("timer 10m")["side_effects"] as? Bool, false)
