@@ -48,6 +48,7 @@ final class AdaptiveLauncherVoice: ObservableObject {
     @Published private(set) var phase: Phase = .off
     @Published private(set) var enabled = false
     @Published private(set) var level: Float = 0
+    @Published private(set) var levels: [Float] = Array(repeating: 0, count: 16)
     @Published private(set) var utterance: Utterance?
     private let dependencies: Dependencies
     private let automaticallyPoll: Bool
@@ -68,7 +69,7 @@ final class AdaptiveLauncherVoice: ObservableObject {
         switch phase {
         case .off: return "Microphone off — type or turn it on"
         case .preparing: return "Preparing local dictation…"
-        case .listening: return "Listening — speak or type"
+        case .listening: return "Speak or type"
         case .transcribing: return "Turning speech into text…"
         case .denied: return "Allow microphone access to speak here"
         case .unavailable: return "Voice unavailable — you can still type"
@@ -114,6 +115,7 @@ final class AdaptiveLauncherVoice: ObservableObject {
         session = nil
         phase = .off
         level = 0
+        levels = Array(repeating: 0, count: 16)
     }
 
     func toggle() {
@@ -152,6 +154,7 @@ final class AdaptiveLauncherVoice: ObservableObject {
         guard enabled, phase == .listening, let session else { return }
         let rawLevel = dependencies.level(session)
         level = min(1, rawLevel * 15)
+        levels = Array(levels.dropFirst()) + [level / 6]
         switch endpoint.sample(level: rawLevel, now: dependencies.now()) {
         case .keepListening: break
         case .discardSilence: dependencies.discard(session)

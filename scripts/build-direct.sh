@@ -271,9 +271,9 @@ notarize() {
                 --apple-id "$APPLE_ID" \
                 --team-id "$TEAM_ID" \
                 --password "$APPLE_APP_PASSWORD" \
-                --wait && return 0
+                --no-s3-acceleration --wait && return 0
         else
-            xcrun notarytool submit "$path" --keychain-profile "$NOTARY_PROFILE" --wait && return 0
+            xcrun notarytool submit "$path" --keychain-profile "$NOTARY_PROFILE" --no-s3-acceleration --wait && return 0
         fi
         echo "==> Notarization attempt $attempt failed; retrying in 20s..."
         sleep 20

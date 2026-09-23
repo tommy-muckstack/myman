@@ -10,6 +10,7 @@ struct AdaptiveLauncherView: View {
     var onDismiss: () -> Void
     var onSizeChange: (CGSize) -> Void
     @State private var query = ""
+    @State private var showingCommands = false
     @State private var routing = AdaptiveLauncherRouting()
     @StateObject private var filters = CaptureLibraryFilters()
     @State private var libraryMode: CaptureLibraryMode = .search
@@ -17,6 +18,7 @@ struct AdaptiveLauncherView: View {
     @FocusState private var focused: Bool
 
     private var effectiveIntent: AdaptiveLauncherIntent {
+        if showingCommands { return .commands }
         if let selection = routing.selection { return selection }
         if libraryMode != .search || filters.isBrowsing || filters.active { return .search }
         return routing.suggestion
@@ -30,27 +32,42 @@ struct AdaptiveLauncherView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: MM.Layout.spacing) {
-                TextField("Find something or make something…", text: Binding(get: { query }, set: {
+                if effectiveIntent == .create, let icon = tools.tool.icon { IconView(icon: icon) }
+                TextField(showingCommands ? "Search commands…" : "Find something or make something…", text: Binding(get: { query }, set: {
                     guard query != $0 else { return }
                     voice.stop()
-                    query = $0
+                    if $0.hasPrefix("/") {
+                        showingCommands = true
+                        routing = AdaptiveLauncherRouting()
+                        query = String($0.dropFirst())
+                    } else { query = $0 }
                 }))
                     .textFieldStyle(.plain).font(MM.Fonts.bodyInput).focused($focused)
                     .onSubmit { submit() }
                     .onKeyPress(.downArrow) { moveResult("down") }
                     .onKeyPress(.upArrow) { moveResult("up") }
+                    .onKeyPress(.escape) {
+                        guard showingCommands else { return .ignored }
+                        showingCommands = false; query = ""
+                        return .handled
+                    }
                 if let action = resolvedAction {
                     Button {
                         onDismiss(); action.run()
                     } label: {
                         Text(action.recording ? "Stop" : action.id == "screenshot" ? "Capture" : action.id == "quick_tools" ? "Open" : "Start")
-                            .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.background)
+                            .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.onAccent)
                             .padding(.horizontal, MM.Layout.padding).padding(.vertical, MM.Layout.spacing / 2)
                             .background(MM.Colors.accent, in: Capsule()).clickable()
                     }.buttonStyle(.plain).disabled(!action.enabled).accessibilityLabel(action.title).help(action.title)
                 }
                 if !trimmed.isEmpty, effectiveIntent == .search || effectiveIntent == .create {
                     Menu {
+                        if effectiveIntent == .create, tools.tool.canSave, !tools.tool.isTimer {
+                            Button("Copy result") { tools.copy() }
+                            Button("Save to Notes") { tools.save() }
+                            Divider()
+                        }
                         Button("Search existing") { select(.search) }
                         Button("Create new") { select(.create) }
                     } label: {
@@ -73,7 +90,7 @@ struct AdaptiveLauncherView: View {
 
             if resolvedAction != nil {
                 EmptyView()
-            } else if !trimmed.isEmpty || effectiveIntent == .search {
+            } else if showingCommands || !trimmed.isEmpty || effectiveIntent == .search {
                 Divider().overlay(MM.Colors.border)
                 routedContent
             } else {
@@ -88,9 +105,14 @@ struct AdaptiveLauncherView: View {
             if effectiveIntent != .create || !tools.tool.isTimer {
                 QuickTimerStatus(model: tools)
             }
-            if voice.phase != .off && voice.phase != .listening {
+            if voice.phase != .off {
                 HStack(spacing: MM.Layout.spacing) {
                     Text(voice.status).font(MM.Fonts.metadata)
+                    if voice.phase == .listening {
+                        WaveformBars(levels: voice.levels)
+                            .frame(width: WaveformBars.compactWidth, height: 18)
+                            .accessibilityLabel("Microphone sound level")
+                    }
                     if voice.phase == .denied {
                         Button("Microphone settings") { Permission.microphone.request() }
                             .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
@@ -108,7 +130,11 @@ struct AdaptiveLauncherView: View {
             Color.clear.onAppear { onSizeChange(geometry.size) }
                 .onChange(of: geometry.size) { _, size in onSizeChange(size) }
         })
-        .onAppear { query = initialQuery; focused = true }
+        .onAppear {
+            showingCommands = initialQuery.hasPrefix("/")
+            query = showingCommands ? String(initialQuery.dropFirst()) : initialQuery
+            focused = true
+        }
         .onDisappear { voice.stop() }
         .onChange(of: voice.utterance) { _, utterance in
             if voice.enabled, let utterance { query = AdaptiveLauncherVoice.appending(utterance.text, to: query) }
@@ -120,13 +146,14 @@ struct AdaptiveLauncherView: View {
         }
         .task(id: query) {
             let input = query
-            guard routing.selection == nil, AdaptiveLauncherIntent.resolve(input) == .choose, !input.isEmpty else { return }
+            guard !showingCommands, routing.selection == nil, AdaptiveLauncherIntent.resolve(input) == .choose, !input.isEmpty else { return }
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
             guard routing.selection == nil else { return }
             let suggestion = await AdaptiveLauncherIntent.suggest(input)
             guard !Task.isCancelled, query == input, routing.selection == nil else { return }
             routing.suggestion = suggestion
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder private var routedContent: some View {
@@ -135,7 +162,7 @@ struct AdaptiveLauncherView: View {
             CaptureLibraryView(query: Binding(get: { AdaptiveLauncherIntent.searchText(query) }, set: { query = $0 }),
                                mode: $libraryMode, controls: filters, onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, model: libraryModel)
         case .create:
-            AdaptiveResultScroll { QuickToolCard(model: tools) }
+            AdaptiveResultScroll { QuickToolCard(model: tools, onTyping: { voice.stop() }) }
         case .action(let id):
             if let action = actions.first(where: { $0.id == id }) {
                 actionButton(action).padding(MM.Layout.padding)
@@ -145,14 +172,37 @@ struct AdaptiveLauncherView: View {
         case .tasks: TasksPanelView(inline: true)
         case .calendar: CalendarPanelView(inline: true)
         case .commands:
-            VStack(alignment: .leading, spacing: MM.Layout.spacing) {
-                ForEach(actions) { action in actionButton(action) }
-                Button("My tasks") { query = "my tasks" }.buttonStyle(.plain).clickable()
-                Button("My calendar") { query = "my calendar" }.buttonStyle(.plain).clickable()
-                ForEach(QuickToolParser.examples, id: \.self) { example in
-                    Button(example) { query = example }.buttonStyle(.plain).clickable()
-                }
-            }.font(MM.Fonts.body).padding(MM.Layout.padding)
+            AdaptiveResultScroll {
+                VStack(alignment: .leading, spacing: MM.Layout.spacing) {
+                    ForEach(actions.filter { matchesCommand($0.title + " " + $0.id) }) { action in actionButton(action) }
+                    if matchesCommand("My tasks") {
+                        Button("My tasks") { showingCommands = false; query = "my tasks" }.buttonStyle(.plain).clickable()
+                    }
+                    if matchesCommand("My calendar") {
+                        Button("My calendar") { showingCommands = false; query = "my calendar" }.buttonStyle(.plain).clickable()
+                    }
+                    ForEach(["Calculator", "Reminder"], id: \.self) { title in
+                        if matchesCommand(title) {
+                            Button { showingCommands = false; query = title.lowercased() } label: {
+                                HStack(spacing: MM.Layout.spacing) {
+                                    IconView(icon: title == "Calculator" ? .calculator : .reminder)
+                                    Text(title)
+                                    Spacer()
+                                }.clickable()
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    ForEach(QuickToolParser.examples.filter(matchesCommand), id: \.self) { example in
+                        Button(example) { showingCommands = false; query = example }.buttonStyle(.plain).clickable()
+                    }
+                    if !actions.contains(where: { matchesCommand($0.title + " " + $0.id) }),
+                       !matchesCommand("My tasks"), !matchesCommand("My calendar"),
+                       !matchesCommand("Calculator"), !matchesCommand("Reminder"),
+                       !QuickToolParser.examples.contains(where: matchesCommand) {
+                        Text("No matching commands").foregroundStyle(MM.Colors.textTertiary)
+                    }
+                }.font(MM.Fonts.body).padding(MM.Layout.padding).frame(maxWidth: .infinity, alignment: .leading)
+            }
         case .choose:
             HStack(spacing: MM.Layout.spacing) {
                 modeButton("Search existing", intent: .search)
@@ -160,6 +210,10 @@ struct AdaptiveLauncherView: View {
                 Spacer()
             }.font(MM.Fonts.secondary).padding(MM.Layout.padding)
         }
+    }
+
+    private func matchesCommand(_ title: String) -> Bool {
+        trimmed.isEmpty || trimmed.split(whereSeparator: \.isWhitespace).allSatisfy { title.localizedCaseInsensitiveContains(String($0)) }
     }
 
     private func modeButton(_ title: String, intent: AdaptiveLauncherIntent) -> some View {

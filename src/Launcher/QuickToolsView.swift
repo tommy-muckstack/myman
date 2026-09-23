@@ -60,6 +60,12 @@ final class QuickToolsModel: ObservableObject {
         feedback = NotesStore().save(body: tool.markdown(checked: checked), source: "quick_tools") == nil
             ? "Couldn’t save. Your card is still here; try again." : "Saved to Notes"
     }
+
+    func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(tool.markdown(checked: checked), forType: .string)
+        feedback = "Copied"
+    }
 }
 
 @MainActor
@@ -128,26 +134,21 @@ struct QuickToolsView: View {
 
 struct QuickToolCard: View {
     @ObservedObject var model: QuickToolsModel
+    var onTyping: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing) {
-            if !model.tool.isTimer {
-                HStack(spacing: MM.Layout.spacing) {
-                    Text(model.tool.title).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-                    Spacer()
+            if model.tool.isTimer { content }
+            else {
+                HStack(alignment: .top, spacing: MM.Layout.spacing) {
+                    VStack(alignment: .leading, spacing: MM.Layout.spacing) { content }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if model.tool.canSave {
-                        Button { model.save() } label: { IconView(icon: .save).clickable() }
-                            .buttonStyle(.plain).help("Save to Notes").accessibilityLabel("Save to Notes")
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(model.tool.markdown(checked: model.checked), forType: .string)
-                            model.feedback = "Copied"
-                        } label: { IconView(icon: .copy).clickable() }
+                        Button { model.copy() } label: { IconView(icon: .copy).clickable() }
                             .buttonStyle(.plain).help("Copy").accessibilityLabel("Copy")
                     }
                 }
             }
-            content
             if !model.feedback.isEmpty {
                 Text(model.feedback).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                     .accessibilityLabel(model.feedback)
@@ -155,16 +156,24 @@ struct QuickToolCard: View {
         }
         .padding(MM.Layout.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contextMenu {
+            if model.tool.canSave && !model.tool.isTimer {
+                Button("Copy") { model.copy() }
+                Button("Save to Notes") { model.save() }
+            }
+        }
     }
 
     @ViewBuilder private var content: some View {
         switch model.tool {
         case .note(let text): Text(text).font(MM.Fonts.body).textSelection(.enabled)
         case .incomplete(_, let help): Text(help).font(MM.Fonts.body)
+        case .calculator: QuickCalculatorInput(onTyping: onTyping)
+        case .reminder(let draft): QuickReminderInput(draft: draft, onTyping: onTyping)
         case .calculation(_, let result):
-            Text(QuickTool.number(result)).font(MM.Fonts.title).textSelection(.enabled)
+            Text(QuickTool.number(result)).font(MM.Fonts.result).textSelection(.enabled)
         case .conversion(_, let result, let unit):
-            Text("\(QuickTool.number(result)) \(unit)").font(MM.Fonts.title).textSelection(.enabled)
+            Text("\(QuickTool.number(result)) \(unit)").font(MM.Fonts.result).textSelection(.enabled)
         case .timeZone(let conversion):
             HStack(spacing: MM.Layout.paddingLarge) {
                 zoneTime(conversion, zone: conversion.source, name: conversion.sourceName)
@@ -211,6 +220,84 @@ struct QuickToolCard: View {
     }
 }
 
+private struct QuickCalculatorInput: View {
+    var onTyping: () -> Void
+    @State private var expression = ""
+    @State private var copied = false
+    @FocusState private var focused: Bool
+
+    private var answer: String? {
+        if case .calculation(_, let result) = QuickToolParser.parse(expression) { return QuickTool.number(result) }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing) {
+            TextField("Enter a calculation…", text: Binding(get: { expression }, set: {
+                guard expression != $0 else { return }
+                onTyping(); expression = $0; copied = false
+            }))
+                .textFieldStyle(.plain).font(MM.Fonts.bodyInput).focused($focused)
+                .accessibilityLabel("Calculation")
+            if let answer {
+                HStack {
+                    Text(answer).font(MM.Fonts.result).textSelection(.enabled)
+                    Spacer()
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(answer, forType: .string)
+                        copied = true
+                    } label: { IconView(icon: .copy).clickable() }
+                        .buttonStyle(.plain).help(copied ? "Copied" : "Copy answer").accessibilityLabel("Copy answer")
+                }
+            } else if !expression.isEmpty {
+                Text("Enter a valid expression").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+        }.onAppear { focused = true }
+    }
+}
+
+private struct QuickReminderInput: View {
+    let draft: ReminderDraft
+    var onTyping: () -> Void
+    @State private var title = ""
+    @State private var date = Date()
+    @State private var feedback = ""
+    @State private var saving = false
+    @State private var saved = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing) {
+            TextField("What should I remind you about?", text: Binding(get: { title }, set: {
+                guard title != $0 else { return }
+                onTyping(); title = $0; feedback = ""; saved = false
+            })).textFieldStyle(.plain).font(MM.Fonts.bodyInput).focused($focused)
+            HStack(spacing: MM.Layout.spacing) {
+                DatePicker("When", selection: Binding(get: { date }, set: { onTyping(); date = $0; feedback = ""; saved = false }), displayedComponents: [.date, .hourAndMinute])
+                    .labelsHidden().font(MM.Fonts.secondary).datePickerStyle(.field)
+                Spacer()
+                Button {
+                    saving = true
+                    Task { @MainActor in
+                        feedback = await ReminderStore.shared.add(.init(title: title, date: date))
+                        saved = feedback.hasPrefix("Reminder set")
+                        saving = false
+                    }
+                } label: {
+                    Text(saving ? "Setting…" : saved ? "Set" : "Set reminder").font(MM.Fonts.secondary)
+                        .foregroundStyle(MM.Colors.onAccent)
+                        .padding(.horizontal, MM.Layout.padding).padding(.vertical, MM.Layout.spacing / 2)
+                        .background(MM.Colors.accent, in: Capsule()).clickable()
+                }.buttonStyle(.plain).disabled(saving || saved || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if !feedback.isEmpty { Text(feedback).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary) }
+        }
+        .onAppear { title = draft.title; date = draft.date; focused = title.isEmpty }
+        .onChange(of: draft) { _, value in title = value.title; date = value.date; feedback = ""; saved = false }
+    }
+}
+
 struct QuickTimerStatus: View {
     @ObservedObject var model: QuickToolsModel
 
@@ -244,7 +331,7 @@ private struct QuickTimerRow: View {
                 } label: {
                     Text(model.deadline != nil ? "Pause" : model.pausedSeconds != nil ? "Resume" : "Start")
                         .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.background)
+                        .foregroundStyle(MM.Colors.onAccent)
                         .padding(.horizontal, MM.Layout.padding).padding(.vertical, MM.Layout.spacing / 2)
                         .background(MM.Colors.accent, in: Capsule()).clickable()
                 }.buttonStyle(.plain)

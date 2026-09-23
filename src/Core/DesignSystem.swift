@@ -38,6 +38,7 @@ enum MM {
         static let accent = dynamic("mm.accent",
             light: NSColor(red: 1.0, green: 0.72, blue: 0.30, alpha: 1),
             dark: NSColor(red: 1.0, green: 0.78, blue: 0.40, alpha: 1))
+        static let onAccent = Color(nsColor: NSColor(white: 0.08, alpha: 1))
         static let danger = dynamic("mm.danger",
             light: NSColor(red: 0.86, green: 0.20, blue: 0.18, alpha: 1),
             dark: NSColor(red: 1.0, green: 0.35, blue: 0.32, alpha: 1))
@@ -85,6 +86,7 @@ enum MM {
             return value == 0 ? 1 : min(1.5, max(1, value))
         }
         static var title: Font { gellix(20 * interfaceScale, .medium) }
+        static var result: Font { gellix(30 * interfaceScale, .medium) }
         static var body: Font { gellix(15 * interfaceScale) }
         static var bodyInput: Font { gellix(16 * interfaceScale) }
         static var secondary: Font { gellix(13 * interfaceScale) }

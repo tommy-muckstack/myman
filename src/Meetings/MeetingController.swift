@@ -2073,6 +2073,7 @@ final class MeetingController: ObservableObject {
     private func showPill() {
         guard panel == nil else { return }
         let pill = FloatingPanel(content: MeetingPillView(controller: self), becomesKey: true, fixedSize: true)
+        pill.identifier = NSUserInterfaceItemIdentifier("myman.meeting-indicator")
         pill.becomesKeyOnlyIfNeeded = true
         pill.dismissesOnResign = false
         pill.isMovableByWindowBackground = false

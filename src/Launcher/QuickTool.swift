@@ -7,6 +7,8 @@ enum QuickTool: Equatable {
     case checklist([String])
     case timer(TimeInterval)
     case calculation(String, Double)
+    case calculator
+    case reminder(ReminderDraft)
     case conversion(String, Double, String)
     case timeZone(QuickTimeZone)
     case split(cents: Int, people: Int, currency: String)
@@ -19,6 +21,8 @@ enum QuickTool: Equatable {
         case .checklist: return "Checklist"
         case .timer: return "Timer"
         case .calculation: return "Calculator"
+        case .calculator: return "Calculator"
+        case .reminder: return "Reminder"
         case .conversion: return "Converter"
         case .timeZone: return "Time zones"
         case .split: return "Split a bill"
@@ -27,7 +31,18 @@ enum QuickTool: Equatable {
         }
     }
 
+    var icon: MMIcon? {
+        switch self {
+        case .calculator, .calculation: return .calculator
+        case .timer: return .timer
+        case .reminder: return .reminder
+        default: return nil
+        }
+    }
+
     var canSave: Bool {
+        if case .calculator = self { return false }
+        if case .reminder = self { return false }
         if case .incomplete = self { return false }
         if case .note(let text) = self { return !text.isEmpty }
         return true
@@ -45,6 +60,8 @@ enum QuickTool: Equatable {
             return "Checklist\n\n" + items.enumerated().map { "- [\(checked.contains($0.offset) ? "x" : " ")] \($0.element)" }.joined(separator: "\n")
         case .timer(let seconds): return "Timer\n\n\(Self.number(seconds / 60)) minutes"
         case .calculation(let expression, let result): return "\(expression) = \(Self.number(result))"
+        case .calculator: return ""
+        case .reminder(let draft): return "\(draft.title)\n\(draft.date.formatted())"
         case .conversion(let input, let value, let unit): return "\(input) = \(Self.number(value)) \(unit)"
         case .timeZone(let conversion): return conversion.markdown
         case .split(let cents, let people, let currency):
@@ -77,6 +94,12 @@ enum QuickToolParser {
         guard text.count <= 2_000 else { return .incomplete("Quick Tools", "Keep this request under 2,000 characters.") }
         let lower = text.lowercased().replacingOccurrences(of: "−", with: "-")
             .replacingOccurrences(of: #"[.!?]+$"#, with: "", options: .regularExpression)
+
+        if ["calculator", "calc", "calculate"].contains(lower) { return .calculator }
+        if let prefix = ["calculator ", "calc "].first(where: lower.hasPrefix) {
+            return parse("calculate " + String(lower.dropFirst(prefix.count)))
+        }
+        if let draft = ReminderDraft.parse(text) { return .reminder(draft) }
 
         if lower.hasPrefix("split ") || lower == "split" {
             guard let parts = groups(#"^split\s+([$€£]?)\s*(\d+(?:\.\d{1,2})?)\s+(?:between|among|by)\s+(\d+)\s*(?:people)?$"#, lower),

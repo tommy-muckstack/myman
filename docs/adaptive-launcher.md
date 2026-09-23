@@ -32,7 +32,9 @@ It does not incorporate Shapeshift's source code or contact its hosted service.
   labeled button. An explicit timer request starts with Return or Start; parsing
   alone does not start it. Timer controls have no Save/Copy row.
 - Search reuses the capture library, filters, themes and keyboard navigation.
-  `/` reveals app actions, tasks, calendar and tool examples.
+  `/` reveals app actions, tasks, calendar and tools without inserting the slash.
+  Subsequent typing filters commands; Escape exits. `calculator` opens an editable
+  calculator with the supplied SVG icon.
 
 The tools currently support checklists, bounded arithmetic, percentages, compatible
 length/weight/temperature conversions, time zones, bill splits and hex colors. Splits distribute
@@ -44,6 +46,23 @@ Saving uses the existing NotesStore and Brain export. It creates a Markdown note
 it does not persist a live card. Timers use an absolute deadline, support pause and
 resume, and survive panel dismissal or input changes. They require My Man to remain
 running; completion is an app sound, not a scheduled system notification.
+
+## Reminders and countdown widget
+
+`reminder in 10m for taking pizza out` and `remind me to take pizza out in 10 minutes`
+prepare a message and deadline. `reminder` opens a compact title/date editor;
+`remind me to call Sam tomorrow at 9am` supports an absolute local time. The Set
+reminder button confirms the preview; typing or parsing never schedules an alert.
+
+Reminders persist locally across restarts. With notification permission, macOS
+schedules the alert even while My Man is closed. Without permission, the UI explains
+that My Man must remain open. Due reminders remain in the widget until dismissed.
+
+Starting a timer or setting a reminder shows one top-right countdown widget. Hover
+or click expands it to timer controls and reminder messages; leaving collapses it.
+Multiple activities share the widget, with the next deadline shown when collapsed.
+The widget avoids the meeting recorder, does not take keyboard focus, and respects
+Reduce Motion. Its fixed-size window is resized asynchronously outside layout.
 
 ## Compact results
 
@@ -67,6 +86,8 @@ These are palette suggestions, not an accessibility contrast guarantee. Each swa
 copies its own hex code; the result's Copy/Save actions retain the entered base hex.
 
 ## Voice input
+
+The listening footer says “Speak or type” and uses the meeting recorder’s waveform.
 
 Only the enabled adaptive launcher's controller automatically starts listening,
 after the panel is visible. It uses a raw session on `AudioCapture.shared`, avoiding
@@ -127,3 +148,6 @@ dependencies. These tests do not open a physical microphone.
 `MYMAN_ADAPTIVE_UI_REVIEW=/tmp/myman-adaptive-review swift test --filter AdaptiveLauncherTests`
 also renders native previews using synthetic input. The visual test is skipped
 without the environment variable. It does not save notes or start recording.
+
+`QuickReminderTests` verifies natural-language messages, persistence, one-shot due
+alerts, cancellation while notification permission is pending, and widget geometry.

@@ -39,6 +39,11 @@ choice can override the suggested route. Screenshots and recordings start only
 from a labeled action.
 Type `/` for the action list, tasks, calendar and Quick Tools.
 
+Type `calculator` for calculations, or `reminder in 10m for taking pizza out`
+for a timed message. Timers and reminders share a small countdown widget that
+expands on hover. Reminders can notify while My Man is closed when notifications
+are allowed. Type `/` to browse and filter commands.
+
 With Adaptive enabled, opening the launcher starts local voice-to-text listening
 after microphone permission and model readiness. Pause after speaking to append
 words to the same field. Typing immediately stops listening and discards pending
