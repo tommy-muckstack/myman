@@ -107,7 +107,7 @@ final class AdaptiveLauncherVoiceTests: XCTestCase {
         XCTAssertEqual(QuickToolParser.parse("25 min focus."), .timer(1_500))
     }
 
-    @MainActor func testListeningPausePersistsAcrossControllersExpiresAndCanBeReset() async throws {
+    @MainActor func testMicrophoneChoicePersistsAcrossControllersAndDoesNotExpire() async throws {
         let suite = "AdaptiveListeningTests." + UUID().uuidString
         let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { preferences.removePersistentDomain(forName: suite) }
@@ -118,7 +118,7 @@ final class AdaptiveLauncherVoiceTests: XCTestCase {
         first.toggle()
         XCTAssertFalse(first.enabled)
         XCTAssertEqual(fake.ended, [fake.session])
-        XCTAssertEqual(preferences.double(forKey: AdaptiveListeningPreference.key), 3_600)
+        XCTAssertFalse(AdaptiveListeningPreference.isEnabled(in: preferences))
         let reopened = fake.controller(preferences: preferences)
         reopened.startAutomatically()
         await Task.yield()
@@ -127,28 +127,31 @@ final class AdaptiveLauncherVoiceTests: XCTestCase {
         fake.time = 3_599
         reopened.startAutomatically()
         XCTAssertFalse(reopened.enabled)
-        fake.time = 3_600
+        fake.time = 86_400 * 30
         reopened.startAutomatically()
-        try await eventually { reopened.phase == .listening }
-        reopened.pauseForOneHour()
-        AdaptiveListeningPreference.reset(in: preferences)
+        XCTAssertFalse(reopened.enabled, "Mute does not expire")
+        AdaptiveListeningPreference.setEnabled(true, in: preferences)
         reopened.startAutomatically()
         try await eventually { reopened.phase == .listening }
         reopened.stop()
-        XCTAssertFalse(AdaptiveListeningPreference.isPaused(in: preferences, now: Date(timeIntervalSince1970: fake.time)),
-                       "Closing or typing must not create a one-hour pause")
+        XCTAssertTrue(AdaptiveListeningPreference.isEnabled(in: preferences),
+                      "Closing or typing must not change the saved preference")
+        let next = fake.controller(preferences: preferences)
+        next.startAutomatically()
+        try await eventually { next.phase == .listening }
+        next.stop()
     }
 
-    @MainActor func testMicButtonResumesBeforeOneHourExpires() async throws {
+    @MainActor func testMicButtonPersistsUnmute() async throws {
         let suite = "AdaptiveListeningTests." + UUID().uuidString
         let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { preferences.removePersistentDomain(forName: suite) }
         let fake = FakeVoice()
         let voice = fake.controller(preferences: preferences)
-        voice.pauseForOneHour()
+        voice.mute()
         voice.toggle()
         try await eventually { voice.phase == .listening }
-        XCTAssertEqual(preferences.double(forKey: AdaptiveListeningPreference.key), 0)
+        XCTAssertTrue(AdaptiveListeningPreference.isEnabled(in: preferences))
         voice.stop()
     }
 

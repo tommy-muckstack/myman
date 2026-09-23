@@ -152,12 +152,13 @@ struct MeetingDocumentView: View {
     @State private var transcript: String
     @State private var slidePaths: [String]
     @State private var capturedSlides: [MeetingSlide]
-    @State private var showTranscript = false
+    @State private var selectedTab: MeetingRecordingTab = .summary
+    private var showTranscript: Bool { selectedTab == .transcript }
     @State private var isSummarizing = false
     @StateObject private var autosave: DocumentAutosave
     @StateObject private var editor = RichEditorSession()
     @StateObject private var notesService: MeetingNotesService
-    @State private var hasEditedNotes = false
+    @State private var hasEditedSummary = false
     @State private var hasEditedTranscript = false
     @State private var endedAt: Date?
     @State private var showRelated = false
@@ -210,12 +211,15 @@ struct MeetingDocumentView: View {
                 HStack {
                     Text(failure).font(MM.Fonts.secondary)
                     Spacer()
-                    Button("Retry notes") { regenerateNotes() }.disabled(isSummarizing)
+                    Button("Retry summary") { regenerateNotes() }.disabled(isSummarizing)
                 }.padding(.horizontal, MM.Document.margin)
             }
-            MeetingLinkedNotesView(meetingID: meeting.id, database: database)
             if showSlides, !slidePaths.isEmpty { slideCarousel }
-            if showTranscript {
+            if selectedTab == .notes {
+                ScrollView {
+                    MeetingLinkedNotesView(meetingID: meeting.id, database: database, showsEmptyState: true)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if showTranscript {
                 transcriptEditor
                     .overlay {
                         if transcript.isEmpty {
@@ -232,20 +236,20 @@ struct MeetingDocumentView: View {
                 if isSummarizing {
                     HStack(spacing: MM.Layout.spacing) {
                         ProgressView().controlSize(.mini)
-                        Text(notesService.stages[meeting.id] ?? "Preparing notes…")
+                        Text(notesService.stages[meeting.id] ?? "Preparing summary…")
                             .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
                     }.padding(.horizontal, MM.Document.margin)
                 }
                 RichMarkdownEditor(markdown: Binding(get: { summary }, set: { text in
                     notesService.cancel(meetingID: meeting.id)
-                    summary = text; hasEditedNotes = true; debouncedSave(text)
+                    summary = text; hasEditedSummary = true; debouncedSave(text)
                 }), firstLineIsTitle: false, session: editor,
-                                   placeholder: "Write your notes…", showsEmptyPlaceholder: false, documentID: "meeting-" + meeting.id)
+                                   placeholder: "Write a summary…", showsEmptyPlaceholder: false, documentID: "meeting-" + meeting.id)
                 .overlay {
                     if summary.isEmpty, !isSummarizing {
                         UtilityEmptyState(icon: .calendar, title: transcriptionStatus.isPending(meeting.id) ? "Transcribing…" : "Keep the good bits",
                                           message: transcriptionStatus.isPending(meeting.id)
-                                            ? "Notes are written once the transcript is ready. Your own note is above." : "Write anything you want to remember.")
+                                            ? "Your summary will be prepared once the transcript is ready." : "Write a summary or generate one from the transcript. Your linked My Man notes are in Notes.")
                             .allowsHitTesting(false)
                     }
                 }
@@ -264,7 +268,7 @@ struct MeetingDocumentView: View {
                     guard let saved else { return }
                     // A document can already be open when transcription finishes.
                     if !hasEditedTranscript { transcript = saved.transcript }
-                    if !hasEditedNotes { summary = saved.summary }
+                    if !hasEditedSummary { summary = saved.summary }
                     endedAt = saved.endedAt
                     slidePaths = saved.slidePaths
                     capturedSlides = saved.capturedSlides
@@ -272,7 +276,7 @@ struct MeetingDocumentView: View {
                 }
             } catch { /* Keep the editable document available if observation fails. */ }
         }
-        .onChange(of: showTranscript) { _, _ in autosave.flush() }
+        .onChange(of: selectedTab) { _, _ in autosave.flush() }
         .onDisappear { autosave.flush() }
     }
 
@@ -537,14 +541,14 @@ struct MeetingDocumentView: View {
                 Menu {
                     Button("Regenerate transcript") { retryTranscription(regenerate: true) }
                         .disabled(!canTranscribe || transcriptionStatus.isPending(meeting.id))
-                    Button("Regenerate notes") { regenerateNotes() }
+                    Button("Regenerate summary") { regenerateNotes() }
                         .disabled(transcript.isEmpty || isSummarizing || transcriptionStatus.isPending(meeting.id))
                     Divider()
-                    Button("Copy notes") {
+                    Button("Copy summary") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(MarkdownRich.plainText(summary), forType: .string)
                     }
-                    Button("Copy Markdown") {
+                    Button("Copy summary Markdown") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(summary, forType: .string)
                     }
@@ -567,9 +571,11 @@ struct MeetingDocumentView: View {
                 .font(MM.Document.title)
                 .foregroundStyle(MM.Colors.textPrimary)
                 .textFieldStyle(.plain)
+            MeetingThemePills(meetingID: meeting.id, database: db)
             HStack(spacing: MM.Layout.paddingLarge) {
-                tab("Notes", active: !showTranscript) { showTranscript = false }
-                tab("Transcript", active: showTranscript) { showTranscript = true }
+                ForEach([MeetingRecordingTab.transcript, .summary, .notes], id: \.self) { item in
+                    tab(item.rawValue, active: selectedTab == item) { selectedTab = item }
+                }
                 Spacer()
                 if autosave.state == .failed {
                     Button("Retry save") { autosave.flush() }.buttonStyle(.plain).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.danger).clickable()
@@ -613,12 +619,12 @@ struct MeetingDocumentView: View {
     private func regenerateNotes() {
         autosave.flush()
         guard autosave.state != .failed, !isSummarizing else { return }
-        hasEditedNotes = false
+        hasEditedSummary = false
         isSummarizing = true
         Task { @MainActor in
             let generated = await notesService.regenerate(meetingID: meeting.id)
             isSummarizing = false
-            if !hasEditedNotes, !generated.isEmpty { summary = generated }
+            if !hasEditedSummary, !generated.isEmpty { summary = generated }
         }
     }
     private func debouncedSaveTitle(_ text: String) { saveField("title", text: text) }
@@ -661,13 +667,13 @@ struct MeetingDocumentView: View {
     }
 
     private func generateSummaryIfMissing() {
-        guard summary.isEmpty, !transcript.isEmpty, !isSummarizing, !hasEditedNotes else { return }
+        guard summary.isEmpty, !transcript.isEmpty, !isSummarizing, !hasEditedSummary else { return }
         isSummarizing = true
         let sourceTranscript = transcript
         Task { @MainActor in
             let generated = await notesService.notes(meetingID: meeting.id)
             isSummarizing = false
-            guard !generated.isEmpty, summary.isEmpty, !hasEditedNotes,
+            guard !generated.isEmpty, summary.isEmpty, !hasEditedSummary,
                   transcript == sourceTranscript else { return }
             summary = generated
         }
@@ -757,4 +763,44 @@ enum MeetingSummarizer {
         return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+}
+
+/// Assigned themes stay in sync with inference and manual membership changes.
+struct MeetingThemePills: View {
+    let meetingID: String
+    var database: DatabaseQueue = Database.shared
+    var onOpen: (CaptureTheme) -> Void = { CaptureThemeWindow.shared.open($0) }
+    @State private var themes: [CaptureTheme] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !themes.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: MM.Layout.spacing / 2) {
+                        ForEach(themes) { theme in
+                            Button { onOpen(theme) } label: {
+                                Text(theme.title).font(MM.Fonts.metadata)
+                                    .foregroundStyle(MM.Colors.textSecondary)
+                                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                                    .padding(.horizontal, MM.Layout.spacing)
+                                    .padding(.vertical, MM.Layout.spacing / 2)
+                                    .background(MM.Colors.surface, in: Capsule())
+                                    .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+                                    .clickable()
+                            }.buttonStyle(.plain).help("Open theme: \(theme.title)")
+                                .accessibilityLabel("Open theme: \(theme.title)")
+                        }
+                    }
+                }.fixedSize(horizontal: false, vertical: true)
+                    .accessibilityElement(children: .contain).accessibilityLabel("Meeting themes")
+            }
+        }
+        .task(id: meetingID) {
+            let id = "meeting-" + meetingID
+            let observation = ValueObservation.tracking { db in try ThemeStore.list(itemID: id, in: db) }
+            do {
+                for try await value in observation.values(in: database) { themes = value }
+            } catch { /* Keep the document readable if the theme index is unavailable. */ }
+        }
+    }
 }

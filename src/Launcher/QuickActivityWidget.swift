@@ -23,7 +23,7 @@ import SwiftUI
 
     var count: Int { (timer.timerActive ? 1 : 0) + reminders.reminders.count }
     var size: NSSize {
-        expanded ? NSSize(width: 340, height: min(340, 24 + CGFloat(count) * 76)) : NSSize(width: 178, height: 44)
+        expanded ? NSSize(width: 340, height: min(340, 24 + (timer.timerActive ? 76 : 0) + CGFloat(reminders.reminders.count) * 112)) : NSSize(width: 178, height: 44)
     }
     var nextReminder: LocalReminder? { reminders.reminders.min { $0.date < $1.date } }
     var showsTimer: Bool {
@@ -210,25 +210,32 @@ struct QuickActivityWidget: View {
     }
 
     private func reminderRow(_ reminder: LocalReminder) -> some View {
-        HStack(spacing: MM.Layout.spacing) {
-            IconView(icon: .reminder, color: MM.Colors.accent)
-            VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
-                Text(reminder.title).font(MM.Fonts.secondary).lineLimit(2).help(reminder.title)
-                Text(reminder.date <= controller.now ? "Due now" : QuickActivityWidgetController.time(reminder.date.timeIntervalSince(controller.now)))
-                    .font(MM.Fonts.title).monospacedDigit()
+        VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+            HStack(alignment: .top, spacing: MM.Layout.spacing) {
+                Text(reminder.title).font(MM.Fonts.secondary).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading).help(reminder.title)
+                Button { reminders.dismiss(reminder.id) } label: {
+                    IconView(icon: .close).clickable(minSize: 28)
+                }.buttonStyle(.plain).help("Dismiss reminder").accessibilityLabel("Dismiss reminder: \(reminder.title)")
             }
-            Spacer(minLength: 0)
-            soundButton(enabled: reminder.playsSound) {
-                Task { try? await reminders.setSoundEnabled(!reminder.playsSound, for: reminder.id) }
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                    Text(reminder.date <= controller.now ? "Due now" : QuickActivityWidgetController.time(reminder.date.timeIntervalSince(controller.now)))
+                        .font(MM.Fonts.title).monospacedDigit()
+                    Text(reminder.date.formatted(date: .abbreviated, time: .shortened))
+                        .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                }
+                Spacer()
+                soundButton(enabled: reminder.playsSound) {
+                    Task { try? await reminders.setSoundEnabled(!reminder.playsSound, for: reminder.id) }
+                }
             }
-            Button { reminders.dismiss(reminder.id) } label: { IconView(icon: .close).clickable() }
-                .buttonStyle(.plain).help("Dismiss reminder").accessibilityLabel("Dismiss reminder: \(reminder.title)")
-        }.padding(.horizontal, MM.Layout.padding).frame(height: 76)
+        }.padding(.horizontal, MM.Layout.padding).frame(height: 112)
     }
 
     private func soundButton(enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            IconView(icon: enabled ? .bell : .bellOff, color: enabled ? MM.Colors.accent : MM.Colors.textTertiary).clickable()
+            IconView(icon: enabled ? .bell : .bellOff, color: enabled ? MM.Colors.accent : MM.Colors.textTertiary).clickable(minSize: 28)
         }.buttonStyle(.plain)
             .accessibilityLabel(enabled ? "Turn sound off" : "Turn sound on")
             .help(enabled ? "Sound on · Click to mute" : "Sound off · Click to enable")

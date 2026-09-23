@@ -55,7 +55,7 @@ final class QuickToolsModel: ObservableObject {
             startingActivity = true
             defer { startingActivity = false }
             do {
-                _ = try await (reminders ?? .shared).create(draft)
+                _ = try await (reminders ?? .shared).create(draft, waitForNotification: false)
                 return true
             } catch { feedback = error.localizedDescription; return false }
         default: return false
@@ -293,7 +293,7 @@ private struct QuickCalculatorInput: View {
     }
 }
 
-private struct QuickReminderInput: View {
+struct QuickReminderInput: View {
     @ObservedObject var model: QuickToolsModel
     let draft: ReminderDraft
     var onTyping: () -> Void
@@ -312,29 +312,37 @@ private struct QuickReminderInput: View {
                 guard title != $0 else { return }
                 onTyping(); title = $0; feedback = ""; saved = false
             })).textFieldStyle(.plain).font(MM.Fonts.bodyInput).focused($focused)
+                .onSubmit { saveReminder() }
+            ReminderSchedulePicker(date: Binding(get: { date }, set: {
+                onTyping(); date = $0; feedback = ""; saved = false
+            }))
             HStack(spacing: MM.Layout.spacing) {
-                DatePicker("When", selection: Binding(get: { date }, set: { onTyping(); date = $0; feedback = ""; saved = false }), displayedComponents: [.date, .hourAndMinute])
-                    .labelsHidden().font(MM.Fonts.secondary).datePickerStyle(.field)
+                Text(date <= Date() ? "Choose a future time" : date.formatted(date: .abbreviated, time: .shortened))
+                    .font(MM.Fonts.metadata).foregroundStyle(date <= Date() ? MM.Colors.danger : MM.Colors.textSecondary)
                 Spacer()
-                Button {
-                    saving = true
-                    Task { @MainActor in
-                        saved = await model.startActivity(.reminder(.init(title: title, date: date)), reminders: reminders)
-                        feedback = saved ? "Reminder set" : model.feedback
-                        saving = false
-                        if saved { onStarted() }
-                    }
-                } label: {
+                Button { saveReminder() } label: {
                     Text(saving ? "Setting…" : saved ? "Set" : "Set reminder").font(MM.Fonts.secondary)
                         .foregroundStyle(MM.Colors.onAccent)
                         .padding(.horizontal, MM.Layout.padding).padding(.vertical, MM.Layout.spacing / 2)
                         .background(MM.Colors.accent, in: Capsule()).clickable()
-                }.buttonStyle(.plain).disabled(saving || saved || model.startingActivity || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.buttonStyle(.plain).disabled(saving || saved || model.startingActivity || date <= Date() || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if !feedback.isEmpty { Text(feedback).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary) }
         }
         .onAppear { title = draft.title; date = draft.date; focused = title.isEmpty }
         .onChange(of: draft) { _, value in title = value.title; date = value.date; feedback = ""; saved = false }
+    }
+
+    private func saveReminder() {
+        guard !saving, !saved, !model.startingActivity, date > Date(),
+              !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        saving = true
+        Task { @MainActor in
+            saved = await model.startActivity(.reminder(.init(title: title, date: date)), reminders: reminders)
+            feedback = saved ? "Reminder set" : model.feedback
+            saving = false
+            if saved { onStarted() }
+        }
     }
 }
 

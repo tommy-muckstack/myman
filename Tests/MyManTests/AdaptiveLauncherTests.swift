@@ -244,11 +244,11 @@ final class AdaptiveLauncherTests: XCTestCase {
         editor.insertText("", replacementRange: NSRange(location: 0, length: field.stringValue.utf16.count))
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(voice.phase, .listening, "Clearing a request restarts listening")
-        voice.pauseForOneHour()
+        voice.mute()
         editor.insertText("calculator", replacementRange: NSRange(location: NSNotFound, length: 0))
         editor.insertText("", replacementRange: NSRange(location: 0, length: field.stringValue.utf16.count))
         try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(voice.phase, .off, "Clearing must respect an explicit one-hour mute")
+        XCTAssertEqual(voice.phase, .off, "Clearing must respect a persistent mute")
         preferences.removeObject(forKey: AdaptiveListeningPreference.key)
     }
 

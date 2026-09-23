@@ -99,12 +99,12 @@ final class AdaptiveLauncherVoice: ObservableObject {
     }
 
     func startAutomatically() {
-        guard !AdaptiveListeningPreference.isPaused(in: preferences, now: dependencies.now()) else { return }
+        guard AdaptiveListeningPreference.isEnabled(in: preferences, now: dependencies.now()) else { return }
         start()
     }
 
-    func pauseForOneHour() {
-        AdaptiveListeningPreference.pause(in: preferences, now: dependencies.now())
+    func mute() {
+        AdaptiveListeningPreference.setEnabled(false, in: preferences)
         stop()
     }
 
@@ -124,9 +124,9 @@ final class AdaptiveLauncherVoice: ObservableObject {
     }
 
     func toggle() {
-        if enabled { pauseForOneHour() }
+        if enabled { mute() }
         else {
-            AdaptiveListeningPreference.reset(in: preferences)
+            AdaptiveListeningPreference.setEnabled(true, in: preferences)
             start()
         }
     }
@@ -193,17 +193,21 @@ final class AdaptiveLauncherVoice: ObservableObject {
 }
 
 enum AdaptiveListeningPreference {
-    static let key = "adaptiveListeningPausedUntil"
+    static let key = "launcherAutomaticListening"
+    static let legacyPauseKey = "adaptiveListeningPausedUntil"
 
-    static func isPaused(in defaults: UserDefaults = .standard, now: Date = Date()) -> Bool {
-        defaults.double(forKey: key) > now.timeIntervalSince1970
+    static func isEnabled(in defaults: UserDefaults = .standard, now: Date = Date()) -> Bool {
+        if defaults.object(forKey: key) != nil { return defaults.bool(forKey: key) }
+        // Preserve an active mute from older versions as a persistent choice.
+        let enabled = defaults.double(forKey: legacyPauseKey) <= now.timeIntervalSince1970
+        setEnabled(enabled, in: defaults)
+        return enabled
     }
 
-    static func pause(in defaults: UserDefaults = .standard, now: Date = Date()) {
-        defaults.set(now.addingTimeInterval(3_600).timeIntervalSince1970, forKey: key)
+    static func setEnabled(_ enabled: Bool, in defaults: UserDefaults = .standard) {
+        defaults.set(enabled, forKey: key)
+        defaults.removeObject(forKey: legacyPauseKey)
     }
-
-    static func reset(in defaults: UserDefaults = .standard) { defaults.removeObject(forKey: key) }
 }
 
 /// Keep idle microphone buffers bounded, ignore isolated clicks, and end an
