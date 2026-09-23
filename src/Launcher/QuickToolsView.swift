@@ -10,6 +10,8 @@ final class QuickToolsModel: ObservableObject {
     @Published private(set) var pausedSeconds: TimeInterval?
     @Published private(set) var finished = false
     private var alarm: Timer?
+    private(set) var timerID: String?
+    var timerAgentOwner: String?
     var onFinish: () -> Void = { NSSound.beep() }
     var timerActive: Bool { deadline != nil || pausedSeconds != nil || finished }
 
@@ -27,6 +29,7 @@ final class QuickToolsModel: ObservableObject {
 
     func start(seconds: TimeInterval, now: Date = Date()) {
         alarm?.invalidate()
+        if pausedSeconds == nil { timerID = UUID().uuidString; timerAgentOwner = nil }
         deadline = now.addingTimeInterval(seconds)
         pausedSeconds = nil
         finished = false
@@ -53,6 +56,7 @@ final class QuickToolsModel: ObservableObject {
     func stop() {
         alarm?.invalidate(); alarm = nil
         deadline = nil; pausedSeconds = nil; finished = false
+        timerID = nil; timerAgentOwner = nil
     }
 
     func save() {

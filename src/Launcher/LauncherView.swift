@@ -243,43 +243,8 @@ struct LauncherView: View {
     }
 
     private func actionChip(_ action: LauncherAction, selected: Bool) -> some View {
-        let hintVisible = showAllHints || hoveredAction == action.id || (selected && action.enabled)
-        return VStack(spacing: 4) {
-            IconView(icon: action.icon, size: 17,
-                     color: action.enabled ? MM.Colors.textPrimary : MM.Colors.textTertiary)
-                .overlay(alignment: .topTrailing) {
-                    if action.recording {
-                        RecordingDot().offset(x: 8, y: -4)
-                    }
-                }
-            Text(action.title)
-                .font(MM.Fonts.hint)
-                .foregroundStyle(action.enabled ? MM.Colors.textSecondary : MM.Colors.textTertiary)
-                .lineLimit(1)
-            // Fixed-height hint slot: the hotkey fades in on hover, the tile
-            // never changes size.
-            Text(action.enabled ? (action.hint ?? " ") : "soon")
-                .font(MM.Fonts.metadata)
-                .foregroundStyle(MM.Colors.textTertiary)
-                .lineLimit(1)
-                // Scope animation to opacity so initial layout and text sizing
-                // cannot animate along with the hint's visibility.
-                .animation(.easeInOut(duration: 0.3)) { content in
-                    content.opacity(hintVisible ? 1 : 0)
-                }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
-                .fill(selected && action.enabled ? MM.Colors.surface : .clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
-                .strokeBorder(selected && action.enabled ? MM.Colors.border : .clear, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-        .help(action.enabled ? (action.hint ?? action.title) : "\(action.title) — coming soon")
+        LauncherActionChip(action: action, selected: selected,
+                           hintVisible: showAllHints || hoveredAction == action.id || (selected && action.enabled))
     }
 
     // MARK: Keyboard & execution
@@ -330,5 +295,49 @@ struct LauncherView: View {
 extension SearchHit {
     static func recentItems(for actionID: String) -> [SearchHit] {
         SearchService.recent(kind: actionID == "voice" ? "voice" : actionID)
+    }
+}
+
+struct LauncherActionChip: View {
+    let action: LauncherAction
+    let selected: Bool
+    let hintVisible: Bool
+    var body: some View {
+        VStack(spacing: 4) {
+            IconView(icon: action.icon, size: 17,
+                     color: action.enabled ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                .overlay(alignment: .topTrailing) {
+                    if action.recording {
+                        RecordingDot().offset(x: 8, y: -4)
+                    }
+                }
+            Text(action.title)
+                .font(MM.Fonts.hint)
+                .foregroundStyle(action.enabled ? MM.Colors.textSecondary : MM.Colors.textTertiary)
+                .lineLimit(1)
+            // Fixed-height hint slot: the hotkey fades in on hover, the tile
+            // never changes size.
+            Text(action.enabled ? (action.hint ?? " ") : "soon")
+                .font(MM.Fonts.metadata)
+                .foregroundStyle(MM.Colors.textTertiary)
+                .lineLimit(1)
+                // Scope animation to opacity so initial layout and text sizing
+                // cannot animate along with the hint's visibility.
+                .animation(.easeInOut(duration: 0.3)) { content in
+                    content.opacity(hintVisible ? 1 : 0)
+                }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
+                .fill(selected && action.enabled ? MM.Colors.surface : .clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MM.Layout.radiusSmall, style: .continuous)
+                .strokeBorder(selected && action.enabled ? MM.Colors.border : .clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .help(action.enabled ? (action.hint ?? action.title) : "\(action.title) — coming soon")
     }
 }

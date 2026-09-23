@@ -260,7 +260,13 @@ final class AdaptiveLauncherTests: XCTestCase {
                 if name == "paused" { tools.pause() }
                 var measured = CGSize(width: 620, height: 400)
                 var actionCalls = 0
-                let actions = [LauncherAction(id: "meeting", icon: .calendar, title: "Record Meeting", hint: nil, enabled: true) { actionCalls += 1 }]
+                let definitions: [(String, MMIcon, String, String)] = [
+                    ("screenshot", .screenshot, "Take Screenshot", "⌥S"), ("note", .note, "New Note", "⌥N"),
+                    ("voice", .voice, "Voice Dictation", "⌥V"), ("meeting", .calendar, "Record Meeting", "⌥M"),
+                    ("record", .recordScreen, "Record Screen", "⌥R"), ("quick_tools", .agent, "Quick Tools", "")]
+                let actions = definitions.map { id, icon, title, hint in
+                    LauncherAction(id: id, icon: icon, title: title, hint: hint, enabled: true) { actionCalls += 1 }
+                }
                 let panel = FloatingPanel(content: AdaptiveLauncherView(actions: actions, initialQuery: query, voice: voice,
                     onSaveQueryAsNote: { _ in }, onDismiss: {}, onSizeChange: { measured = $0 }, tools: tools)
                     .preferredColorScheme(scheme), fixedSize: true)

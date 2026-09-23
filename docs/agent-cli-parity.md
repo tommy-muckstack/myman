@@ -51,7 +51,10 @@ All first-class rows are implemented. Generic `invoke` remains available for exa
 | Agent consent / TCC grants | Human-only Settings | Cannot be enabled through CLI, URL or MCP |
 | Hotkey rebinding / audio model selection / destination folder / update preferences | Human-only Settings | Machine setup; no unrestricted preference editor |
 | Permissions / setup | `doctor` | Passive, no OS prompts |
-| Fancy visual browsing / calendar grid | UI-only | Data retrieval and config commands cover agent workflows; calendar browsing CLI is phase 2 |
+| Calendar agenda | `calendar list --after ISO --before ISO` | Existing Calendar permission; bounded 31-day read |
+| Quick tools / calculator / time zones / palettes | `tool evaluate --input TEXT` | Structured local results; no side effects |
+| Timers | `timer start/status/pause/resume/cancel` | Visible widget, session IDs, creating-agent controls |
+| Message reminders | `reminder create/list/cancel` | Local persistence, macOS notifications when permitted |
 | Chat beta / Chatterbox voice replies | Optional future phase | Not required for capture/recall CLI parity |
 | Pointer / click / drag / arbitrary keyboard injection | Excluded | Structured capture/markup replaces pointer automation; no remote-control daemon |
 | Sparkle installation / TCC / Font Book | Human/app-only | Native installation and OS consent surfaces |

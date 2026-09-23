@@ -43,6 +43,7 @@ struct LocalReminder: Identifiable, Codable, Equatable {
     let id: UUID
     let title: String
     let date: Date
+    var agentOwner: String? = nil
     var fired = false
     var notificationScheduled = false
     var notificationID: String { "myman.reminder." + id.uuidString }
@@ -69,21 +70,28 @@ struct LocalReminder: Identifiable, Codable, Equatable {
     }
 
     @discardableResult func add(_ draft: ReminderDraft, now: Date = Date()) async -> String {
+        do {
+            let reminder = try await create(draft, now: now)
+            return reminder.notificationScheduled ? "Reminder set" : "Reminder set. Keep My Man open, or enable notifications for alerts while it’s closed."
+        } catch { return error.localizedDescription }
+    }
+
+    func create(_ draft: ReminderDraft, owner: String? = nil, now: Date = Date()) async throws -> LocalReminder {
         let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return "Add a reminder title." }
-        guard draft.date > now else { return "Choose a future time." }
-        guard reminders.count < 32 else { return "Dismiss a reminder before adding another." }
-        let reminder = LocalReminder(id: UUID(), title: title, date: draft.date)
+        guard !title.isEmpty, title.count <= 500 else { throw AgentError("INVALID_ARGUMENTS", "Add a reminder title of 1–500 characters.") }
+        guard draft.date > now else { throw AgentError("INVALID_ARGUMENTS", "Choose a future time.") }
+        guard reminders.count < 32 else { throw AgentError("LIMIT_REACHED", "Dismiss a reminder before adding another.") }
+        let reminder = LocalReminder(id: UUID(), title: title, date: draft.date, agentOwner: owner)
         reminders.append(reminder)
         persist()
         let scheduled = await schedule(reminder)
         guard let index = reminders.firstIndex(where: { $0.id == reminder.id }) else {
             cancelNotification(reminder.notificationID)
-            return "Reminder dismissed"
+            throw AgentError("CANCELLED", "Reminder dismissed")
         }
         reminders[index].notificationScheduled = scheduled
         persist()
-        return scheduled ? "Reminder set" : "Reminder set. Keep My Man open, or enable notifications for alerts while it’s closed."
+        return reminders[index]
     }
 
     func dismiss(_ id: UUID) {

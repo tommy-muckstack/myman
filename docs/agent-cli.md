@@ -226,3 +226,19 @@ The root plugin config starts two stdio servers: existing `myman-brain` and new 
 ## Multi-agent collaboration (0.8.0)
 
 The new `agent`, `machine`, `resource`, `bundle`, `handoff`, `lease`, `session transfer` and `collaboration events` commands use the same catalog and app MCP server. See [setup, four example workflows, permissions, revision guards, ownership and lifecycle](multi-agent-workflows.md). These commands require the updated app; public 1.1.64 does not provide them. Agent names are user-chosen, never product defaults.
+
+## Quick tools, timers and reminders (My Man 1.1.95 / companion 0.11.0)
+
+Check live `actions` before using these commands. On the selected Mac:
+
+```sh
+myman timer start --seconds 600 --json
+myman reminder create --seconds 600 --message "Take pizza out" --json
+myman tool evaluate --input "8am in Iceland" --json
+myman tool evaluate --input "#fffffd" --json
+myman calendar list --after 2026-09-23T00:00:00-04:00 --before 2026-09-24T00:00:00-04:00 --json
+```
+
+Timers and reminders appear in the same hover-expanding widget as human-created ones. Keep the returned timer `session_id` for `timer pause|resume|cancel --session-id ID`; inspect `timer status` first. Starting while a timer exists fails rather than replacing it. Use `reminder list` and `reminder cancel --id ID`; `reminder create --at ISO --message TEXT` accepts an absolute timestamp instead of seconds. Controls belong to the creating agent; human controls remain available. Existing library grants apply to timer/reminder/calendar actions. Calendar also requires human-granted macOS access.
+
+Timers need My Man to stay open. Reminder results report `notification_scheduled` and `requires_app_open`; do not promise delivery while closed unless scheduling succeeded. `tool evaluate` is side-effect free and returns structured arithmetic, conversions, time zones, four-color palettes, checklists, bill splits, and timer/reminder previews. Evaluation never starts a timer or saves a note. Existing note/task/library/capture/recording commands remain supported. Keep request/job IDs and never replay interrupted mutations automatically.

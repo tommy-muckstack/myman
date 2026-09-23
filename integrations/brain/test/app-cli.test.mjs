@@ -11,6 +11,15 @@ import { catalog, describe } from '../actions.mjs';
 const ajv=new Ajv({strict:false});
 const fixture='shot-fixture';
 const cases=[
+ ['timer start --seconds 600','timer.start',{seconds:600}],
+ ['timer pause --session-id timer-id','timer.pause',{session_id:'timer-id'}],
+ ['timer resume --session-id timer-id','timer.resume',{session_id:'timer-id'}],
+ ['timer cancel --session-id timer-id','timer.cancel',{session_id:'timer-id'}],
+ ['reminder create --seconds 600 --message Pizza','reminder.create',{seconds:600,message:'Pizza'}],
+ ['reminder list','reminder.list',{}],
+ ['reminder cancel --id reminder-id','reminder.cancel',{id:'reminder-id'}],
+ ['tool evaluate --input #fffffd','tool.evaluate',{input:'#fffffd'}],
+ ['calendar list --after 2026-09-23T00:00:00Z --before 2026-09-24T00:00:00Z','calendar.list',{after:'2026-09-23T00:00:00Z',before:'2026-09-24T00:00:00Z'}],
  ['screenshot --mode agent --display main --region 0,0,100,200 --wait --json','screenshot.capture',{display:'main',region:[0,0,100,200]}],
  ['screenshot --mode agent --window-id 42 --save-only','screenshot.capture',{window_id:'42'}],
  ['record start --display main --mic off --system-audio off --webcam off','recording.start',{display:'main',microphone:false,system_audio:false,webcam:false}],

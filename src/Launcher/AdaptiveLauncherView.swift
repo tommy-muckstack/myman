@@ -94,6 +94,9 @@ struct AdaptiveLauncherView: View {
                 Divider().overlay(MM.Colors.border)
                 routedContent
             } else {
+                Divider().overlay(MM.Colors.border)
+                AdaptiveQuickActions(actions: actions, libraryModel: libraryModel,
+                                     onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote)
                 HStack {
                     Text("Type / for actions and tools").font(MM.Fonts.metadata)
                     Spacer()

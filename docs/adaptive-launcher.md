@@ -64,6 +64,18 @@ Multiple activities share the widget, with the next deadline shown when collapse
 The widget avoids the meeting recorder, does not take keyboard focus, and respects
 Reduce Motion. Its fixed-size window is resized asynchronously outside layout.
 
+## Shortcut access
+
+The empty Adaptive input keeps the classic action tiles and hotkey hints beneath
+it. Hovering a capture tile reveals its recent captures using the same library
+view. Typing replaces that row with the relevant result.
+
+## Agent access
+
+Companion 0.11.0 exposes timer lifecycle, message reminders, calendar reads, and
+side-effect-free tool evaluation through the live catalog, CLI, and app MCP.
+Existing native grants apply; see [the CLI guide](agent-cli.md).
+
 ## Compact results
 
 Results measure their own height up to a 320pt scroll limit. Window resizing remains

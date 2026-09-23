@@ -1,5 +1,5 @@
 {
-  "version": "0.10.0",
+  "version": "0.11.0",
   "actions": [
     {
       "name": "app.status",
@@ -1388,7 +1388,7 @@
     },
     {
       "name": "font.file",
-      "description": "Get a saved font’s validated OpenType file with attachment metadata, specimen preview, coverage and provenance. Does not install it.",
+      "description": "Get a saved font\u2019s validated OpenType file with attachment metadata, specimen preview, coverage and provenance. Does not install it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2083,7 +2083,7 @@
     },
     {
       "name": "note.attach",
-      "description": "Copy an image into a note’s owned assets and append its Markdown image. Supply source_id (screenshot) or an absolute local path. Source deletion does not break the note. Optional revision guard; returns the note revision and image attachment. Named agents must supply expected_updated_at.",
+      "description": "Copy an image into a note\u2019s owned assets and append its Markdown image. Supply source_id (screenshot) or an absolute local path. Source deletion does not break the note. Optional revision guard; returns the note revision and image attachment. Named agents must supply expected_updated_at.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2164,7 +2164,7 @@
     },
     {
       "name": "font.preview",
-      "description": "Render a specimen from a saved font’s actual OpenType bytes. Returns coverage, provenance, approximate-character warnings and a temporary preview. Does not install the font.",
+      "description": "Render a specimen from a saved font\u2019s actual OpenType bytes. Returns coverage, provenance, approximate-character warnings and a temporary preview. Does not install the font.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2384,7 +2384,7 @@
     },
     {
       "name": "bundle.create",
-      "description": "Collect 1–100 source item references and revisions for registered members. No media is copied; changed sources are marked on read.",
+      "description": "Collect 1\u2013100 source item references and revisions for registered members. No media is copied; changed sources are marked on read.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2698,7 +2698,7 @@
     },
     {
       "name": "lease.acquire",
-      "description": "Reserve clipboard or item:ITEM-ID for 5–300 seconds. Supply returned lease_id on mutations. Expiry does not cancel work in flight.",
+      "description": "Reserve clipboard or item:ITEM-ID for 5\u2013300 seconds. Supply returned lease_id on mutations. Expiry does not cancel work in flight.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3513,7 +3513,7 @@
     },
     {
       "name": "workflow.cancel",
-      "description": "Request cooperative cancellation of this agent’s supported read/render job. Inspect the final receipt and any files before retrying.",
+      "description": "Request cooperative cancellation of this agent\u2019s supported read/render job. Inspect the final receipt and any files before retrying.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3612,7 +3612,7 @@
     },
     {
       "name": "share.list",
-      "description": "List this agent’s published share receipts.",
+      "description": "List this agent\u2019s published share receipts.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -3729,6 +3729,234 @@
         "required": [
           "bundle_id",
           "tone"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "tool.evaluate",
+      "description": "Evaluate local arithmetic, conversions, time zones, palettes, checklists, splits or timer/reminder previews. No side effects.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "timer.start",
+      "description": "Start a visible countdown widget; fails BUSY if a timer exists. Requires My Man to remain open.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "seconds": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 86400
+          }
+        },
+        "required": [
+          "seconds"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "timer.status",
+      "description": "Read the active timer and its session ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "reminder.create",
+      "description": "Schedule a message reminder with a visible countdown widget. Provide seconds or ISO 8601 at. Check notification_scheduled and requires_app_open.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "seconds": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 86400
+          },
+          "at": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "reminder.list",
+      "description": "Read saved reminders and notification availability.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "reminder.cancel",
+      "description": "Dismiss a reminder created by this agent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "calendar.list",
+      "description": "Read calendar events with existing Calendar permission. ISO 8601 range, at most 31 days; up to 500 events with partial flag.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "before": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "after",
+          "before"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "timer.pause",
+      "description": "Pause the timer created by this agent; requires its current session ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "timer.resume",
+      "description": "Resume the timer created by this agent; requires its current session ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "timer.cancel",
+      "description": "Cancel the timer created by this agent; requires its current session ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "session_id"
         ],
         "additionalProperties": false
       },
