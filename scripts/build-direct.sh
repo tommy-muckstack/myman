@@ -31,8 +31,8 @@ APP_NAME="My Man"
 EXEC_NAME="MyMan"
 SLUG="myman"
 BUNDLE_ID="com.muckstack.myman"
-VERSION="${RELEASE_VERSION:-1.1.94}"
-BUILD_NUMBER="${RELEASE_BUILD:-106}"
+VERSION="${RELEASE_VERSION:-1.1.95}"
+BUILD_NUMBER="${RELEASE_BUILD:-107}"
 TEAM_ID="${APPLE_TEAM_ID:-K8NAZ76CBQ}"
 NOTARY_PROFILE="mumbls-notary"
 SPARKLE_ACCOUNT="myman"
@@ -271,9 +271,9 @@ notarize() {
                 --apple-id "$APPLE_ID" \
                 --team-id "$TEAM_ID" \
                 --password "$APPLE_APP_PASSWORD" \
-                --wait && return 0
+                --no-s3-acceleration --wait && return 0
         else
-            xcrun notarytool submit "$path" --keychain-profile "$NOTARY_PROFILE" --wait && return 0
+            xcrun notarytool submit "$path" --keychain-profile "$NOTARY_PROFILE" --no-s3-acceleration --wait && return 0
         fi
         echo "==> Notarization attempt $attempt failed; retrying in 20s..."
         sleep 20

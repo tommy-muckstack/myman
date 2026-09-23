@@ -19,7 +19,8 @@ It does not incorporate Shapeshift's source code or contact its hosted service.
   searches the existing capture index.
 - Creation prefixes and recognized tool syntax open a preview. Plain topics,
   including bare numbers such as `2026`, offer Search/Create choices.
-- Search/Create choices remain visible and override automatic suggestions. A
+- Ambiguous requests show Search/Create choices; resolved requests use a small
+  options menu in the input row. Both override automatic suggestions. A
   manual choice survives further typing until the field is cleared or `/` opens
   the command palette.
 - The optional Apple on-device classifier proposes only `search`, `create`, or
@@ -28,12 +29,15 @@ It does not incorporate Shapeshift's source code or contact its hosted service.
   are ignored. If unavailable or unsuccessful, both manual choices remain usable.
 - Return can save an explicitly requested creation, but a model-only Create
   suggestion cannot change Return into a save action. Capture always uses a
-  labeled button. Parsing a timer does not start it.
+  labeled button. An explicit timer request starts with Return or Start; parsing
+  alone does not start it. Timer controls have no Save/Copy row.
 - Search reuses the capture library, filters, themes and keyboard navigation.
-  `/` reveals app actions, tasks, calendar and tool examples.
+  `/` reveals app actions, tasks, calendar and tools without inserting the slash.
+  Subsequent typing filters commands; Escape exits. `calculator` opens an editable
+  calculator with the supplied SVG icon.
 
 The tools currently support checklists, bounded arithmetic, percentages, compatible
-length/weight/temperature conversions, bill splits and hex colors. Splits distribute
+length/weight/temperature conversions, time zones, bill splits and hex colors. Splits distribute
 remainder cents without losing money. A limited recursive-descent parser evaluates
 arithmetic; input is never executable code. This is not unrestricted UI generation.
 Unsupported prose remains an editable note preview or a search choice.
@@ -43,14 +47,72 @@ it does not persist a live card. Timers use an absolute deadline, support pause 
 resume, and survive panel dismissal or input changes. They require My Man to remain
 running; completion is an app sound, not a scheduled system notification.
 
+## Reminders and countdown widget
+
+`reminder in 10m for taking pizza out` and `remind me to take pizza out in 10 minutes`
+prepare a message and deadline. `reminder` opens a compact title/date editor;
+`remind me to call Sam tomorrow at 9am` supports an absolute local time. The Set
+reminder button confirms the preview; typing or parsing never schedules an alert.
+
+Reminders persist locally across restarts. With notification permission, macOS
+schedules the alert even while My Man is closed. Without permission, the UI explains
+that My Man must remain open. Due reminders remain in the widget until dismissed.
+
+Starting a timer or setting a reminder shows one top-right countdown widget. Hover
+or click expands it to timer controls and reminder messages; leaving collapses it.
+Multiple activities share the widget, with the next deadline shown when collapsed.
+The widget avoids the meeting recorder, does not take keyboard focus, and respects
+Reduce Motion. Its fixed-size window is resized asynchronously outside layout.
+
+## Shortcut access
+
+The empty Adaptive input keeps the classic action tiles and hotkey hints beneath
+it. Hovering a capture tile reveals its recent captures using the same library
+view. Typing replaces that row with the relevant result.
+
+## Agent access
+
+Companion 0.11.0 exposes timer lifecycle, message reminders, calendar reads, and
+side-effect-free tool evaluation through the live catalog, CLI, and app MCP.
+Existing native grants apply; see [the CLI guide](agent-cli.md).
+
+## Compact results
+
+Results measure their own height up to a 320pt scroll limit. Window resizing remains
+deferred by the existing panel controller. Tasks and calendar use full-width inline
+lists, small empty states, and a week selector; classic companion panels keep their
+existing layouts. The muted microphone uses the supplied `micOff` SVG path.
+
+`8am in Iceland` means today's 8am in Iceland expressed in the Mac's time zone.
+`8am New York to Iceland` specifies both ends; `8am to Iceland` starts locally.
+`time in Tokyo` converts the current instant. Both sides show dates to make day
+rollovers clear. Region names and ET/PT use the macOS time-zone database; fixed
+abbreviations such as PST/EST retain their literal offsets. IST means India and
+CST means US Central Standard; city names avoid abbreviation ambiguity. Skipped
+or repeated daylight-saving times ask for a different time or explicit UTC offset.
+Unknown locations get a short example instead of falling through to unit conversion.
+
+Hex colors produce four deterministic coordinating colors: a complementary accent,
+softer neighboring shades, and a dark anchor. Near-neutrals use a muted blue family.
+These are palette suggestions, not an accessibility contrast guarantee. Each swatch
+copies its own hex code; the result's Copy/Save actions retain the entered base hex.
+
 ## Voice input
+
+The listening footer says “Speak or type” and uses the meeting recorder’s waveform.
 
 Only the enabled adaptive launcher's controller automatically starts listening,
 after the panel is visible. It uses a raw session on `AudioCapture.shared`, avoiding
 a second microphone engine or a new voice-processing request. Parakeet transcribes
 utterances locally after a pause. The microphone pauses during transcription and
 resumes afterward while the launcher remains open. Text is appended to the latest
-typed input and never submitted automatically. The microphone button can stop it.
+input and never submitted automatically. Editing the input stops listening immediately
+and rejects pending transcription. Programmatic speech updates do not stop listening.
+Turning off the microphone explicitly persists a one-hour pause in UserDefaults
+(`adaptiveListeningPausedUntil`). New panels respect that timestamp; automatic
+listening resumes on the next opening after expiry. It never interrupts ongoing
+typing when the hour expires. The mic button or General → Appearance → Reset can
+clear the pause early. Closing the panel only stops its session; it does not snooze.
 
 The panel's dismissal callback explicitly stops capture; relying on SwiftUI
 `onDisappear` alone would not cover retained AppKit panels. Generation checks
@@ -98,3 +160,6 @@ dependencies. These tests do not open a physical microphone.
 `MYMAN_ADAPTIVE_UI_REVIEW=/tmp/myman-adaptive-review swift test --filter AdaptiveLauncherTests`
 also renders native previews using synthetic input. The visual test is skipped
 without the environment variable. It does not save notes or start recording.
+
+`QuickReminderTests` verifies natural-language messages, persistence, one-shot due
+alerts, cancellation while notification permission is pending, and widget geometry.

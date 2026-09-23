@@ -1,8 +1,10 @@
+> Candidate update, 2026-09-23: root/Grok/companion **0.11.0** adds local tool evaluation, timer/reminder controls, and calendar reads. Prepared; not submitted or host-verified. The prior publisher application remains awaiting review. Notify Cursor of the new candidate rather than filing a duplicate application.
+
 > September 13, 2026: candidate **0.10.0** prepared. Synthetic Grok Bot local execution and visible image delivery passed; marketplace application remains pending.
 
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.9.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.11.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -44,6 +46,8 @@ For Grok Bot, local-computer execution must target the Mac containing MyMan and 
 Keywords: myman, meetings, notes, macos, local, memory, transcripts, screenshots, dictation.
 
 ## Submission status
+
+**September 23, 2026 — 0.11.0 prepared, not submitted.** New timer/reminder, tool evaluation, and calendar actions require My Man 1.1.95. Native fixtures and CLI/MCP tests verify behavior; these new actions have not been verified through a live GrokBot host.
 
 **September 12, 2026 — initial publisher application submitted; awaiting review.** Tommy reports confirmation for MuckStack, LLC (`muckstack`) and this repository via the [publish form](https://cursor.com/marketplace/publish). This supersedes the earlier agent session's login blocker. No listing, approval or live GrokBot activation is claimed.
 

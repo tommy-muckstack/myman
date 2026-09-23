@@ -298,6 +298,7 @@ struct SettingsPanelView: View {
     @State private var knownPeople: [Person] = []
     @AppStorage("interfaceTextScale") private var interfaceTextScale = 1.0
     @AppStorage("adaptiveLauncher") private var adaptiveLauncher = false
+    @AppStorage(AdaptiveListeningPreference.key) private var listeningPausedUntil = 0.0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -454,8 +455,25 @@ struct SettingsPanelView: View {
             settingSection("Appearance") {
                 Toggle("Adaptive launcher (experimental)", isOn: $adaptiveLauncher)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
-                Text("Start with one text box for search, new notes, and tools. Listens for speech while the launcher is open; you can also type or turn the microphone off. Applies the next time you open My Man.")
+                Text("One input for search and tools. Typing stops the microphone. Turn the mic off to pause automatic listening for one hour.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                if adaptiveLauncher {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        let paused = listeningPausedUntil > context.date.timeIntervalSince1970
+                        HStack {
+                            Text(paused ? "Listening paused until \(Date(timeIntervalSince1970: listeningPausedUntil).formatted(date: .omitted, time: .shortened))"
+                                 : "Listen automatically when opened")
+                                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                            Spacer()
+                            Button {
+                                if paused { AdaptiveListeningPreference.reset() }
+                                else { AdaptiveListeningPreference.pause() }
+                            } label: {
+                                Text(paused ? "Reset" : "Pause for 1 hour").font(MM.Fonts.secondary).clickable()
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
                 Picker("Interface text size", selection: $interfaceTextScale) {
                     Text("Standard").tag(1.0); Text("Larger").tag(1.25); Text("Largest").tag(1.5)
                 }.clickable()

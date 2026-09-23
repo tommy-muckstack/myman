@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CrashReporting.setup()
         MM.Fonts.registerFonts()
         SettingsStore.shared.theme?.apply()
+        QuickActivityWidgetController.shared.start()
         Analytics.setup()
         _ = Database.shared
         MeetingTranscriptionStatus.shared.retryHandler = { [weak self] id, regenerate in

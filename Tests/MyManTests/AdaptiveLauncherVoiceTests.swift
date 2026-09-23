@@ -94,13 +94,58 @@ final class AdaptiveLauncherVoiceTests: XCTestCase {
         XCTAssertFalse(voice.enabled)
     }
 
-    @MainActor func testSpeechAppendsToTextTypedWhileTranscribing() {
+    @MainActor func testExplicitlyResumedSpeechAppendsToExistingText() {
         XCTAssertEqual(AdaptiveLauncherVoice.appending(" launch notes ", to: "find my"), "find my launch notes")
         XCTAssertEqual(AdaptiveLauncherVoice.appending("launch notes", to: "find my "), "find my launch notes")
         XCTAssertEqual(AdaptiveLauncherVoice.appending("  ", to: "typed text"), "typed text")
         XCTAssertEqual(AdaptiveLauncherVoice.appending("find my notes", to: ""), "find my notes")
         XCTAssertEqual(AdaptiveLauncherIntent.resolve("Take a screenshot."), .action("screenshot"))
         XCTAssertEqual(QuickToolParser.parse("25 min focus."), .timer(1_500))
+    }
+
+    @MainActor func testListeningPausePersistsAcrossControllersExpiresAndCanBeReset() async throws {
+        let suite = "AdaptiveListeningTests." + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let fake = FakeVoice()
+        let first = fake.controller(preferences: preferences)
+        first.startAutomatically()
+        try await eventually { first.phase == .listening }
+        first.toggle()
+        XCTAssertFalse(first.enabled)
+        XCTAssertEqual(fake.ended, [fake.session])
+        XCTAssertEqual(preferences.double(forKey: AdaptiveListeningPreference.key), 3_600)
+        let reopened = fake.controller(preferences: preferences)
+        reopened.startAutomatically()
+        await Task.yield()
+        XCTAssertFalse(reopened.enabled)
+        XCTAssertEqual(fake.beginnings, 1)
+        fake.time = 3_599
+        reopened.startAutomatically()
+        XCTAssertFalse(reopened.enabled)
+        fake.time = 3_600
+        reopened.startAutomatically()
+        try await eventually { reopened.phase == .listening }
+        reopened.pauseForOneHour()
+        AdaptiveListeningPreference.reset(in: preferences)
+        reopened.startAutomatically()
+        try await eventually { reopened.phase == .listening }
+        reopened.stop()
+        XCTAssertFalse(AdaptiveListeningPreference.isPaused(in: preferences, now: Date(timeIntervalSince1970: fake.time)),
+                       "Closing or typing must not create a one-hour pause")
+    }
+
+    @MainActor func testMicButtonResumesBeforeOneHourExpires() async throws {
+        let suite = "AdaptiveListeningTests." + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let fake = FakeVoice()
+        let voice = fake.controller(preferences: preferences)
+        voice.pauseForOneHour()
+        voice.toggle()
+        try await eventually { voice.phase == .listening }
+        XCTAssertEqual(preferences.double(forKey: AdaptiveListeningPreference.key), 0)
+        voice.stop()
     }
 
     @MainActor private func speakThenPause(_ voice: AdaptiveLauncherVoice, fake: FakeVoice) {
@@ -134,7 +179,7 @@ final class AdaptiveLauncherVoiceTests: XCTestCase {
     var beginning: CheckedContinuation<UUID, Never>?
     var transcription: CheckedContinuation<String, Never>?
 
-    func controller() -> AdaptiveLauncherVoice {
+    func controller(preferences: UserDefaults = .standard) -> AdaptiveLauncherVoice {
         AdaptiveLauncherVoice(dependencies: .init(
             authorize: { self.allowed },
             prepare: {
@@ -155,6 +200,6 @@ final class AdaptiveLauncherVoiceTests: XCTestCase {
                 return "find my checklist"
             },
             now: { Date(timeIntervalSince1970: self.time) }
-        ), automaticallyPoll: false)
+        ), automaticallyPoll: false, preferences: preferences)
     }
 }

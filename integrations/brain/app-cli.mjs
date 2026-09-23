@@ -17,6 +17,10 @@ for(const action of catalog.actions)for(const [key,schema]of Object.entries(acti
 const common = ['machine','json','root','wait','wait-ready','no-wait','request-id','wait-timeout','mode'];
 const legacy = {open:'open',launcher:'open',screenshot:'screenshot',note:'note',dictation:'dictation',meeting:'meeting','cancel-meeting':'cancel-meeting',record:'record',settings:'settings'};
 const pairs = {
+  'tool evaluate':'tool.evaluate', 'timer start':'timer.start', 'timer status':'timer.status',
+  'timer pause':'timer.pause', 'timer resume':'timer.resume', 'timer cancel':'timer.cancel',
+  'reminder create':'reminder.create', 'reminder list':'reminder.list', 'reminder cancel':'reminder.cancel',
+  'calendar list':'calendar.list',
   'workflow templates':'workflow.templates',
   'dictation history':'dictation.history',
   'dictation correction':'dictation.correction',
@@ -68,6 +72,9 @@ const pairs = {
 export const help = `My Man — local tools for humans and agents (Node 22+)
 Usage: myman <resource> <action> [flags] --json
 
+timer start --seconds 600; timer status|pause|resume|cancel (--session-id for controls)
+reminder create --seconds 600 --message "Take pizza out"; reminder list|cancel
+tool evaluate --input "8am in Iceland"; calendar list --after ISO --before ISO
 screenshot --mode agent --display main --region x,y,w,h --wait --json
 annotate --id ID --ops-file ops.json [--preview|--dry-run] [--clipboard] --json
 record start|status|result|pause|resume|stop|cancel|frames|export  meeting start|status|stop|cancel|rename|notes

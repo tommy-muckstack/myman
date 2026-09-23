@@ -90,3 +90,19 @@ Discover live actions before using new commands. `workflow.handshake` proves the
 Scrolling capture requires overlap as the user/approved host scrolls; stop to save, cancel to discard. Decision proposals need unique exact transcript evidence, current revisions and human confirmation before follow-up drafting. Dictation history marks uncertain insertion; inspect the target before retrying. Agent corrections never teach personal vocabulary. Supported read/render jobs accept `workflow.cancel`; poll the final receipt and inspect files, never replay automatically.
 
 Publishing is optional and needs a separately configured service, a `sharing` grant, current source revision and explicit `confirm=true`. Publish only user-selected content. Do not send or publish by default. Expiry/revocation cannot recall recipient copies. The host must return visible file attachments; local paths do not establish delivery. See the [workflow reference](references/human-agent-workflows.md).
+
+## Quick tools, timers and reminders (My Man 1.1.95 / companion 0.11.0)
+
+Check live `actions` before using these commands. On the selected Mac:
+
+```sh
+myman timer start --seconds 600 --json
+myman reminder create --seconds 600 --message "Take pizza out" --json
+myman tool evaluate --input "8am in Iceland" --json
+myman tool evaluate --input "#fffffd" --json
+myman calendar list --after 2026-09-23T00:00:00-04:00 --before 2026-09-24T00:00:00-04:00 --json
+```
+
+Timers and reminders appear in the same hover-expanding widget as human-created ones. Keep the returned timer `session_id` for `timer pause|resume|cancel --session-id ID`; inspect `timer status` first. Starting while a timer exists fails rather than replacing it. Use `reminder list` and `reminder cancel --id ID`; `reminder create --at ISO --message TEXT` accepts an absolute timestamp instead of seconds. Controls belong to the creating agent; human controls remain available. Existing library grants apply to timer/reminder/calendar actions. Calendar also requires human-granted macOS access.
+
+Timers need My Man to stay open. Reminder results report `notification_scheduled` and `requires_app_open`; do not promise delivery while closed unless scheduling succeeded. `tool evaluate` is side-effect free and returns structured arithmetic, conversions, time zones, four-color palettes, checklists, bill splits, and timer/reminder previews. Evaluation never starts a timer or saves a note. Existing note/task/library/capture/recording commands remain supported. Keep request/job IDs and never replay interrupted mutations automatically.

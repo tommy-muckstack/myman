@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-23: root/Grok/companion **0.11.0** adds local tool evaluation, timer/reminder controls, and calendar reads. Prepared; not submitted or host-verified. The prior publisher application remains awaiting review. Notify Cursor of the new candidate rather than filing a duplicate application.
+
 > September 13, 2026: **0.10.0 candidate prepared** for connection checks, selected-file handoff, scrolling capture, meeting decisions, dictation recovery and optional expiring shares. A synthetic check through Grok Bot/Hugo reached the isolated My Man app on the Mac and returned a visible PNG, confirmed by Tommy's screenshot. This is host execution/attachment evidence, not marketplace approval or a public Bot template listing.
 
 
@@ -107,3 +109,7 @@ Adds human-managed named credentials, explicit Mac verification, shared bundles 
 Adds a native brief workspace; revisioned recording references; explicit worker/reviewer assignments; per-criterion evidence review; timestamped frame extraction with explicitly untimed transcripts; local share pages containing user-selected result media and separately authored public copy; two reusable workflow prompts; and live connection/setup checks. Requires an app advertising `brief.*` and `workflow.templates`; plugin installation alone does not supply native actions. See [workflow guide](visual-brief-workflows.md).
 
 Cursor marketplace update ready: **myman-brain 0.9.0**. Repo: https://github.com/tommy-muckstack/myman. While the initial @muckstack application is pending, the next step is an authorized update email to marketplace-publishing@cursor.com with this version and repository, rather than a duplicate application. No email has been sent.
+
+## 0.11.0 local verification — September 23, 2026
+
+All 101 companion tests passed, including source/bundled MCP discovery and Unix transport. Bundle freshness passed. The 405-test native suite passed (33 optional tests skipped); 38 focused native tests with UI verification also passed. Timer ownership/session guards, reminder persistence, and permission/schema boundaries use synthetic fixtures. New timer/reminder workflows have not been run through a live GrokBot host. Root, Grok, and companion versions are 0.11.0; the prepared update has not been submitted.

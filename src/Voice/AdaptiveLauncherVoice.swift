@@ -48,25 +48,28 @@ final class AdaptiveLauncherVoice: ObservableObject {
     @Published private(set) var phase: Phase = .off
     @Published private(set) var enabled = false
     @Published private(set) var level: Float = 0
+    @Published private(set) var levels: [Float] = Array(repeating: 0, count: 16)
     @Published private(set) var utterance: Utterance?
     private let dependencies: Dependencies
     private let automaticallyPoll: Bool
+    private let preferences: UserDefaults
     private var session: UUID?
     private var generation = UUID()
     private var task: Task<Void, Never>?
     private var meter: Timer?
     private var endpoint = AdaptiveSpeechEndpoint(startedAt: .now)
 
-    init(dependencies: Dependencies = .live, automaticallyPoll: Bool = true) {
+    init(dependencies: Dependencies = .live, automaticallyPoll: Bool = true, preferences: UserDefaults = .standard) {
         self.dependencies = dependencies
         self.automaticallyPoll = automaticallyPoll
+        self.preferences = preferences
     }
 
     var status: String {
         switch phase {
         case .off: return "Microphone off — type or turn it on"
         case .preparing: return "Preparing local dictation…"
-        case .listening: return "Listening — speak or type"
+        case .listening: return "Speak or type"
         case .transcribing: return "Turning speech into text…"
         case .denied: return "Allow microphone access to speak here"
         case .unavailable: return "Voice unavailable — you can still type"
@@ -91,6 +94,16 @@ final class AdaptiveLauncherVoice: ObservableObject {
         }
     }
 
+    func startAutomatically() {
+        guard !AdaptiveListeningPreference.isPaused(in: preferences, now: dependencies.now()) else { return }
+        start()
+    }
+
+    func pauseForOneHour() {
+        AdaptiveListeningPreference.pause(in: preferences, now: dependencies.now())
+        stop()
+    }
+
     /// Called by the panel controller, not only SwiftUI onDisappear: ordering
     /// an NSPanel out does not necessarily unmount its hosted SwiftUI view.
     func stop() {
@@ -102,9 +115,16 @@ final class AdaptiveLauncherVoice: ObservableObject {
         session = nil
         phase = .off
         level = 0
+        levels = Array(repeating: 0, count: 16)
     }
 
-    func toggle() { enabled ? stop() : start() }
+    func toggle() {
+        if enabled { pauseForOneHour() }
+        else {
+            AdaptiveListeningPreference.reset(in: preferences)
+            start()
+        }
+    }
 
     private func isCurrent(_ current: UUID) -> Bool {
         enabled && generation == current && !Task.isCancelled
@@ -134,6 +154,7 @@ final class AdaptiveLauncherVoice: ObservableObject {
         guard enabled, phase == .listening, let session else { return }
         let rawLevel = dependencies.level(session)
         level = min(1, rawLevel * 15)
+        levels = Array(levels.dropFirst()) + [level / 6]
         switch endpoint.sample(level: rawLevel, now: dependencies.now()) {
         case .keepListening: break
         case .discardSilence: dependencies.discard(session)
@@ -161,6 +182,20 @@ final class AdaptiveLauncherVoice: ObservableObject {
         guard !typed.isEmpty else { return text }
         return typed + (typed.last?.isWhitespace == true ? "" : " ") + text
     }
+}
+
+enum AdaptiveListeningPreference {
+    static let key = "adaptiveListeningPausedUntil"
+
+    static func isPaused(in defaults: UserDefaults = .standard, now: Date = Date()) -> Bool {
+        defaults.double(forKey: key) > now.timeIntervalSince1970
+    }
+
+    static func pause(in defaults: UserDefaults = .standard, now: Date = Date()) {
+        defaults.set(now.addingTimeInterval(3_600).timeIntervalSince1970, forKey: key)
+    }
+
+    static func reset(in defaults: UserDefaults = .standard) { defaults.removeObject(forKey: key) }
 }
 
 /// Keep idle microphone buffers bounded, ignore isolated clicks, and end an

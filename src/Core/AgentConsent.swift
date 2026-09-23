@@ -5,7 +5,7 @@ import Foundation
 enum AgentConsent {
     static let keys = ["capture": "agentCaptureEnabled", "markup": "agentMarkupEnabled",
                        "recording": "agentRecordingEnabled", "library": "agentLibraryEnabled", "sharing": "agentSharingEnabled"]
-    static let cleanup: Set<String> = ["recording.stop", "recording.cancel", "recording.pause", "meeting.stop", "meeting.discard", "dictation.stop", "dictation.cancel", "capture.scroll.stop", "capture.scroll.cancel", "capture.scroll.status", "workflow.cancel", "share.revoke"]
+    static let cleanup: Set<String> = ["timer.pause", "timer.cancel", "reminder.cancel", "recording.stop", "recording.cancel", "recording.pause", "meeting.stop", "meeting.discard", "dictation.stop", "dictation.cancel", "capture.scroll.stop", "capture.scroll.cancel", "capture.scroll.status", "workflow.cancel", "share.revoke"]
     @MainActor static func requirements(_ action: String) -> [String] {
         (AgentActions.catalog["actions"] as? [[String: Any]])?.first(where: { $0["name"] as? String == action })?["permissions"] as? [String] ?? ["library"]
     }

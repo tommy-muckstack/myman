@@ -6,6 +6,7 @@ struct CalendarEventCard: View {
     var onJoin: () -> Void
     var onBrief: () -> Void
     var onNotes: () -> Void
+    var inline = false
     @State var hovered = false
     @FocusState private var focused: Action?
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -21,6 +22,38 @@ struct CalendarEventCard: View {
     }
 
     var body: some View {
+        Group {
+            if inline { inlineRow }
+            else { card }
+        }
+        .onHover { hovered = $0 }
+        .onDisappear { hovered = false }
+    }
+
+    private var inlineRow: some View {
+        HStack(spacing: MM.Layout.spacing) {
+            Text(event.start.formatted(date: .omitted, time: .shortened))
+                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                .frame(width: 76, alignment: .leading)
+            Button(action: onOpen) {
+                Text(event.title).font(MM.Fonts.body).foregroundStyle(MM.Colors.textPrimary)
+                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading).clickable()
+            }.buttonStyle(.plain).focused($focused, equals: .event).help("Open calendar event")
+            if event.joinURL != nil {
+                action(joinLabel, icon: "video", focus: .join, run: onJoin)
+            }
+            if event.meetingID != nil {
+                action("Notes", icon: "doc.text", focus: .notes, run: onNotes)
+            }
+            action("Brief", icon: "sparkles", focus: .brief, run: onBrief)
+                .opacity(showActions ? 1 : 0).allowsHitTesting(showActions)
+        }
+        .padding(.horizontal, MM.Layout.spacing / 2).padding(.vertical, MM.Layout.spacing / 2)
+        .background(showActions ? MM.Colors.surface : .clear, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
+        .contentShape(Rectangle()).accessibilityElement(children: .contain)
+    }
+
+    private var card: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 if event.hasMeetingLink {
@@ -74,8 +107,6 @@ struct CalendarEventCard: View {
             .strokeBorder(showActions ? MM.Colors.border : .clear, lineWidth: 1)
             .allowsHitTesting(false))
         .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        .onDisappear { hovered = false }
         .accessibilityElement(children: .contain)
     }
 
