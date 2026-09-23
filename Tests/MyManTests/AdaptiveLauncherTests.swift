@@ -296,10 +296,12 @@ final class AdaptiveLauncherTests: XCTestCase {
         _ = NSApplication.shared
         MM.Fonts.registerFonts()
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-        let fixtures = [("empty", ""), ("ambiguous", "budget"), ("checklist", "buy milk, eggs and coffee"),
+        let fixtures = [("empty", ""), ("themes", ""), ("ambiguous", "budget"), ("checklist", "buy milk, eggs and coffee"),
                         ("split", "split $100 between 3"), ("timer", "timer for 20m"), ("running", "timer for 20m"),
                         ("paused", "timer for 20m"), ("color", "#fffffd"), ("orange", "#ff6b35"),
                         ("timezone", "8am in Iceland"), ("calculation", "18% of 240"), ("record", "record meeting"),
+                        ("timezone-reversed", "8am Los Angeles to New York"),
+                        ("timezone-fixed", "8am EST to PST"),
                         ("commands", "/record"), ("calculator-open", "calculator"), ("quick-tools", "quick tools"),
                         ("reminder", "reminder in 10m for taking pizza out"),
                         ("long", "checklist " + (1...30).map { "Task \($0)" }.joined(separator: ", "))]
@@ -322,7 +324,18 @@ final class AdaptiveLauncherTests: XCTestCase {
                 let actions = definitions.map { id, icon, title, hint in
                     LauncherAction(id: id, icon: icon, title: title, hint: hint, enabled: true) { actionCalls += 1 }
                 }
-                let panel = FloatingPanel(content: AdaptiveLauncherView(actions: actions, initialQuery: query, voice: voice,
+                let database = try DatabaseQueue()
+                try Database.migrator.migrate(database)
+                if name == "themes" {
+                    try await database.write { db in
+                        try db.execute(sql: "INSERT INTO note(id,title,body,createdAt,updatedAt) VALUES('theme-fixture','Launch checklist','Review the next release',?,?)", arguments: [Date(), Date()])
+                        try db.execute(sql: "INSERT INTO captureTheme(id,title,signature) VALUES('release','Release planning','release')")
+                        try db.execute(sql: "INSERT INTO captureThemeMember(themeID,itemID) VALUES('release','note-theme-fixture')")
+                    }
+                }
+                let library = CaptureLibraryModel(database: database)
+                defer { library.cancel() }
+                let panel = FloatingPanel(content: AdaptiveLauncherView(actions: actions, initialQuery: query, libraryModel: library, voice: voice,
                     onSaveQueryAsNote: { _ in }, onDismiss: {}, onSizeChange: { measured = $0 }, tools: tools)
                     .preferredColorScheme(scheme), fixedSize: true)
                 panel.isReleasedWhenClosed = false
@@ -338,6 +351,21 @@ final class AdaptiveLauncherTests: XCTestCase {
                 host.layoutSubtreeIfNeeded()
                 try await Task.sleep(for: .milliseconds(100))
                 panel.setContentSize(measured)
+                if name == "themes" {
+                    panel.dismissesOnResign = false
+                    panel.makeKeyAndOrderFront(nil)
+                    let point = NSPoint(x: 556, y: host.isFlipped ? 28 : host.bounds.height - 28)
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                        NSApp.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(with: type, location: host.convert(point, to: nil),
+                            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                            context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)))
+                    }
+                    for _ in 0..<100 where library.themes.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+                    XCTAssertEqual(library.themes.map(\.title), ["Release planning"])
+                    XCTAssertFalse(voice.enabled, "Opening Themes stops voice capture")
+                    panel.setContentSize(measured)
+                    host.layoutSubtreeIfNeeded()
+                }
                 if ["timer", "running", "paused"].contains(name) { XCTAssertLessThan(measured.height, 180) }
                 if name == "color" { XCTAssertLessThan(measured.height, 280) }
                 if name == "record" { XCTAssertLessThan(measured.height, 70) }

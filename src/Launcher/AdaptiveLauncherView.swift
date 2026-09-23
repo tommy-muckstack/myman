@@ -37,7 +37,7 @@ struct AdaptiveLauncherView: View {
             HStack(spacing: MM.Layout.spacing) {
                 IconView(icon: effectiveIntent == .create ? (tools.tool.icon ?? .search) : (resolvedAction?.icon ?? .search))
                     .accessibilityHidden(true)
-                TextField(showingCommands ? "Search commands…" : "Speak or Type to Search or Create", text: Binding(get: { query }, set: {
+                TextField(showingCommands ? "Search commands…" : libraryMode == .themes ? "Search themes…" : "Speak or Type to Search or Create", text: Binding(get: { query }, set: {
                     guard query != $0 else { return }
                     voice.stop()
                     if $0.hasPrefix(dictatedPrefix) {
@@ -57,6 +57,7 @@ struct AdaptiveLauncherView: View {
                     .onKeyPress(.downArrow) { moveResult("down") }
                     .onKeyPress(.upArrow) { moveResult("up") }
                     .onKeyPress(.escape) {
+                        if libraryMode == .themes { clearInput(); return .handled }
                         guard showingCommands else { return .ignored }
                         showingCommands = false; query = ""
                         return .handled
@@ -105,6 +106,12 @@ struct AdaptiveLauncherView: View {
                     }.buttonStyle(.plain)
                         .accessibilityLabel(voice.enabled ? "Mute microphone" : "Start listening")
                         .help(voice.enabled ? "Mute microphone · Stays muted until you turn it on" : "Turn microphone on · Remember this choice")
+                    Button { toggleThemes() } label: {
+                        IconView(icon: .themes, color: libraryMode == .themes || !filters.themeID.isEmpty
+                                 ? MM.Colors.accent : MM.Colors.textTertiary).clickable()
+                    }.buttonStyle(.plain).accessibilityLabel("Themes")
+                        .accessibilityValue(libraryMode == .themes ? "Open" : "Closed")
+                        .help(libraryMode == .themes ? "Close themes" : "Browse themes")
                     Button {
                         onDismiss(); SettingsController.shared.show()
                     } label: { IconView(icon: .settings).clickable() }
@@ -278,6 +285,17 @@ struct AdaptiveLauncherView: View {
                 Spacer()
             }.clickable()
         }.buttonStyle(.plain).disabled(!action.enabled)
+    }
+
+    private func toggleThemes() {
+        if libraryMode == .themes { clearInput(); return }
+        voice.stop()
+        correctionLearner.cancel()
+        showingCommands = false
+        routing = AdaptiveLauncherRouting()
+        filters.reset()
+        libraryMode = .themes
+        focused = true
     }
 
     private func clearInput() {
