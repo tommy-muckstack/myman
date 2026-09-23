@@ -291,7 +291,7 @@ struct SettingsPanelView: View {
     @State private var vocabularySuggestions: [String] = []
     @State private var knownPeople: [Person] = []
     @AppStorage("interfaceTextScale") private var interfaceTextScale = 1.0
-    @AppStorage(AdaptiveListeningPreference.key) private var listeningPausedUntil = 0.0
+    @AppStorage(AdaptiveListeningPreference.key) private var automaticListening = AdaptiveListeningPreference.isEnabled()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -446,23 +446,10 @@ struct SettingsPanelView: View {
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Launcher") {
-                Text("One input for search and tools. Typing stops the microphone. Turn the mic off to pause automatic listening for one hour.")
+                Toggle("Listen when the launcher opens", isOn: $automaticListening)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+                Text("Your microphone choice is remembered. Typing stops listening for the current request.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
-                TimelineView(.periodic(from: .now, by: 30)) { context in
-                    let paused = listeningPausedUntil > context.date.timeIntervalSince1970
-                    HStack {
-                        Text(paused ? "Listening paused until \(Date(timeIntervalSince1970: listeningPausedUntil).formatted(date: .omitted, time: .shortened))"
-                             : "Listen automatically when opened")
-                            .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
-                        Spacer()
-                        Button {
-                            if paused { AdaptiveListeningPreference.reset() }
-                            else { AdaptiveListeningPreference.pause() }
-                        } label: {
-                            Text(paused ? "Reset" : "Pause for 1 hour").font(MM.Fonts.secondary).clickable()
-                        }.buttonStyle(.plain)
-                    }
-                }
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Appearance") {

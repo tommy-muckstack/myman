@@ -94,18 +94,20 @@ enum RelatedItems {
 
 enum ThemeStore {
     static func list(itemID: String? = nil, database: DatabaseQueue = Database.shared) throws -> [CaptureTheme] {
-        try database.read { db in
-            let clause = itemID == nil ? "" : "AND t.id IN (SELECT themeID FROM captureThemeMember WHERE itemID = ? AND blocked = 0)"
-            return try CaptureTheme.fetchAll(db, sql: """
-                SELECT t.*, count(c.id) AS itemCount, max(c.capturedAt) AS latest, group_concat(DISTINCT c.kind) AS kinds,
-                  sum(c.kind = 'meeting') AS meetingCount, sum(c.kind = 'screenshot') AS screenshotCount,
-                  sum(c.kind = 'dictation') AS dictationCount, sum(c.kind = 'recording') AS recordingCount, sum(c.kind = 'note') AS noteCount
-                FROM captureTheme t JOIN captureThemeMember m ON m.themeID = t.id
-                JOIN captureItem c ON c.id = m.itemID
-                WHERE t.dismissed = 0 AND m.blocked = 0 AND c.excluded = 0 \(clause)
-                GROUP BY t.id ORDER BY t.pinned DESC, latest DESC
-                """, arguments: itemID.map { [$0] } ?? [])
-        }
+        try database.read { try list(itemID: itemID, in: $0) }
+    }
+
+    static func list(itemID: String? = nil, in db: GRDB.Database) throws -> [CaptureTheme] {
+        let clause = itemID == nil ? "" : "AND t.id IN (SELECT themeID FROM captureThemeMember WHERE itemID = ? AND blocked = 0)"
+        return try CaptureTheme.fetchAll(db, sql: """
+            SELECT t.*, count(c.id) AS itemCount, max(c.capturedAt) AS latest, group_concat(DISTINCT c.kind) AS kinds,
+              sum(c.kind = 'meeting') AS meetingCount, sum(c.kind = 'screenshot') AS screenshotCount,
+              sum(c.kind = 'dictation') AS dictationCount, sum(c.kind = 'recording') AS recordingCount, sum(c.kind = 'note') AS noteCount
+            FROM captureTheme t JOIN captureThemeMember m ON m.themeID = t.id
+            JOIN captureItem c ON c.id = m.itemID
+            WHERE t.dismissed = 0 AND m.blocked = 0 AND c.excluded = 0 \(clause)
+            GROUP BY t.id ORDER BY t.pinned DESC, latest DESC
+            """, arguments: itemID.map { [$0] } ?? [])
     }
 
     static func rename(_ id: String, title: String, expectedVersion: String? = nil, database: DatabaseQueue = Database.shared) throws {

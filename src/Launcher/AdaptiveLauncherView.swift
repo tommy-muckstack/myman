@@ -95,7 +95,7 @@ struct AdaptiveLauncherView: View {
                     }.buttonStyle(.plain).accessibilityLabel("Clear input")
                 } else {
                     if voice.phase == .listening {
-                        WaveformBars(levels: voice.levels, color: MM.Colors.textTertiary)
+                        WaveformBars(levels: voice.levels, color: MM.Colors.accent)
                             .frame(width: WaveformBars.compactWidth, height: 18)
                             .accessibilityLabel("Microphone sound level")
                     }
@@ -103,8 +103,8 @@ struct AdaptiveLauncherView: View {
                         IconView(icon: voice.enabled ? .mic : .micOff,
                                  color: voice.enabled ? MM.Colors.accent : MM.Colors.textTertiary).clickable()
                     }.buttonStyle(.plain)
-                        .accessibilityLabel(voice.enabled ? "Pause listening for one hour" : "Start listening")
-                        .help(voice.enabled ? voice.status + " · Pause for 1 hour" : "Start listening · Clears any listening pause")
+                        .accessibilityLabel(voice.enabled ? "Mute microphone" : "Start listening")
+                        .help(voice.enabled ? "Mute microphone · Stays muted until you turn it on" : "Turn microphone on · Remember this choice")
                     Button {
                         onDismiss(); SettingsController.shared.show()
                     } label: { IconView(icon: .settings).clickable() }
@@ -121,12 +121,6 @@ struct AdaptiveLauncherView: View {
                 Divider().overlay(MM.Colors.border)
                 AdaptiveQuickActions(actions: actions, libraryModel: libraryModel,
                                      onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, onSelectTool: openTool)
-                HStack {
-                    Spacer()
-                    Button("Browse library") { routing.selection = .search; query = "find " }
-                        .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
-                }.foregroundStyle(MM.Colors.textTertiary)
-                    .padding(.horizontal, MM.Layout.padding).padding(.bottom, MM.Layout.spacing)
             }
             if effectiveIntent != .create || !tools.tool.isTimer {
                 QuickTimerStatus(model: tools)

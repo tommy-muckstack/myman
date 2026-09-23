@@ -4,6 +4,7 @@ import GRDB
 struct MeetingLinkedNotesView: View {
     let meetingID: String
     var database: DatabaseQueue? = nil
+    var showsEmptyState = false
     @State private var notes: [Note] = []
 
     var body: some View {
@@ -17,7 +18,7 @@ struct MeetingLinkedNotesView: View {
                             VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
                                 HStack(spacing: MM.Layout.spacing / 2) {
                                     IconView(icon: .note, color: MM.Colors.textSecondary)
-                                    Text("My note").font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                                    Text(note.title.isEmpty ? "Untitled note" : note.title).lineLimit(1).font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
                                     Spacer()
                                     Text("Open").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.accent)
                                 }
@@ -39,6 +40,9 @@ struct MeetingLinkedNotesView: View {
                 }
                 .padding(.horizontal, MM.Document.margin)
                 .padding(.bottom, MM.Layout.spacing)
+            } else if showsEmptyState {
+                UtilityEmptyState(icon: .note, title: "No linked notes", message: "My Man notes attached to this meeting appear here.", compact: true)
+                    .frame(maxWidth: .infinity).padding(MM.Layout.paddingLarge)
             }
         }
         .task(id: meetingID) {

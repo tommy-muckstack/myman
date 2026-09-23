@@ -180,7 +180,7 @@ struct CaptureDetailView: View {
                             }
                             SelectionTextBlock(text: item.body, highlights: CaptureText.words(query))
                             if !item.summary.isEmpty {
-                                Text("Notes & summary").font(MM.Fonts.body)
+                                Text("Summary").font(MM.Fonts.body)
                                 SelectionTextBlock(text: item.summary, highlights: CaptureText.words(query))
                             }
                         }

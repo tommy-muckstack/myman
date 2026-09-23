@@ -36,11 +36,12 @@ final class SpokenTimerTests: XCTestCase {
                     context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)))
             }
         }
+        let collapsedHeight = size.height
         try click(565, 100)
         try await Task.sleep(for: .milliseconds(200))
         panel.setContentSize(size)
         host.layoutSubtreeIfNeeded()
-        XCTAssertGreaterThan(size.height, 400, "All eight tools expand under the shortcut")
+        XCTAssertGreaterThan(size.height, collapsedHeight + 200, "All eight tools expand under the shortcut")
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
@@ -163,11 +164,12 @@ final class SpokenTimerTests: XCTestCase {
         panel.makeKeyAndOrderFront(nil)
         widget.start()
         voice.start()
-        try await Task.sleep(for: .milliseconds(150))
+        for _ in 0..<200 where voice.phase != .listening { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(voice.phase, .listening)
         for instant in [0.1, 0.2, 0.3] { time = instant; voice.sample() }
         volume = 0
         for instant in [0.4, 1.5] { time = instant; voice.sample() }
-        try await Task.sleep(for: .milliseconds(350))
+        for _ in 0..<300 where store.reminders.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(store.reminders.count, 1)
         let reminder = try XCTUnwrap(store.reminders.first)
         XCTAssertEqual(reminder.title, "take a pizza out of the oven")
@@ -175,10 +177,17 @@ final class SpokenTimerTests: XCTestCase {
         XCTAssertEqual(dismissals, 1)
         XCTAssertFalse(panel.isVisible)
         XCTAssertFalse(voice.enabled)
+        for _ in 0..<200 where !NSApp.windows.contains(where: { $0.identifier?.rawValue == "myman.quick-activity" && $0.isVisible }) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let activityPanel = try XCTUnwrap(NSApp.windows.first { $0.identifier?.rawValue == "myman.quick-activity" && $0.isVisible })
         XCTAssertEqual(activityPanel.frame.width, 178)
+        let originalPointer = NSEvent.mouseLocation
+        let screenHeight = NSScreen.screens[0].frame.maxY
+        CGWarpMouseCursorPosition(CGPoint(x: activityPanel.frame.midX, y: screenHeight - activityPanel.frame.midY))
+        defer { CGWarpMouseCursorPosition(CGPoint(x: originalPointer.x, y: screenHeight - originalPointer.y)) }
         widget.hover(true)
-        try await Task.sleep(for: .milliseconds(400))
+        for _ in 0..<200 where activityPanel.frame.width != 340 { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(activityPanel.frame.width, 340)
         XCTAssertEqual(store.reminders.count, 1, "Rendering must not submit twice")
     }

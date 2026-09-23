@@ -1,13 +1,26 @@
 import AppKit
+import AVFoundation
 import Foundation
 import UserNotifications
 
 @MainActor enum QuickCompletionSound {
-    private static var chime: NSSound?
-    static func play() {
-        if chime == nil { chime = NSSound(named: NSSound.Name("Glass")) }
-        if let chime { chime.stop(); chime.play() }
-        else { NSSound.beep() }
+    private static var player: AVAudioPlayer?
+    static var isPlaying: Bool { player?.isPlaying == true }
+
+    /// Use the normal audio output, retain playback, and check failures instead
+    /// of silently relying on the system alert-sound name and alert volume.
+    @discardableResult static func play() -> Bool {
+        player?.stop()
+        do {
+            guard let folder = Bundle.module.url(forResource: "Sounds", withExtension: nil) else { throw CocoaError(.fileNoSuchFile) }
+            let next = try AVAudioPlayer(contentsOf: folder.appendingPathComponent("reminder-chime.wav"))
+            next.volume = 1
+            next.prepareToPlay()
+            player = next
+            if next.play() { return true }
+        } catch { }
+        NSSound.beep()
+        return false
     }
 }
 
@@ -92,6 +105,7 @@ struct LocalReminder: Identifiable, Codable, Equatable {
     private let schedule: @MainActor (LocalReminder) async -> Bool
     private let cancelNotification: @MainActor (String) -> Void
     private let alert: @MainActor () -> Void
+    private let notificationSoundsEnabled: @MainActor () async -> Bool
     private var notificationTasks: [UUID: Task<Bool, Never>] = [:]
     private var notificationGenerations: [UUID: UUID] = [:]
     private static let key = "localReminders.v1"
@@ -99,11 +113,16 @@ struct LocalReminder: Identifiable, Codable, Equatable {
     init(defaults: UserDefaults = .standard,
          schedule: (@MainActor (LocalReminder) async -> Bool)? = nil,
          cancelNotification: (@MainActor (String) -> Void)? = nil,
-         alert: @escaping @MainActor () -> Void = { QuickCompletionSound.play() }) {
+         alert: @escaping @MainActor () -> Void = { QuickCompletionSound.play() },
+         notificationSoundsEnabled: (@MainActor () async -> Bool)? = nil) {
         self.defaults = defaults
         self.schedule = schedule ?? Self.scheduleNotification
         self.cancelNotification = cancelNotification ?? Self.cancelNotification
         self.alert = alert
+        self.notificationSoundsEnabled = notificationSoundsEnabled ?? {
+            guard Bundle.main.bundleURL.pathExtension == "app" else { return false }
+            return await UNUserNotificationCenter.current().notificationSettings().soundSetting == .enabled
+        }
         reminders = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([LocalReminder].self, from: $0) } ?? []
     }
 
@@ -114,7 +133,7 @@ struct LocalReminder: Identifiable, Codable, Equatable {
         } catch { return error.localizedDescription }
     }
 
-    func create(_ draft: ReminderDraft, owner: String? = nil, soundEnabled: Bool = true, now: Date = Date()) async throws -> LocalReminder {
+    func create(_ draft: ReminderDraft, owner: String? = nil, soundEnabled: Bool = true, waitForNotification: Bool = true, now: Date = Date()) async throws -> LocalReminder {
         let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.count <= 500 else { throw AgentError("INVALID_ARGUMENTS", "Add a reminder title of 1–500 characters.") }
         guard draft.date > now else { throw AgentError("INVALID_ARGUMENTS", "Choose a future time.") }
@@ -122,6 +141,10 @@ struct LocalReminder: Identifiable, Codable, Equatable {
         let reminder = LocalReminder(id: UUID(), title: title, date: draft.date, agentOwner: owner, soundEnabled: soundEnabled)
         reminders.append(reminder)
         persist()
+        if !waitForNotification {
+            Task { await refreshNotification(reminder.id) }
+            return reminder
+        }
         await refreshNotification(reminder.id)
         guard let index = reminders.firstIndex(where: { $0.id == reminder.id }) else {
             throw AgentError("CANCELLED", "Reminder dismissed")
@@ -180,13 +203,26 @@ struct LocalReminder: Identifiable, Codable, Equatable {
     func tick(now: Date = Date()) {
         var changed = false
         var shouldAlert = false
+        var scheduledSoundIDs: [UUID] = []
         for index in reminders.indices where !reminders[index].fired && reminders[index].date <= now {
             reminders[index].fired = true
-            shouldAlert = shouldAlert || (!reminders[index].notificationScheduled && reminders[index].playsSound)
+            if reminders[index].playsSound {
+                if reminders[index].notificationScheduled { scheduledSoundIDs.append(reminders[index].id) }
+                else { shouldAlert = true }
+            }
             changed = true
         }
         if changed { persist() }
         if shouldAlert { alert() }
+        else if !scheduledSoundIDs.isEmpty {
+            // Notification permission does not imply permission for its sound.
+            let dueIDs = Set(scheduledSoundIDs)
+            Task { [weak self] in
+                guard let self, !(await self.notificationSoundsEnabled()),
+                      self.reminders.contains(where: { dueIDs.contains($0.id) && $0.playsSound }) else { return }
+                self.alert()
+            }
+        }
     }
 
     private func persist() {

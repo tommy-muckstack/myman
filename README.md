@@ -47,11 +47,12 @@ are allowed. Type `/` to browse and filter commands.
 Opening the launcher starts local voice-to-text listening
 after microphone permission and model readiness. Pause after speaking to append
 words to the same field. Typing immediately stops listening and discards pending
-speech. Turning the mic off pauses automatic listening for one hour, including
-across reopenings and restarts. Click it again or use **Settings → General →
-Launcher → Reset** to resume early. Closing the launcher releases its microphone
-session. When the pause expires, auto-listening resumes on the next opening. Complete spoken timer/reminder requests submit after the pause and close the launcher; recordings still require a labeled action. It does not
-listen while the launcher is hidden. First use may download the existing Parakeet
+speech. The microphone choice is persistent: mute stays muted, and turning it on
+enables listening on future openings and when the input is cleared. Use the mic
+button or **Settings → General → Launcher → Listen when the launcher opens** to
+change it. Closing the launcher or typing stops only that listening session.
+Complete spoken timer/reminder requests submit after the pause and close the launcher;
+recordings still require a labeled action. It does not listen while the launcher is hidden. First use may download the existing Parakeet
 speech model; recognition runs on-device.
 
 Quick Tools recognizes checklists, timers, arithmetic, length/weight/temperature

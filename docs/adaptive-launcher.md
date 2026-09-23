@@ -57,7 +57,7 @@ schedules the alert even while My Man is closed. Without permission, My Man must
 Starting a timer or setting a reminder shows one top-right countdown widget. Hover
 or click expands it to timer controls and reminder messages; leaving collapses it.
 Multiple activities share the widget, with the next deadline shown when collapsed.
-Successful timer/reminder submission closes the center panel. The expanded widget has a bell toggle per activity: sound starts on, mute is retained while paused and for persisted reminders, and macOS notification sound is updated too. In-app completion uses the Glass chime; scheduled notifications use the system notification sound. The widget avoids the meeting recorder, does not take keyboard focus, and respects
+Successful timer/reminder submission closes the center panel. The expanded widget has a bell toggle per activity: sound starts on, mute is retained while paused and for persisted reminders, and macOS notification sound is updated too. In-app completion uses a bundled chime through retained audio playback; scheduled notifications use the system notification sound. The widget avoids the meeting recorder, does not take keyboard focus, and respects
 Reduce Motion. Its fixed-size window is resized asynchronously outside layout.
 
 ## Shortcut access
@@ -94,7 +94,7 @@ copies its own hex code; the result's Copy/Save actions retain the entered base 
 
 ## Voice input
 
-The input placeholder says “Speak or Type to Search or Create”. A gray version of the meeting recorder’s waveform sits beside the microphone; listening has no separate footer.
+The input placeholder says “Speak or Type to Search or Create”. The meeting recorder’s waveform sits beside the microphone in the same accent color; listening has no separate footer.
 
 The launcher's controller automatically starts listening,
 after the panel is visible. It uses a raw session on `AudioCapture.shared`, avoiding
@@ -103,12 +103,13 @@ utterances locally after a pause. The microphone stops at the first pause (about
 request once, and stays off. The completed text is routed immediately to its result.
 Spoken arithmetic such as “what’s one plus one” uses the local calculator.
 Complete spoken timers and reminders submit once and close the launcher. Incomplete reminders, capture, and note saving still use their explicit controls. Editing the input stops listening immediately
-and rejects pending transcription. Clearing the input resets it and starts listening again, unless the one-hour listening pause is active.
-Turning off the microphone explicitly persists a one-hour pause in UserDefaults
-(`adaptiveListeningPausedUntil`). New panels respect that timestamp; automatic
-listening resumes on the next opening after expiry. It never interrupts ongoing
-typing when the hour expires. The mic button or General → Launcher → Reset can
-clear the pause early. Closing the panel only stops its session; it does not snooze.
+and rejects pending transcription. Clearing the input resets it and starts listening again, unless the microphone is muted.
+Turning off the microphone explicitly persists the choice in UserDefaults
+(`launcherAutomaticListening`). It stays muted across reopenings and restarts until
+the mic button or General → Launcher → Listen when the launcher opens enables it.
+An active one-hour pause from an older release migrates to a persistent mute;
+expired pauses migrate to enabled. Typing, finishing an utterance, and closing
+the panel stop only the session and do not change this preference.
 
 The panel's dismissal callback explicitly stops capture; relying on SwiftUI
 `onDisappear` alone would not cover retained AppKit panels. Generation checks
@@ -180,5 +181,9 @@ without the environment variable. It does not save notes or start recording.
 `QuickReminderTests` verifies natural-language messages, persistence, one-shot due
 alerts, cancellation while notification permission is pending, and widget geometry.
 
-When input is populated, a generous text-only **Clear** button replaces the microphone and Settings buttons. Clear restores the empty launcher and automatic listening, while respecting a one-hour listening pause. Both `set timer for 5m` and `timer 5m` preview five minutes; Return starts the timer and dismisses the launcher.
+When input is populated, a generous text-only **Clear** button replaces the microphone and Settings buttons. Clear restores the empty launcher and automatic listening, while respecting the saved microphone preference. Both `set timer for 5m` and `timer 5m` preview five minutes; Return starts the timer and dismisses the launcher.
 The input always reserves the same leading icon space: Search by default, then the recognized tool/action icon. Recognition never moves the text horizontally.
+
+The empty launcher has no Browse library button. Search is available through the input.
+
+Reminder scheduling uses quick presets, a full calendar popover and a separate time control with editable hours/minutes, AM/PM and five-minute adjustments. The selected deadline stays visible; past times cannot be submitted. Local persistence completes before asynchronous macOS notification setup, so permission prompts do not trap the launcher on Setting. Dismissing a reminder invalidates pending notification callbacks. Scheduled reminders fall back to the app chime when notification sounds are disabled; mute suppresses both paths.
