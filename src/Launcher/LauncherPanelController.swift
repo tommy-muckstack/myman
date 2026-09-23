@@ -93,7 +93,7 @@ final class LauncherPanelController {
                 y: max(visible.minY + 16, top - size.height)))
         }
         if !adaptive { showSidePanels() }
-        if adaptive, launcherPanel.isVisible { adaptiveVoice?.start() }
+        if adaptive, launcherPanel.isVisible { adaptiveVoice?.startAutomatically() }
     }
 
     /// Tasks pinned left, calendar pinned right — the ⌥Space heads-up display.

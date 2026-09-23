@@ -41,14 +41,18 @@ Type `/` for the action list, tasks, calendar and Quick Tools.
 
 With Adaptive enabled, opening the launcher starts local voice-to-text listening
 after microphone permission and model readiness. Pause after speaking to append
-words to the same field; typing remains available. The mic button stops listening,
-and closing the launcher releases its microphone session and discards pending
-speech. Dictation does not submit the request or start a recording. It does not
+words to the same field. Typing immediately stops listening and discards pending
+speech. Turning the mic off pauses automatic listening for one hour, including
+across reopenings and restarts. Click it again or use **Settings → General →
+Appearance → Reset** to resume early. Closing the launcher releases its microphone
+session. When the pause expires, auto-listening resumes on the next opening. Dictation does not submit the request or start a recording. It does not
 listen while the launcher is hidden. First use may download the existing Parakeet
 speech model; recognition runs on-device.
 
 Quick Tools recognizes checklists, timers, arithmetic, length/weight/temperature
-conversions, bill splits and hex colors. Cards can be copied or saved to Notes;
+conversions, time-zone conversions, bill splits and hex colors with four coordinating
+swatches. Click a companion swatch to copy its hex. Results fit the panel; tasks and
+calendar become full-width lists. Non-timer results can be copied or saved to Notes;
 saved results are Markdown, not persistent interactive widgets. A started timer
 continues while My Man is running and sounds when it finishes. Timers do not
 survive quitting the app. Simple requests use local rules; ambiguous phrasing may

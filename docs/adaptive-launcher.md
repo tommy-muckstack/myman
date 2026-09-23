@@ -19,7 +19,8 @@ It does not incorporate Shapeshift's source code or contact its hosted service.
   searches the existing capture index.
 - Creation prefixes and recognized tool syntax open a preview. Plain topics,
   including bare numbers such as `2026`, offer Search/Create choices.
-- Search/Create choices remain visible and override automatic suggestions. A
+- Ambiguous requests show Search/Create choices; resolved requests use a small
+  options menu in the input row. Both override automatic suggestions. A
   manual choice survives further typing until the field is cleared or `/` opens
   the command palette.
 - The optional Apple on-device classifier proposes only `search`, `create`, or
@@ -28,12 +29,13 @@ It does not incorporate Shapeshift's source code or contact its hosted service.
   are ignored. If unavailable or unsuccessful, both manual choices remain usable.
 - Return can save an explicitly requested creation, but a model-only Create
   suggestion cannot change Return into a save action. Capture always uses a
-  labeled button. Parsing a timer does not start it.
+  labeled button. An explicit timer request starts with Return or Start; parsing
+  alone does not start it. Timer controls have no Save/Copy row.
 - Search reuses the capture library, filters, themes and keyboard navigation.
   `/` reveals app actions, tasks, calendar and tool examples.
 
 The tools currently support checklists, bounded arithmetic, percentages, compatible
-length/weight/temperature conversions, bill splits and hex colors. Splits distribute
+length/weight/temperature conversions, time zones, bill splits and hex colors. Splits distribute
 remainder cents without losing money. A limited recursive-descent parser evaluates
 arithmetic; input is never executable code. This is not unrestricted UI generation.
 Unsupported prose remains an editable note preview or a search choice.
@@ -43,6 +45,27 @@ it does not persist a live card. Timers use an absolute deadline, support pause 
 resume, and survive panel dismissal or input changes. They require My Man to remain
 running; completion is an app sound, not a scheduled system notification.
 
+## Compact results
+
+Results measure their own height up to a 320pt scroll limit. Window resizing remains
+deferred by the existing panel controller. Tasks and calendar use full-width inline
+lists, small empty states, and a week selector; classic companion panels keep their
+existing layouts. The muted microphone uses the supplied `micOff` SVG path.
+
+`8am in Iceland` means today's 8am in Iceland expressed in the Mac's time zone.
+`8am New York to Iceland` specifies both ends; `8am to Iceland` starts locally.
+`time in Tokyo` converts the current instant. Both sides show dates to make day
+rollovers clear. Region names and ET/PT use the macOS time-zone database; fixed
+abbreviations such as PST/EST retain their literal offsets. IST means India and
+CST means US Central Standard; city names avoid abbreviation ambiguity. Skipped
+or repeated daylight-saving times ask for a different time or explicit UTC offset.
+Unknown locations get a short example instead of falling through to unit conversion.
+
+Hex colors produce four deterministic coordinating colors: a complementary accent,
+softer neighboring shades, and a dark anchor. Near-neutrals use a muted blue family.
+These are palette suggestions, not an accessibility contrast guarantee. Each swatch
+copies its own hex code; the result's Copy/Save actions retain the entered base hex.
+
 ## Voice input
 
 Only the enabled adaptive launcher's controller automatically starts listening,
@@ -50,7 +73,13 @@ after the panel is visible. It uses a raw session on `AudioCapture.shared`, avoi
 a second microphone engine or a new voice-processing request. Parakeet transcribes
 utterances locally after a pause. The microphone pauses during transcription and
 resumes afterward while the launcher remains open. Text is appended to the latest
-typed input and never submitted automatically. The microphone button can stop it.
+input and never submitted automatically. Editing the input stops listening immediately
+and rejects pending transcription. Programmatic speech updates do not stop listening.
+Turning off the microphone explicitly persists a one-hour pause in UserDefaults
+(`adaptiveListeningPausedUntil`). New panels respect that timestamp; automatic
+listening resumes on the next opening after expiry. It never interrupts ongoing
+typing when the hour expires. The mic button or General → Appearance → Reset can
+clear the pause early. Closing the panel only stops its session; it does not snooze.
 
 The panel's dismissal callback explicitly stops capture; relying on SwiftUI
 `onDisappear` alone would not cover retained AppKit panels. Generation checks

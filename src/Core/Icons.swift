@@ -4,11 +4,14 @@ import SwiftUI
 // Add new icons here only; views never embed path data.
 
 enum MMIcon: String {
+    case more
     case checklistChecked, checklistUnchecked
     case filter, themes, screenshot, note, voice, camera, cameraOff, mic, micOff, write, calendar, search, save, close, pointer, trash, settings, copy, bold, italic, underline, strikethrough, link, related, open, addBox, recordScreen, recordScreenOff, agent, chat
 
     var svgPath: String {
         switch self {
+        case .more:
+            return "M5 12H5.01M12 12H12.01M19 12H19.01"
         case .checklistChecked:
             return "M9 11L12 14L22 4M16 3H7.8C6.11984 3 5.27976 3 4.63803 3.32698C4.07354 3.6146 3.6146 4.07354 3.32698 4.63803C3 5.27976 3 6.11984 3 7.8V16.2C3 17.8802 3 18.7202 3.32698 19.362C3.6146 19.9265 4.07354 20.3854 4.63803 20.673C5.27976 21 6.11984 21 7.8 21H16.2C17.8802 21 18.7202 21 19.362 20.673C19.9265 20.3854 20.3854 19.9265 20.673 19.362C21 18.7202 21 17.8802 21 16.2V12"
         case .checklistUnchecked:

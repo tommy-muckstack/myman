@@ -11,8 +11,17 @@ import SwiftUI
 
 struct TasksPanelView: View {
     @ObservedObject var store = TasksStore.shared
+    var inline = false
 
     var body: some View {
+        Group {
+            if inline {
+                InlineTasksView(tasks: store.openTasks)
+            } else { companion }
+        }.onAppear { store.refresh() }
+    }
+
+    private var companion: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Tasks")
@@ -56,7 +65,33 @@ struct TasksPanelView: View {
                         .strokeBorder(MM.Colors.border, lineWidth: 1)
                 )
         )
-        .onAppear { store.refresh() }
+    }
+}
+
+struct InlineTasksView: View {
+    let tasks: [TaskItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(tasks.isEmpty ? "No open tasks" : "\(tasks.count) open tasks")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                Spacer()
+                Button { TaskComposerController.shared.show() } label: {
+                    HStack(spacing: MM.Layout.spacing / 2) {
+                        IconView(icon: .addBox)
+                        Text("Add task").font(MM.Fonts.secondary)
+                    }.clickable()
+                }.buttonStyle(.plain)
+            }.padding(MM.Layout.padding)
+            if !tasks.isEmpty {
+                AdaptiveResultScroll {
+                    VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                        ForEach(tasks) { TaskRow(task: $0) }
+                    }.padding(.horizontal, MM.Layout.spacing / 2).padding(.bottom, MM.Layout.spacing)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -136,6 +171,7 @@ private struct TaskRow: View {
 // MARK: - Calendar (right)
 
 struct CalendarPanelView: View {
+    var inline = false
     struct DayEvents: Identifiable {
         let id: String
         let date: Date
@@ -186,6 +222,15 @@ struct CalendarPanelView: View {
     @State private var needsAccessRequest = false
 
     var body: some View {
+        Group {
+            if inline {
+                InlineCalendarView(days: days, needsAccessRequest: needsAccessRequest, accessDenied: accessDenied,
+                                   onAccess: requestAccess, eventContent: { eventCard($0) })
+            } else { companion }
+        }.onAppear(perform: load)
+    }
+
+    private var companion: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Calendar")
                 .font(MM.Fonts.title)
@@ -227,36 +272,36 @@ struct CalendarPanelView: View {
                         .strokeBorder(MM.Colors.border, lineWidth: 1)
                 )
         )
-        .onAppear(perform: load)
     }
 
     private var emptyState: some View {
-        CalendarEmptyState(needsAccessRequest: needsAccessRequest, accessDenied: accessDenied) {
+        CalendarEmptyState(needsAccessRequest: needsAccessRequest, accessDenied: accessDenied, action: requestAccess)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 
-                if needsAccessRequest {
-                    // macOS shows the calendar prompt ONCE per app, ever. If it
-                    // was already answered (incl. "Add Events Only"), this call
-                    // returns silently — fall through to Privacy Settings so
-                    // the button always visibly does something.
-                    EKEventStore().requestFullAccessToEvents { granted, _ in
-                        DispatchQueue.main.async {
-                            load()
-                            if !granted, let url = URL(string:
-                                "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
+    private func requestAccess() {
+        if needsAccessRequest {
+            // macOS shows the calendar prompt ONCE per app, ever. If it
+            // was already answered (incl. "Add Events Only"), this call
+            // returns silently — fall through to Privacy Settings so
+            // the button always visibly does something.
+            EKEventStore().requestFullAccessToEvents { granted, _ in
+                DispatchQueue.main.async {
+                    load()
+                    if !granted, let url = URL(string:
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+                        NSWorkspace.shared.open(url)
                     }
-                    return
                 }
-                let pane = accessDenied
-                    ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
-                    : "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension"
-                if let url = URL(string: pane) {
-                    NSWorkspace.shared.open(url)
-                }
+            }
+            return
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        let pane = accessDenied
+            ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
+            : "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension"
+        if let url = URL(string: pane) {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func dayColumn(_ day: DayEvents) -> some View {
@@ -321,7 +366,7 @@ struct CalendarPanelView: View {
             onNotes: {
                 guard let id = event.meetingID else { return }
                 MeetingDocumentController.shared.open(meetingID: id)
-            })
+            }, inline: inline)
     }
 
     private func openBrief(_ event: EventLite) {
@@ -409,6 +454,54 @@ struct CalendarPanelView: View {
             collected.append(DayEvents(id: "day-\(offset)", date: dayStart, events: Array(events)))
         }
         days = collected
+    }
+}
+
+struct InlineCalendarView<EventContent: View>: View {
+    let days: [CalendarPanelView.DayEvents]
+    let needsAccessRequest: Bool
+    let accessDenied: Bool
+    var onAccess: () -> Void
+    @ViewBuilder var eventContent: (CalendarPanelView.EventLite) -> EventContent
+    @State private var selectedDay = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if needsAccessRequest || accessDenied {
+                HStack {
+                    Text("See your schedule here").font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                    Spacer()
+                    Button(action: onAccess) {
+                        Text(needsAccessRequest ? "Connect calendar" : "Allow calendar access")
+                            .font(MM.Fonts.secondary).clickable()
+                    }.buttonStyle(.plain)
+                }.padding(MM.Layout.padding)
+            } else {
+                HStack(spacing: MM.Layout.spacing) {
+                    ForEach(Array(days.enumerated()), id: \.element.id) { index, day in
+                        Button { selectedDay = index } label: {
+                            Text(Calendar.current.isDateInToday(day.date) ? "Today" : day.date.formatted(.dateTime.weekday(.abbreviated)))
+                                .font(MM.Fonts.secondary)
+                                .foregroundStyle(selectedDay == index ? MM.Colors.textPrimary : MM.Colors.textTertiary)
+                                .padding(.horizontal, MM.Layout.spacing / 2).padding(.vertical, MM.Layout.spacing / 2)
+                                .background(selectedDay == index ? MM.Colors.surface : .clear,
+                                            in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)).clickable()
+                        }.buttonStyle(.plain)
+                    }
+                    Spacer(minLength: 0)
+                }.padding(MM.Layout.padding)
+                if days.indices.contains(selectedDay), !days[selectedDay].events.isEmpty {
+                    AdaptiveResultScroll {
+                        VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                            ForEach(days[selectedDay].events) { eventContent($0) }
+                        }.padding(.horizontal, MM.Layout.spacing / 2).padding(.bottom, MM.Layout.spacing)
+                    }
+                } else {
+                    Text("No events this day").font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textTertiary)
+                        .padding(.horizontal, MM.Layout.padding).padding(.bottom, MM.Layout.padding)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

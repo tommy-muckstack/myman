@@ -11,6 +11,7 @@ final class QuickToolsModel: ObservableObject {
     @Published private(set) var finished = false
     private var alarm: Timer?
     var onFinish: () -> Void = { NSSound.beep() }
+    var timerActive: Bool { deadline != nil || pausedSeconds != nil || finished }
 
     func update(_ input: String) {
         let next = QuickToolParser.parse(input)
@@ -112,7 +113,7 @@ struct QuickToolsView: View {
                                 .font(MM.Fonts.body)
                         }
                     } else { QuickToolCard(model: model) }
-                    QuickTimerStatus(model: model)
+                    if !model.tool.isTimer { QuickTimerStatus(model: model) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -130,19 +131,23 @@ struct QuickToolCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing) {
-            Text(model.tool.title).font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
-            content
-            if model.tool.canSave {
+            if !model.tool.isTimer {
                 HStack(spacing: MM.Layout.spacing) {
-                    Button("Save to Notes") { model.save() }.clickable()
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(model.tool.markdown(checked: model.checked), forType: .string)
-                        model.feedback = "Copied"
-                    }.clickable()
+                    Text(model.tool.title).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
                     Spacer()
-                }.font(MM.Fonts.secondary)
+                    if model.tool.canSave {
+                        Button { model.save() } label: { IconView(icon: .save).clickable() }
+                            .buttonStyle(.plain).help("Save to Notes").accessibilityLabel("Save to Notes")
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(model.tool.markdown(checked: model.checked), forType: .string)
+                            model.feedback = "Copied"
+                        } label: { IconView(icon: .copy).clickable() }
+                            .buttonStyle(.plain).help("Copy").accessibilityLabel("Copy")
+                    }
+                }
             }
+            content
             if !model.feedback.isEmpty {
                 Text(model.feedback).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                     .accessibilityLabel(model.feedback)
@@ -150,19 +155,23 @@ struct QuickToolCard: View {
         }
         .padding(MM.Layout.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
     }
 
     @ViewBuilder private var content: some View {
         switch model.tool {
         case .note(let text): Text(text).font(MM.Fonts.body).textSelection(.enabled)
         case .incomplete(_, let help): Text(help).font(MM.Fonts.body)
-        case .calculation(let expression, let result):
-            Text(expression).font(MM.Fonts.body).textSelection(.enabled)
+        case .calculation(_, let result):
             Text(QuickTool.number(result)).font(MM.Fonts.title).textSelection(.enabled)
-        case .conversion(let input, let result, let unit):
-            Text(input).font(MM.Fonts.body)
+        case .conversion(_, let result, let unit):
             Text("\(QuickTool.number(result)) \(unit)").font(MM.Fonts.title).textSelection(.enabled)
+        case .timeZone(let conversion):
+            HStack(spacing: MM.Layout.paddingLarge) {
+                zoneTime(conversion, zone: conversion.source, name: conversion.sourceName)
+                Text("→").font(MM.Fonts.title).foregroundStyle(MM.Colors.textTertiary)
+                zoneTime(conversion, zone: conversion.destination, name: conversion.destinationName)
+                Spacer(minLength: 0)
+            }
         case .checklist(let items):
             ForEach(items.indices, id: \.self) { index in
                 Button {
@@ -177,11 +186,7 @@ struct QuickToolCard: View {
                 }.buttonStyle(.plain).accessibilityLabel("\(items[index]), \(model.checked.contains(index) ? "checked" : "unchecked")")
             }
         case .timer(let seconds):
-            Text("\(QuickTool.number(seconds / 60)) minutes").font(MM.Fonts.title)
-            Button("Start timer") { model.start(seconds: seconds) }.clickable()
-                .disabled(model.deadline != nil || model.pausedSeconds != nil)
-            Text("The timer keeps running while My Man is open, even when this panel is closed.")
-                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+            QuickTimerRow(model: model, seconds: seconds)
         case .split(let cents, let people, let currency):
             Text("\(currency)\(QuickTool.money(cents)) total").font(MM.Fonts.body)
             Stepper("\(people) people", value: Binding(get: { people }, set: {
@@ -193,15 +198,16 @@ struct QuickToolCard: View {
                 Text("The extra cents are shared so the amounts add up exactly.").font(MM.Fonts.metadata)
             }
         case .color(let hex):
-            let value = UInt32(hex.dropFirst(), radix: 16) ?? 0
-            // This is user-supplied color data, not an interface color token.
-            RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
-                .fill(Color(red: Double((value >> 16) & 255) / 255,
-                            green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255))
-                .frame(height: 72).accessibilityLabel("Color swatch \(hex)")
-            Text(hex).font(MM.Fonts.title).textSelection(.enabled)
-            Text("RGB \((value >> 16) & 255), \((value >> 8) & 255), \(value & 255)").font(MM.Fonts.secondary)
+            QuickColorPaletteView(hex: hex) { model.feedback = "Copied \($0)" }
         }
+    }
+
+    private func zoneTime(_ conversion: QuickTimeZone, zone: TimeZone, name: String) -> some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+            Text(name).font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+            Text(conversion.time(in: zone)).font(MM.Fonts.title).monospacedDigit()
+            Text(conversion.day(in: zone)).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+        }.textSelection(.enabled)
     }
 }
 
@@ -209,23 +215,53 @@ struct QuickTimerStatus: View {
     @ObservedObject var model: QuickToolsModel
 
     var body: some View {
-        if model.deadline != nil || model.pausedSeconds != nil || model.finished {
-            HStack(spacing: MM.Layout.spacing) {
+        if model.timerActive {
+            QuickTimerRow(model: model, seconds: 0).padding(MM.Layout.padding)
+        }
+    }
+}
+
+private struct QuickTimerRow: View {
+    @ObservedObject var model: QuickToolsModel
+    let seconds: TimeInterval
+
+    var body: some View {
+        HStack(spacing: MM.Layout.spacing) {
+            VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                Text(model.finished ? "Timer finished" : model.pausedSeconds != nil ? "Paused" : "Timer")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
                 if let deadline = model.deadline {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        let remaining = max(0, Int(ceil(deadline.timeIntervalSince(context.date))))
-                        Text(String(format: "%02d:%02d", remaining / 60, remaining % 60))
-                            .font(MM.Fonts.title).monospacedDigit()
+                        time(deadline.timeIntervalSince(context.date))
                     }
-                    Button("Pause") { model.pause() }.clickable()
-                } else if let seconds = model.pausedSeconds {
-                    Text("Paused").font(MM.Fonts.body)
-                    Button("Resume") { model.start(seconds: seconds) }.clickable()
-                } else { Text("Timer finished").font(MM.Fonts.title) }
-                Spacer()
-                Button(model.finished ? "Dismiss" : "Cancel timer") { model.stop() }.clickable()
-            }.font(MM.Fonts.secondary).padding(MM.Layout.padding)
-                .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
+                } else { time(model.finished ? 0 : model.pausedSeconds ?? seconds) }
+            }
+            Spacer()
+            if !model.finished {
+                Button {
+                    if model.deadline != nil { model.pause() }
+                    else { model.start(seconds: model.pausedSeconds ?? seconds) }
+                } label: {
+                    Text(model.deadline != nil ? "Pause" : model.pausedSeconds != nil ? "Resume" : "Start")
+                        .font(MM.Fonts.secondary)
+                        .foregroundStyle(MM.Colors.background)
+                        .padding(.horizontal, MM.Layout.padding).padding(.vertical, MM.Layout.spacing / 2)
+                        .background(MM.Colors.accent, in: Capsule()).clickable()
+                }.buttonStyle(.plain)
+            }
+            if model.timerActive {
+                Button { model.stop() } label: { IconView(icon: .close).clickable() }
+                    .buttonStyle(.plain).help(model.finished ? "Dismiss timer" : "Cancel timer")
+                    .accessibilityLabel(model.finished ? "Dismiss timer" : "Cancel timer")
+            }
         }
+    }
+
+    private func time(_ seconds: TimeInterval) -> some View {
+        let total = max(0, Int(ceil(seconds)))
+        return Text(total >= 3600
+            ? String(format: "%d:%02d:%02d", total / 3600, total / 60 % 60, total % 60)
+            : String(format: "%02d:%02d", total / 60, total % 60))
+            .font(MM.Fonts.title).monospacedDigit()
     }
 }

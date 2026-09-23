@@ -8,6 +8,7 @@ enum QuickTool: Equatable {
     case timer(TimeInterval)
     case calculation(String, Double)
     case conversion(String, Double, String)
+    case timeZone(QuickTimeZone)
     case split(cents: Int, people: Int, currency: String)
     case color(String)
     case incomplete(String, String)
@@ -19,6 +20,7 @@ enum QuickTool: Equatable {
         case .timer: return "Timer"
         case .calculation: return "Calculator"
         case .conversion: return "Converter"
+        case .timeZone: return "Time zones"
         case .split: return "Split a bill"
         case .color: return "Color"
         case .incomplete(let title, _): return title
@@ -31,6 +33,11 @@ enum QuickTool: Equatable {
         return true
     }
 
+    var isTimer: Bool {
+        if case .timer = self { return true }
+        return false
+    }
+
     func markdown(checked: Set<Int> = []) -> String {
         switch self {
         case .note(let text): return text
@@ -39,6 +46,7 @@ enum QuickTool: Equatable {
         case .timer(let seconds): return "Timer\n\n\(Self.number(seconds / 60)) minutes"
         case .calculation(let expression, let result): return "\(expression) = \(Self.number(result))"
         case .conversion(let input, let value, let unit): return "\(input) = \(Self.number(value)) \(unit)"
+        case .timeZone(let conversion): return conversion.markdown
         case .split(let cents, let people, let currency):
             return "Split a bill\n\n\(currency)\(Self.money(cents)) between \(people) people\n\n\(Self.splitSummary(cents: cents, people: people, currency: currency))"
         case .color(let hex): return hex
@@ -62,7 +70,7 @@ enum QuickTool: Equatable {
 }
 
 enum QuickToolParser {
-    static let examples = ["buy milk, eggs and coffee", "25 min focus", "18% of 240", "5 miles in km", "split $120 between 3", "#ff6b35"]
+    static let examples = ["buy milk, eggs and coffee", "25 min focus", "18% of 240", "5 miles in km", "8am in Iceland", "split $120 between 3", "#ff6b35"]
 
     static func parse(_ input: String) -> QuickTool {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -98,6 +106,8 @@ enum QuickToolParser {
         if lower == "timer" || lower.hasPrefix("timer ") || lower.hasPrefix("set a timer") {
             return .incomplete("Timer", "Try “25 min focus” or “timer 1 hour 30 minutes” (up to 24 hours).")
         }
+
+        if let timeZone = QuickTimeZone.parse(lower) { return timeZone }
 
         if let parts = groups(#"^(?:convert\s+)?(-?\d+(?:\.\d+)?)\s*([a-z°]+)\s+(?:in|to|into)\s+([a-z°]+)$"#, lower),
            let value = Double(parts[1]), value.isFinite {
