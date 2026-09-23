@@ -211,11 +211,13 @@ struct QuickToolCard: View {
         case .conversion(_, let result, let unit):
             Text("\(QuickTool.number(result)) \(unit)").font(MM.Fonts.result).textSelection(.enabled)
         case .timeZone(let conversion):
+            let zones = conversion.displayZones
             HStack(spacing: MM.Layout.paddingLarge) {
-                zoneTime(conversion, zone: conversion.source, name: conversion.sourceName)
+                zoneTime(conversion, zone: zones[0].zone, name: zones[0].name)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text("→").font(MM.Fonts.title).foregroundStyle(MM.Colors.textTertiary)
-                zoneTime(conversion, zone: conversion.destination, name: conversion.destinationName)
-                Spacer(minLength: 0)
+                zoneTime(conversion, zone: zones[1].zone, name: zones[1].name)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         case .checklist(let items):
             ForEach(items.indices, id: \.self) { index in

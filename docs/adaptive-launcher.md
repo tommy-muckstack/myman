@@ -80,8 +80,10 @@ lists, small empty states, and a week selector. The muted microphone uses the su
 
 `8am in Iceland` means today's 8am in Iceland expressed in the Mac's time zone.
 `8am New York to Iceland` specifies both ends; `8am to Iceland` starts locally.
-`time in Tokyo` converts the current instant. Both sides show dates to make day
-rollovers clear. Region names and ET/PT use the macOS time-zone database; fixed
+`time in Tokyo` converts the current instant. Results display east on the left and
+west on the right, ordered by UTC offset at the converted instant, regardless of
+the request's direction. Both sides show dates to make day rollovers clear.
+Region names and ET/PT use the macOS time-zone database; fixed
 abbreviations such as PST/EST retain their literal offsets. IST means India and
 CST means US Central Standard; city names avoid abbreviation ambiguity. Skipped
 or repeated daylight-saving times ask for a different time or explicit UTC offset.
@@ -184,6 +186,6 @@ alerts, cancellation while notification permission is pending, and widget geomet
 When input is populated, a generous text-only **Clear** button replaces the microphone and Settings buttons. Clear restores the empty launcher and automatic listening, while respecting the saved microphone preference. Both `set timer for 5m` and `timer 5m` preview five minutes; Return starts the timer and dismisses the launcher.
 The input always reserves the same leading icon space: Search by default, then the recognized tool/action icon. Recognition never moves the text horizontally.
 
-The empty launcher has no Browse library button. Search is available through the input.
+The empty launcher has no Browse library button. Search is available through the input. The Themes icon immediately left of Settings opens themes inline; click it again or press Escape to return to the launcher.
 
 Reminder scheduling uses quick presets, a full calendar popover and a separate time control with editable hours/minutes, AM/PM and five-minute adjustments. The selected deadline stays visible; past times cannot be submitted. Local persistence completes before asynchronous macOS notification setup, so permission prompts do not trap the launcher on Setting. Dismissing a reminder invalidates pending notification callbacks. Scheduled reminders fall back to the app chime when notification sounds are disabled; mute suppresses both paths.

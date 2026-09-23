@@ -7,6 +7,15 @@ struct QuickTimeZone: Equatable {
     let sourceName: String
     let destinationName: String
 
+    /// Present the eastern (larger UTC offset) zone first, using the conversion
+    /// date so regional daylight-saving rules are reflected in the ordering.
+    var displayZones: [(zone: TimeZone, name: String)] {
+        let from = (zone: source, name: sourceName)
+        let to = (zone: destination, name: destinationName)
+        return source.secondsFromGMT(for: date) >= destination.secondsFromGMT(for: date)
+            ? [from, to] : [to, from]
+    }
+
     func time(in zone: TimeZone) -> String {
         let formatter = DateFormatter()
         formatter.timeZone = zone
