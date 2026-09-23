@@ -241,7 +241,21 @@ import Carbon
                 down.post(tap: .cgSessionEventTap); up.post(tap: .cgSessionEventTap)
                 return true
             })
+        DictationCorrectionWatch.shared.stop()
         var outcome = await deliver(text, to: destination, copy: copyToClipboard)
+        if outcome.isVerified, AgentContext.jobID.isEmpty, let before,
+           let range = destination.selection, range.location != NSNotFound,
+           before.utf16.count <= 50_000, let expected = replacement(before: before, range: range, text: text),
+           destination.readValue() == expected {
+            let value = before as NSString
+            let prefix = value.substring(to: range.location)
+            let suffix = value.substring(from: range.location + range.length)
+            DictationCorrectionWatch.shared.start(text: text) {
+                guard destination.isFocused(), let actual = destination.readValue(), actual.count <= 50_000,
+                      actual.hasPrefix(prefix), actual.hasSuffix(suffix), actual.count >= prefix.count + suffix.count else { return nil }
+                return String(actual.dropFirst(prefix.count).dropLast(suffix.count))
+            }
+        }
         outcome.milliseconds = Int(Date().timeIntervalSince(start) * 1000)
         return outcome
     }

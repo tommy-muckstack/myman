@@ -10,6 +10,8 @@ struct AdaptiveLauncherView: View {
     var onDismiss: () -> Void
     var onSizeChange: (CGSize) -> Void
     @State private var query = ""
+    @State private var correctionLearner = DictationCorrectionLearner()
+    @State private var dictatedPrefix = ""
     @State private var showingCommands = false
     @State private var routing = AdaptiveLauncherRouting()
     @StateObject private var filters = CaptureLibraryFilters()
@@ -36,6 +38,9 @@ struct AdaptiveLauncherView: View {
                 TextField(showingCommands ? "Search commands…" : "Find something or make something…", text: Binding(get: { query }, set: {
                     guard query != $0 else { return }
                     voice.stop()
+                    if $0.hasPrefix(dictatedPrefix) {
+                        correctionLearner.edited(String($0.dropFirst(dictatedPrefix.count)))
+                    } else { correctionLearner.cancel() }
                     if $0.hasPrefix("/") {
                         showingCommands = true
                         routing = AdaptiveLauncherRouting()
@@ -138,9 +143,13 @@ struct AdaptiveLauncherView: View {
             query = showingCommands ? String(initialQuery.dropFirst()) : initialQuery
             focused = true
         }
-        .onDisappear { voice.stop() }
+        .onDisappear { voice.stop(); correctionLearner.cancel() }
         .onChange(of: voice.utterance) { _, utterance in
-            if voice.enabled, let utterance { query = AdaptiveLauncherVoice.appending(utterance.text, to: query) }
+            if let utterance, voice.utterance?.id == utterance.id {
+                dictatedPrefix = query.isEmpty ? "" : query + (query.last?.isWhitespace == true ? "" : " ")
+                query = AdaptiveLauncherVoice.appending(utterance.text, to: query)
+                correctionLearner.begin(utterance.text)
+            }
         }
         .onChange(of: query) { _, value in
             routing.update(value)

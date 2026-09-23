@@ -40,7 +40,10 @@ final class AdaptiveLauncherVoice: ObservableObject {
                 end: { audio.end($0) },
                 discard: { _ = audio.drain($0) },
                 level: { audio.currentLevel(for: $0) },
-                transcribe: { TranscriptionService.discardTaskHallucination(await engine.transcribe($0)) }
+                transcribe: {
+                    let text = TranscriptionService.discardTaskHallucination(await engine.transcribe($0))
+                    return DictationCleanup.applyVocabulary(text, terms: DictationCleanup.vocabulary())
+                }
             )
         }
     }
@@ -78,6 +81,7 @@ final class AdaptiveLauncherVoice: ObservableObject {
 
     func start() {
         guard !enabled else { return }
+        utterance = nil
         enabled = true
         phase = .preparing
         let current = UUID()
@@ -108,6 +112,7 @@ final class AdaptiveLauncherVoice: ObservableObject {
     /// an NSPanel out does not necessarily unmount its hosted SwiftUI view.
     func stop() {
         enabled = false
+        utterance = nil
         generation = UUID()
         task?.cancel(); task = nil
         meter?.invalidate(); meter = nil
@@ -170,8 +175,11 @@ final class AdaptiveLauncherVoice: ObservableObject {
                 let text = samples.count >= 4_800 ? await dependencies.transcribe(samples) : ""
                 guard isCurrent(current) else { return }
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                enabled = false
+                phase = .off
+                levels = Array(repeating: 0, count: 16)
+                task = nil
                 if !trimmed.isEmpty { utterance = Utterance(text: trimmed) }
-                await begin(current)
             }
         }
     }
@@ -199,7 +207,7 @@ enum AdaptiveListeningPreference {
 }
 
 /// Keep idle microphone buffers bounded, ignore isolated clicks, and end an
-/// utterance after a short pause. Long speech is transcribed in bounded slices.
+/// utterance after a short pause. A single request ends after a pause or the 20-second limit.
 struct AdaptiveSpeechEndpoint {
     enum Decision { case keepListening, discardSilence, transcribe }
     private var startedAt: Date

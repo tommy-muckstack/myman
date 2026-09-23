@@ -5,6 +5,51 @@ import GRDB
 @testable import MyMan
 
 final class AdaptiveLauncherTests: XCTestCase {
+    @MainActor func testSpokenArithmeticRoutesToCalculatorWithoutTreatingProseAsMath() {
+        for (text, expected) in [("what's one plus one?", 2.0), ("whats one plus one", 2),
+                                 ("What’s twelve divided by four?", 3), ("calculate twenty-one times two", 42),
+                                 ("one hundred and twenty three minus three", 120), ("one point five plus two", 3.5),
+                                 ("negative five plus two", -3), ("what is two plus three times four", 14),
+                                 ("eighteen percent of two hundred", 36)] {
+            guard case .calculation(_, let value) = QuickToolParser.parse(text) else { XCTFail(text); continue }
+            XCTAssertEqual(value, expected, accuracy: 0.0001, text)
+            XCTAssertEqual(AdaptiveLauncherIntent.resolve(text), .create, text)
+            XCTAssertEqual(AgentQuickTools.evaluate(text)["value"] as? Double, expected)
+        }
+        for text in ["one plus one ideas for launch", "plus one guest", "what is my budget", "one two plus three"] {
+            guard case .note = QuickToolParser.parse(text) else { XCTFail("Must retain prose: \(text)"); continue }
+        }
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("find one plus one"), .search)
+    }
+
+    @MainActor func testCompletedSpeechReachesCalculatorAfterMicrophoneStops() async throws {
+        _ = NSApplication.shared
+        var time = 0.0
+        var volume: Float = 0.03
+        var starts = 0
+        let voice = AdaptiveLauncherVoice(dependencies: .init(authorize: { true }, prepare: { true },
+            begin: { starts += 1; return UUID() }, end: { _ in Array(repeating: 0.01, count: 16_000) },
+            discard: { _ in }, level: { _ in volume }, transcribe: { _ in "What's one plus one?" },
+            now: { Date(timeIntervalSince1970: time) }), automaticallyPoll: false)
+        let model = QuickToolsModel()
+        let host = NSHostingView(rootView: AdaptiveLauncherView(actions: [], voice: voice,
+            onSaveQueryAsNote: { _ in XCTFail("A calculation must not save a note") }, onDismiss: {}, onSizeChange: { _ in }, tools: model))
+        host.frame = NSRect(x: 0, y: 0, width: 620, height: 200)
+        host.layoutSubtreeIfNeeded()
+        defer { voice.stop() }
+        voice.start()
+        try await Task.sleep(for: .milliseconds(100))
+        for instant in [0.1, 0.2, 0.3] { time = instant; voice.sample() }
+        volume = 0
+        for instant in [0.4, 1.5] { time = instant; voice.sample() }
+        try await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(model.tool, .calculation("1 + 1", 2))
+        XCTAssertFalse(voice.enabled)
+        XCTAssertEqual(voice.phase, .off)
+        XCTAssertEqual(starts, 1)
+    }
+
     func testManualChoiceSurvivesTypingUntilTheRequestIsCleared() {
         var routing = AdaptiveLauncherRouting()
         routing.update("budget")

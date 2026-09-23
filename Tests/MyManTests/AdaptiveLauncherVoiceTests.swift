@@ -79,18 +79,22 @@ final class AdaptiveLauncherVoiceTests: XCTestCase {
         XCTAssertEqual(voice.phase, .off)
     }
 
-    @MainActor func testSpeechIsDeliveredAndListeningResumesUntilStopped() async throws {
+    @MainActor func testSpeechIsDeliveredOnceAndListeningStopsAtThePause() async throws {
         let fake = FakeVoice()
         let voice = fake.controller()
         defer { voice.stop() }
         voice.start()
         try await eventually { voice.phase == .listening }
         speakThenPause(voice, fake: fake)
-        try await eventually { voice.utterance != nil && voice.phase == .listening }
+        try await eventually { voice.utterance != nil && voice.phase == .off }
         XCTAssertEqual(voice.utterance?.text, "find my checklist")
-        XCTAssertEqual(fake.beginnings, 2)
+        XCTAssertEqual(fake.beginnings, 1)
+        XCTAssertFalse(voice.enabled)
+        fake.time = 10
+        voice.sample()
+        XCTAssertEqual(fake.beginnings, 1)
         voice.stop()
-        XCTAssertEqual(fake.ended.count, 2)
+        XCTAssertEqual(fake.ended.count, 1)
         XCTAssertFalse(voice.enabled)
     }
 
