@@ -148,12 +148,6 @@ enum AppTheme: String, CaseIterable, Identifiable {
         NSApp.appearance = NSAppearance(named: self == .dark ? .darkAqua : .aqua)
     }
 
-    /// What the system looks like right now — the implicit default before
-    /// the user ever picks a side.
-    @MainActor static var matchingSystem: AppTheme {
-        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? .dark : .light
-    }
 }
 
 final class SettingsStore: ObservableObject {
@@ -194,10 +188,9 @@ final class SettingsStore: ObservableObject {
     @Published var enhanceMicrophone: Bool {
         didSet { UserDefaults.standard.set(enhanceMicrophone, forKey: "enhanceMicrophone") }
     }
-    /// nil = never chosen: follow the system live. Set once, it sticks.
-    @Published var theme: AppTheme? {
+    /// Dark until the user chooses an appearance; saved choices always win.
+    @Published var theme: AppTheme {
         didSet {
-            guard let theme else { return }
             UserDefaults.standard.set(theme.rawValue, forKey: "theme")
             let picked = theme
             Task { @MainActor in picked.apply() }
@@ -230,7 +223,7 @@ final class SettingsStore: ObservableObject {
         dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
         captureSound = CaptureSound(rawValue: UserDefaults.standard.string(forKey: "captureSound") ?? "") ?? .bloop
         enhanceMicrophone = UserDefaults.standard.bool(forKey: "enhanceMicrophone")
-        theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "")
+        theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "") ?? .dark
         screenshotFolderPath = UserDefaults.standard.string(forKey: "screenshotFolder")
             ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("My Man").path
@@ -298,7 +291,6 @@ struct SettingsPanelView: View {
     @State private var vocabularySuggestions: [String] = []
     @State private var knownPeople: [Person] = []
     @AppStorage("interfaceTextScale") private var interfaceTextScale = 1.0
-    @AppStorage("adaptiveLauncher") private var adaptiveLauncher = false
     @AppStorage(AdaptiveListeningPreference.key) private var listeningPausedUntil = 0.0
 
     var body: some View {
@@ -453,34 +445,33 @@ struct SettingsPanelView: View {
                 }
             }
             Divider().overlay(MM.Colors.border)
-            settingSection("Appearance") {
-                Toggle("Adaptive launcher (experimental)", isOn: $adaptiveLauncher)
-                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+            settingSection("Launcher") {
                 Text("One input for search and tools. Typing stops the microphone. Turn the mic off to pause automatic listening for one hour.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
-                if adaptiveLauncher {
-                    TimelineView(.periodic(from: .now, by: 30)) { context in
-                        let paused = listeningPausedUntil > context.date.timeIntervalSince1970
-                        HStack {
-                            Text(paused ? "Listening paused until \(Date(timeIntervalSince1970: listeningPausedUntil).formatted(date: .omitted, time: .shortened))"
-                                 : "Listen automatically when opened")
-                                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
-                            Spacer()
-                            Button {
-                                if paused { AdaptiveListeningPreference.reset() }
-                                else { AdaptiveListeningPreference.pause() }
-                            } label: {
-                                Text(paused ? "Reset" : "Pause for 1 hour").font(MM.Fonts.secondary).clickable()
-                            }.buttonStyle(.plain)
-                        }
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    let paused = listeningPausedUntil > context.date.timeIntervalSince1970
+                    HStack {
+                        Text(paused ? "Listening paused until \(Date(timeIntervalSince1970: listeningPausedUntil).formatted(date: .omitted, time: .shortened))"
+                             : "Listen automatically when opened")
+                            .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                        Spacer()
+                        Button {
+                            if paused { AdaptiveListeningPreference.reset() }
+                            else { AdaptiveListeningPreference.pause() }
+                        } label: {
+                            Text(paused ? "Reset" : "Pause for 1 hour").font(MM.Fonts.secondary).clickable()
+                        }.buttonStyle(.plain)
                     }
                 }
+            }
+            Divider().overlay(MM.Colors.border)
+            settingSection("Appearance") {
                 Picker("Interface text size", selection: $interfaceTextScale) {
                     Text("Standard").tag(1.0); Text("Larger").tag(1.25); Text("Largest").tag(1.5)
                 }.clickable()
                 Text("Reopen other windows to apply the new text size.").font(MM.Fonts.metadata)
                 HStack(spacing: 6) {
-                    let selected = store.theme ?? AppTheme.matchingSystem
+                    let selected = store.theme
                     ForEach(AppTheme.allCases) { option in
                         Button { store.theme = option } label: {
                             Text(option.label).font(MM.Fonts.secondary)

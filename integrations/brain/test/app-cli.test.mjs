@@ -12,6 +12,10 @@ const ajv=new Ajv({strict:false});
 const fixture='shot-fixture';
 const cases=[
  ['timer start --seconds 600','timer.start',{seconds:600}],
+ ['timer sound --session-id timer-id --enabled off','timer.sound',{session_id:'timer-id',enabled:false}],
+ ['timer start --seconds 30 --sound-enabled off','timer.start',{seconds:30,sound_enabled:false}],
+ ['reminder sound --id reminder-id --enabled on','reminder.sound',{id:'reminder-id',enabled:true}],
+ ['reminder create --seconds 30 --message Pizza --sound-enabled off','reminder.create',{seconds:30,message:'Pizza',sound_enabled:false}],
  ['timer pause --session-id timer-id','timer.pause',{session_id:'timer-id'}],
  ['timer resume --session-id timer-id','timer.resume',{session_id:'timer-id'}],
  ['timer cancel --session-id timer-id','timer.cancel',{session_id:'timer-id'}],

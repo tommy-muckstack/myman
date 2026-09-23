@@ -4,25 +4,13 @@ import SwiftUI
 @MainActor
 final class LauncherPanelController {
     private var panel: FloatingPanel?
-    private var tasksPanel: FloatingPanel?
-    private var calendarPanel: FloatingPanel?
     private var adaptiveVoice: AdaptiveLauncherVoice?
     private let makeActions: () -> [LauncherAction]
-    private let openNote: (Note) -> Void
-    private let openScreenshot: (URL) -> Void
     private let saveQueryAsNote: (String) -> Void
-    private let openChat: () -> Void
 
-    init(actions: @escaping () -> [LauncherAction],
-         openNote: @escaping (Note) -> Void,
-         openScreenshot: @escaping (URL) -> Void,
-         saveQueryAsNote: @escaping (String) -> Void,
-         openChat: @escaping () -> Void) {
+    init(actions: @escaping () -> [LauncherAction], saveQueryAsNote: @escaping (String) -> Void) {
         self.makeActions = actions
-        self.openNote = openNote
-        self.openScreenshot = openScreenshot
         self.saveQueryAsNote = saveQueryAsNote
-        self.openChat = openChat
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -43,43 +31,23 @@ final class LauncherPanelController {
 
     private func show() {
         Analytics.track("launcher_opened")
-        // Rebuilt per show so the action list always reflects current state.
-        let view = LauncherView(
-            actions: makeActions(),
-            onOpenNote: { [weak self] note in self?.openNote(note) },
-            onOpenScreenshot: { [weak self] url in self?.openScreenshot(url) },
+        panel?.dismiss()
+        adaptiveVoice?.stop()
+        let voice = AdaptiveLauncherVoice()
+        adaptiveVoice = voice
+        // The tools menu expands inline in the standard launcher.
+        let quickTools = LauncherAction(id: "quick_tools", icon: .agent, title: "Quick Tools", hint: nil, enabled: true) {}
+        let content = AdaptiveLauncherView(
+            actions: makeActions() + [quickTools],
+            voice: voice,
             onSaveQueryAsNote: { [weak self] text in self?.saveQueryAsNote(text) },
-            onOpenChat: { [weak self] in
-                self?.panel?.dismiss()
-                self?.openChat()
-            },
             onDismiss: { [weak self] in self?.panel?.dismiss() },
             onSizeChange: { [weak self] size in self?.applyContentSize(size) }
         )
-        panel?.dismiss()
-        adaptiveVoice?.stop()
-        adaptiveVoice = nil
-        let adaptive = UserDefaults.standard.bool(forKey: "adaptiveLauncher")
-        let content: AnyView
-        if adaptive {
-            let voice = AdaptiveLauncherVoice()
-            adaptiveVoice = voice
-            let quickTools = LauncherAction(id: "quick_tools", icon: .agent, title: "Quick Tools", hint: nil, enabled: true) {
-                QuickToolsController.shared.show()
-            }
-            content = AnyView(AdaptiveLauncherView(
-                actions: makeActions() + [quickTools],
-                voice: voice,
-                onSaveQueryAsNote: { [weak self] text in self?.saveQueryAsNote(text) },
-                onDismiss: { [weak self] in self?.panel?.dismiss() },
-                onSizeChange: { [weak self] size in self?.applyContentSize(size) }
-            ))
-        } else { content = AnyView(view) }
         let launcherPanel = FloatingPanel(content: content, fixedSize: true)
         launcherPanel.isMovable = false
         launcherPanel.onDismiss = { [weak self] in
             self?.adaptiveVoice?.stop()
-            self?.hideSidePanels()
         }
         panel = launcherPanel
         launcherPanel.present()
@@ -92,42 +60,7 @@ final class LauncherPanelController {
             launcherPanel.setFrameOrigin(NSPoint(x: visible.midX - size.width / 2,
                 y: max(visible.minY + 16, top - size.height)))
         }
-        if !adaptive { showSidePanels() }
-        if adaptive, launcherPanel.isVisible { adaptiveVoice?.startAutomatically() }
-    }
-
-    /// Tasks pinned left, calendar pinned right — the ⌥Space heads-up display.
-    private func showSidePanels() {
-        hideSidePanels()
-        guard let panel, let screen = panel.screen else { return }
-        let visible = screen.visibleFrame
-
-        let tasks = FloatingPanel(content: TasksPanelView(), becomesKey: false)
-        tasks.isMovable = false
-        // Fixed by design (the views declare these exact frames) — measured
-        // sizing returned 0×0 here and made the panels invisible.
-        // Fixed by design — the views declare these exact frames.
-        let tasksSize = NSSize(width: 260, height: 420)
-        tasks.setFrame(
-            NSRect(x: visible.minX + 20,
-                   y: panel.frame.maxY - tasksSize.height,
-                   width: tasksSize.width, height: tasksSize.height),
-            display: true
-        )
-        tasks.orderFrontRegardless()
-        tasksPanel = tasks
-
-        let calendar = FloatingPanel(content: CalendarPanelView(), becomesKey: false)
-        calendar.isMovable = false
-        let calendarSize = NSSize(width: 300, height: 420)
-        calendar.setFrame(
-            NSRect(x: visible.maxX - calendarSize.width - 20,
-                   y: panel.frame.maxY - calendarSize.height,
-                   width: calendarSize.width, height: calendarSize.height),
-            display: true
-        )
-        calendar.orderFrontRegardless()
-        calendarPanel = calendar
+        if launcherPanel.isVisible { adaptiveVoice?.startAutomatically() }
     }
 
     /// Resize to fit new content, keeping the panel's TOP edge fixed so the
@@ -156,19 +89,8 @@ final class LauncherPanelController {
                        width: size.width, height: size.height),
                 display: true
             )
-            // Search results can lift the launcher to stay on screen. Keep
-            // all three headers on the same top edge after that adjustment.
-            for companion in [self.tasksPanel, self.calendarPanel].compactMap({ $0 }) {
-                companion.setFrameOrigin(NSPoint(x: companion.frame.minX,
-                    y: panel.frame.maxY - companion.frame.height))
-            }
+
         }
     }
 
-    private func hideSidePanels() {
-        tasksPanel?.orderOut(nil)
-        tasksPanel = nil
-        calendarPanel?.orderOut(nil)
-        calendarPanel = nil
-    }
 }

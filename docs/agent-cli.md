@@ -242,3 +242,15 @@ myman calendar list --after 2026-09-23T00:00:00-04:00 --before 2026-09-24T00:00:
 Timers and reminders appear in the same hover-expanding widget as human-created ones. Keep the returned timer `session_id` for `timer pause|resume|cancel --session-id ID`; inspect `timer status` first. Starting while a timer exists fails rather than replacing it. Use `reminder list` and `reminder cancel --id ID`; `reminder create --at ISO --message TEXT` accepts an absolute timestamp instead of seconds. Controls belong to the creating agent; human controls remain available. Existing library grants apply to timer/reminder/calendar actions. Calendar also requires human-granted macOS access.
 
 Timers need My Man to stay open. Reminder results report `notification_scheduled` and `requires_app_open`; do not promise delivery while closed unless scheduling succeeded. `tool evaluate` is side-effect free and returns structured arithmetic, conversions, time zones, four-color palettes, checklists, bill splits, and timer/reminder previews. Evaluation never starts a timer or saves a note. Existing note/task/library/capture/recording commands remain supported. Keep request/job IDs and never replay interrupted mutations automatically.
+
+
+## Timer and reminder sound (My Man 1.1.96 / companion 0.12.0)
+
+Sound is on by default. Pass `--sound-enabled off` to `timer start` or `reminder create` for a silent countdown, or change an owned activity:
+
+```sh
+myman timer sound --session-id ID --enabled off --json
+myman reminder sound --id ID --enabled on --json
+```
+
+Both status/list results include `sound_enabled`. Timer controls require the current session ID and creating agent; reminder controls require the creating agent. Human widget controls remain available. Reminder mute is persisted and updates scheduled notification sound. `tool evaluate` recognizes message-bearing timers and spoken numbers but remains side-effect free; agents must explicitly call the indicated creation action. Adaptive voice auto-submit is a human launcher behavior.

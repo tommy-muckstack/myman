@@ -92,10 +92,14 @@ enum QuickToolParser {
     static func parse(_ input: String) -> QuickTool {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.count <= 2_000 else { return .incomplete("Quick Tools", "Keep this request under 2,000 characters.") }
-        let lower = text.lowercased().replacingOccurrences(of: "−", with: "-")
+        let lower = QuickTimerRequest.commandText(text).lowercased().replacingOccurrences(of: "−", with: "-")
             .replacingOccurrences(of: #"[.!?]+$"#, with: "", options: .regularExpression)
 
         if ["calculator", "calc", "calculate"].contains(lower) { return .calculator }
+        if ["convert", "converter", "unit converter"].contains(lower) { return .incomplete("Converter", "Enter a conversion, such as 5 miles in km.") }
+        if ["time zones", "timezone", "time zone"].contains(lower) { return .incomplete("Time zones", "Enter a time and place, such as 8am in Iceland.") }
+        if ["color", "colour", "color palette"].contains(lower) { return .incomplete("Color", "Enter a hex color, such as #ff6b35.") }
+        if lower == "checklist" { return .incomplete("Checklist", "Add items separated by commas.") }
         if let prefix = ["calculator ", "calc "].first(where: lower.hasPrefix) {
             return parse("calculate " + String(lower.dropFirst(prefix.count)))
         }
@@ -160,22 +164,24 @@ enum QuickToolParser {
         return .note(text)
     }
 
-    private static func duration(_ text: String) -> TimeInterval? {
-        var rest = text.replacingOccurrences(of: #"^(?:set a timer(?: for)?|timer(?: for)?)\s+"#, with: "", options: .regularExpression)
+    static func duration(_ text: String) -> TimeInterval? {
+        var rest = QuickTimerRequest.commandText(text).lowercased()
+            .replacingOccurrences(of: #"^(?:(?:set|start)\s+(?:me\s+)?(?:a\s+)?)?timer(?:\s+for)?\s+"#, with: "", options: .regularExpression)
         rest = rest.replacingOccurrences(of: #"\s+(?:focus|break|timer)$"#, with: "", options: .regularExpression)
-        let regex = try! NSRegularExpression(pattern: #"(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b"#)
-        let matches = regex.matches(in: rest, range: NSRange(rest.startIndex..., in: rest))
-        guard !matches.isEmpty else { return nil }
+            .replacingOccurrences(of: "-", with: " ")
+        let regex = try! NSRegularExpression(pattern: #"^((?:\d+(?:\.\d+)?|[a-z]+)(?:\s+[a-z]+)*?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b"#)
         var seconds = 0.0
-        for match in matches {
+        while !rest.isEmpty {
+            guard let match = regex.firstMatch(in: rest, range: NSRange(rest.startIndex..., in: rest)) else { return nil }
             guard let numberRange = Range(match.range(at: 1), in: rest), let unitRange = Range(match.range(at: 2), in: rest),
-                  let amount = Double(rest[numberRange]) else { return nil }
+                  let amount = QuickSpokenMath.numberValue(String(rest[numberRange])), amount >= 0 else { return nil }
             let unit = rest[unitRange]
             seconds += amount * (unit.hasPrefix("h") ? 3_600 : unit.hasPrefix("m") ? 60 : 1)
+            guard let matched = Range(match.range, in: rest) else { return nil }
+            rest = String(rest[matched.upperBound...]).trimmingCharacters(in: .whitespaces)
+            if rest.hasPrefix("and ") { rest = String(rest.dropFirst(4)) }
         }
-        let remainder = regex.stringByReplacingMatches(in: rest, range: NSRange(rest.startIndex..., in: rest), withTemplate: "")
-            .trimmingCharacters(in: .whitespaces)
-        guard remainder.isEmpty, seconds.isFinite, seconds >= 1, seconds <= 86_400 else { return nil }
+        guard seconds.isFinite, seconds >= 1, seconds <= 86_400 else { return nil }
         return seconds.rounded()
     }
 

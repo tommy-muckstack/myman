@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-23: root/Grok/companion **0.12.0** adds owned timer/reminder sound controls and sound state. Prepared, not submitted or host-verified. The original Cursor application remains pending; notify Cursor instead of filing another application.
+
 > Candidate update, 2026-09-23: root/Grok/companion **0.11.0** adds local tool evaluation, timer/reminder controls, and calendar reads. Prepared; not submitted or host-verified. The prior publisher application remains awaiting review. Notify Cursor of the new candidate rather than filing a duplicate application.
 
 > September 13, 2026: **0.10.0 candidate prepared** for connection checks, selected-file handoff, scrolling capture, meeting decisions, dictation recovery and optional expiring shares. A synthetic check through Grok Bot/Hugo reached the isolated My Man app on the Mac and returned a visible PNG, confirmed by Tommy's screenshot. This is host execution/attachment evidence, not marketplace approval or a public Bot template listing.
@@ -113,3 +115,7 @@ Cursor marketplace update ready: **myman-brain 0.9.0**. Repo: https://github.com
 ## 0.11.0 local verification — September 23, 2026
 
 All 101 companion tests passed, including source/bundled MCP discovery and Unix transport. Bundle freshness passed. The 405-test native suite passed (33 optional tests skipped); 38 focused native tests with UI verification also passed. Timer ownership/session guards, reminder persistence, and permission/schema boundaries use synthetic fixtures. New timer/reminder workflows have not been run through a live GrokBot host. Root, Grok, and companion versions are 0.11.0; the prepared update has not been submitted.
+
+## 0.12.0 local verification — September 23, 2026
+
+All 105 companion tests passed, including sound-control CLI/schema discovery and Unix transport; bundle freshness passed after a clean dependency install. The 422-test native suite passed (29 optional tests skipped); all 27 focused native checks passed again after making the launcher standard. Native UI tests verified the spoken 30-second pizza reminder creates once, closes the launcher, and leaves the expandable widget visible; inline Quick Tools opens Calculator without another window. Sound controls cover ownership, persistence, pause/resume, and pending notification permission. Synthetic screenshots are in `docs/verification/*1.1.96.png`. Root, Grok, and companion candidates are 0.12.0; no live GrokBot host activation or marketplace submission is claimed.

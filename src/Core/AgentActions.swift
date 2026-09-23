@@ -275,7 +275,7 @@ final class AgentActions {
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
         defer { if isAudio { audioCommand = false } }
         switch action {
-        case "tool.evaluate", "timer.start", "timer.status", "timer.pause", "timer.resume", "timer.cancel", "reminder.create", "reminder.list", "reminder.cancel", "calendar.list":
+        case "tool.evaluate", "timer.start", "timer.status", "timer.pause", "timer.resume", "timer.cancel", "timer.sound", "reminder.create", "reminder.list", "reminder.cancel", "reminder.sound", "calendar.list":
             return try await AgentQuickTools.execute(action, args)
         case "workflow.templates": return ["templates": AgentWorkflowTemplates.catalog, "host_sharing_verified": false]
         case "dictation.history": return ["entries": try WorkflowValues.json(Array(DictationHistory.shared.entries.prefix(args["limit"] as? Int ?? 20)))]

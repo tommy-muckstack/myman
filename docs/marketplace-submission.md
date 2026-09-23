@@ -1,10 +1,12 @@
+> Candidate update, 2026-09-23: root/Grok/companion **0.12.0** adds owned timer/reminder sound controls and sound state. Prepared, not submitted or host-verified. The original Cursor application remains pending; notify Cursor instead of filing another application.
+
 > Candidate update, 2026-09-23: root/Grok/companion **0.11.0** adds local tool evaluation, timer/reminder controls, and calendar reads. Prepared; not submitted or host-verified. The prior publisher application remains awaiting review. Notify Cursor of the new candidate rather than filing a duplicate application.
 
 > September 13, 2026: candidate **0.10.0** prepared. Synthetic Grok Bot local execution and visible image delivery passed; marketplace application remains pending.
 
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.11.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.12.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 

@@ -9,10 +9,12 @@ final class QuickToolsModel: ObservableObject {
     @Published private(set) var deadline: Date?
     @Published private(set) var pausedSeconds: TimeInterval?
     @Published private(set) var finished = false
+    @Published var soundEnabled = true
+    @Published private(set) var startingActivity = false
     private var alarm: Timer?
     private(set) var timerID: String?
     var timerAgentOwner: String?
-    var onFinish: () -> Void = { NSSound.beep() }
+    var onFinish: () -> Void = { QuickCompletionSound.play() }
     var timerActive: Bool { deadline != nil || pausedSeconds != nil || finished }
 
     func update(_ input: String) {
@@ -29,7 +31,7 @@ final class QuickToolsModel: ObservableObject {
 
     func start(seconds: TimeInterval, now: Date = Date()) {
         alarm?.invalidate()
-        if pausedSeconds == nil { timerID = UUID().uuidString; timerAgentOwner = nil }
+        if pausedSeconds == nil { timerID = UUID().uuidString; timerAgentOwner = nil; soundEnabled = true }
         deadline = now.addingTimeInterval(seconds)
         pausedSeconds = nil
         finished = false
@@ -38,12 +40,34 @@ final class QuickToolsModel: ObservableObject {
         }
     }
 
+    /// Parsing stays side-effect free. Return, a labeled button, or a completed
+    /// spoken request explicitly commits only timers and complete reminders.
+    func startActivity(_ requested: QuickTool? = nil, reminders: ReminderStore? = nil) async -> Bool {
+        guard !startingActivity else { return false }
+        switch requested ?? tool {
+        case .timer(let seconds):
+            guard !timerActive else { feedback = "A timer is already running. Use its widget to pause or cancel it."; return false }
+            soundEnabled = true
+            start(seconds: seconds)
+            return true
+        case .reminder(let draft):
+            guard draft.hasExplicitTime else { return false }
+            startingActivity = true
+            defer { startingActivity = false }
+            do {
+                _ = try await (reminders ?? .shared).create(draft)
+                return true
+            } catch { feedback = error.localizedDescription; return false }
+        default: return false
+        }
+    }
+
     func tick(now: Date = Date()) {
         guard let deadline, now >= deadline else { return }
         alarm?.invalidate(); alarm = nil
         self.deadline = nil
         finished = true
-        onFinish()
+        if soundEnabled { onFinish() }
     }
 
     func pause(now: Date = Date()) {
@@ -111,7 +135,13 @@ struct QuickToolsView: View {
                 .textFieldStyle(.plain).font(MM.Fonts.bodyInput).focused($focused)
                 .padding(MM.Layout.padding)
                 .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
-                .onSubmit { model.save() }
+                .onSubmit {
+                    switch model.tool {
+                    case .timer, .reminder:
+                        Task { @MainActor in if await model.startActivity() { onDismiss() } }
+                    default: model.save()
+                    }
+                }
             ScrollView {
                 VStack(alignment: .leading, spacing: MM.Layout.spacing) {
                     if text.isEmpty {
@@ -122,7 +152,7 @@ struct QuickToolsView: View {
                             Button(example) { text = example }.buttonStyle(.plain).clickable()
                                 .font(MM.Fonts.body)
                         }
-                    } else { QuickToolCard(model: model) }
+                    } else { QuickToolCard(model: model, onActivityStarted: onDismiss) }
                     if !model.tool.isTimer { QuickTimerStatus(model: model) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -139,6 +169,8 @@ struct QuickToolsView: View {
 struct QuickToolCard: View {
     @ObservedObject var model: QuickToolsModel
     var onTyping: () -> Void = {}
+    var onActivityStarted: () -> Void = {}
+    var reminders: ReminderStore? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing) {
@@ -173,7 +205,7 @@ struct QuickToolCard: View {
         case .note(let text): Text(text).font(MM.Fonts.body).textSelection(.enabled)
         case .incomplete(_, let help): Text(help).font(MM.Fonts.body)
         case .calculator: QuickCalculatorInput(onTyping: onTyping)
-        case .reminder(let draft): QuickReminderInput(draft: draft, onTyping: onTyping)
+        case .reminder(let draft): QuickReminderInput(model: model, draft: draft, onTyping: onTyping, onStarted: onActivityStarted, reminders: reminders)
         case .calculation(_, let result):
             Text(QuickTool.number(result)).font(MM.Fonts.result).textSelection(.enabled)
         case .conversion(_, let result, let unit):
@@ -199,7 +231,7 @@ struct QuickToolCard: View {
                 }.buttonStyle(.plain).accessibilityLabel("\(items[index]), \(model.checked.contains(index) ? "checked" : "unchecked")")
             }
         case .timer(let seconds):
-            QuickTimerRow(model: model, seconds: seconds)
+            QuickTimerRow(model: model, seconds: seconds, onStarted: onActivityStarted)
         case .split(let cents, let people, let currency):
             Text("\(currency)\(QuickTool.money(cents)) total").font(MM.Fonts.body)
             Stepper("\(people) people", value: Binding(get: { people }, set: {
@@ -262,8 +294,11 @@ private struct QuickCalculatorInput: View {
 }
 
 private struct QuickReminderInput: View {
+    @ObservedObject var model: QuickToolsModel
     let draft: ReminderDraft
     var onTyping: () -> Void
+    var onStarted: () -> Void
+    var reminders: ReminderStore?
     @State private var title = ""
     @State private var date = Date()
     @State private var feedback = ""
@@ -284,16 +319,17 @@ private struct QuickReminderInput: View {
                 Button {
                     saving = true
                     Task { @MainActor in
-                        feedback = await ReminderStore.shared.add(.init(title: title, date: date))
-                        saved = feedback.hasPrefix("Reminder set")
+                        saved = await model.startActivity(.reminder(.init(title: title, date: date)), reminders: reminders)
+                        feedback = saved ? "Reminder set" : model.feedback
                         saving = false
+                        if saved { onStarted() }
                     }
                 } label: {
                     Text(saving ? "Setting…" : saved ? "Set" : "Set reminder").font(MM.Fonts.secondary)
                         .foregroundStyle(MM.Colors.onAccent)
                         .padding(.horizontal, MM.Layout.padding).padding(.vertical, MM.Layout.spacing / 2)
                         .background(MM.Colors.accent, in: Capsule()).clickable()
-                }.buttonStyle(.plain).disabled(saving || saved || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.buttonStyle(.plain).disabled(saving || saved || model.startingActivity || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if !feedback.isEmpty { Text(feedback).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary) }
         }
@@ -315,6 +351,7 @@ struct QuickTimerStatus: View {
 private struct QuickTimerRow: View {
     @ObservedObject var model: QuickToolsModel
     let seconds: TimeInterval
+    var onStarted: () -> Void = {}
 
     var body: some View {
         HStack(spacing: MM.Layout.spacing) {
@@ -331,7 +368,11 @@ private struct QuickTimerRow: View {
             if !model.finished {
                 Button {
                     if model.deadline != nil { model.pause() }
-                    else { model.start(seconds: model.pausedSeconds ?? seconds) }
+                    else {
+                        if !model.timerActive { model.soundEnabled = true }
+                        model.start(seconds: model.pausedSeconds ?? seconds)
+                        onStarted()
+                    }
                 } label: {
                     Text(model.deadline != nil ? "Pause" : model.pausedSeconds != nil ? "Resume" : "Start")
                         .font(MM.Fonts.secondary)

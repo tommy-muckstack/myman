@@ -197,6 +197,7 @@ struct QuickActivityWidget: View {
                     .font(MM.Fonts.title).monospacedDigit()
             }
             Spacer(minLength: 0)
+            soundButton(enabled: timer.soundEnabled) { timer.soundEnabled.toggle() }
             if !timer.finished {
                 Button(timer.deadline == nil ? "Resume" : "Pause") {
                     if timer.deadline != nil { timer.pause() }
@@ -217,8 +218,19 @@ struct QuickActivityWidget: View {
                     .font(MM.Fonts.title).monospacedDigit()
             }
             Spacer(minLength: 0)
+            soundButton(enabled: reminder.playsSound) {
+                Task { try? await reminders.setSoundEnabled(!reminder.playsSound, for: reminder.id) }
+            }
             Button { reminders.dismiss(reminder.id) } label: { IconView(icon: .close).clickable() }
                 .buttonStyle(.plain).help("Dismiss reminder").accessibilityLabel("Dismiss reminder: \(reminder.title)")
         }.padding(.horizontal, MM.Layout.padding).frame(height: 76)
+    }
+
+    private func soundButton(enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            IconView(icon: enabled ? .bell : .bellOff, color: enabled ? MM.Colors.accent : MM.Colors.textTertiary).clickable()
+        }.buttonStyle(.plain)
+            .accessibilityLabel(enabled ? "Turn sound off" : "Turn sound on")
+            .help(enabled ? "Sound on · Click to mute" : "Sound off · Click to enable")
     }
 }

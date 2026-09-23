@@ -1,5 +1,5 @@
 {
-  "version": "0.11.0",
+  "version": "0.12.0",
   "actions": [
     {
       "name": "app.status",
@@ -3769,6 +3769,10 @@
             "type": "number",
             "minimum": 1,
             "maximum": 86400
+          },
+          "sound_enabled": {
+            "type": "boolean",
+            "description": "Play a completion sound. Defaults to true."
           }
         },
         "required": [
@@ -3817,6 +3821,10 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 100
+          },
+          "sound_enabled": {
+            "type": "boolean",
+            "description": "Play a completion sound. Defaults to true."
           }
         },
         "required": [
@@ -3957,6 +3965,60 @@
         },
         "required": [
           "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "timer.sound",
+      "description": "Enable or mute the completion sound of a timer owned by this agent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_id",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "library"
+      ]
+    },
+    {
+      "name": "reminder.sound",
+      "description": "Enable or mute the completion sound of a reminder owned by this agent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "enabled"
         ],
         "additionalProperties": false
       },

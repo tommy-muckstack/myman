@@ -12,15 +12,17 @@ import Foundation
         case "timer.start":
             guard !timer.timerActive else { throw AgentError("BUSY", "A timer already exists. Inspect timer.status before changing it.") }
             timer.start(seconds: args["seconds"] as! Double)
+            timer.soundEnabled = args["sound_enabled"] as? Bool ?? true
             timer.timerAgentOwner = owner
             return timerStatus(timer)
         case "timer.status": return timerStatus(timer)
-        case "timer.pause", "timer.resume", "timer.cancel":
+        case "timer.pause", "timer.resume", "timer.cancel", "timer.sound":
             guard timer.timerActive, args["session_id"] as? String == timer.timerID else {
                 throw AgentError("SESSION_MISMATCH", "This timer is no longer active. Inspect timer.status.")
             }
             guard timer.timerAgentOwner == owner else { throw AgentError("NOT_OWNER", "Only the timer’s creating agent or human controls can change it.") }
             if action == "timer.cancel" { timer.stop() }
+            else if action == "timer.sound" { timer.soundEnabled = args["enabled"] as! Bool }
             else if action == "timer.pause" { timer.pause() }
             else if let seconds = timer.pausedSeconds { timer.start(seconds: seconds) }
             return timerStatus(timer)
@@ -32,13 +34,16 @@ import Foundation
             if let seconds = args["seconds"] as? Double { date = Date().addingTimeInterval(seconds) }
             else if let parsed = timestamp(args["at"] as? String ?? "") { date = parsed }
             else { throw AgentError("INVALID_ARGUMENTS", "at must be an ISO 8601 timestamp with a time-zone offset.") }
-            return reminderJSON(try await reminders.create(.init(title: args["message"] as! String, date: date), owner: owner))
+            return reminderJSON(try await reminders.create(.init(title: args["message"] as! String, date: date), owner: owner, soundEnabled: args["sound_enabled"] as? Bool ?? true))
         case "reminder.list": return ["reminders": reminders.reminders.map(reminderJSON)]
-        case "reminder.cancel":
+        case "reminder.cancel", "reminder.sound":
             guard let reminder = reminders.reminders.first(where: { $0.id.uuidString == args["id"] as? String }) else {
                 throw AgentError("NOT_FOUND", "Reminder not found.")
             }
             guard reminder.agentOwner == owner else { throw AgentError("NOT_OWNER", "Only the reminder’s creating agent or human controls can dismiss it.") }
+            if action == "reminder.sound" {
+                return reminderJSON(try await reminders.setSoundEnabled(args["enabled"] as! Bool, for: reminder.id))
+            }
             reminders.dismiss(reminder.id)
             return ["dismissed": reminder.id.uuidString]
         case "calendar.list":
@@ -69,7 +74,7 @@ import Foundation
 
     static func timerStatus(_ timer: QuickToolsModel) -> [String: Any] {
         var result: [String: Any] = ["active": timer.timerActive, "state": timer.finished ? "finished" : timer.pausedSeconds != nil ? "paused" : timer.deadline != nil ? "running" : "idle",
-                                  "requires_app_open": true]
+                                  "requires_app_open": true, "sound_enabled": timer.soundEnabled]
         if let id = timer.timerID { result["session_id"] = id }
         if let deadline = timer.deadline { result["deadline"] = ISO8601DateFormatter().string(from: deadline) }
         result["remaining_seconds"] = max(0, timer.deadline?.timeIntervalSinceNow ?? timer.pausedSeconds ?? 0)
@@ -79,7 +84,8 @@ import Foundation
     static func reminderJSON(_ reminder: LocalReminder) -> [String: Any] {
         ["id": reminder.id.uuidString, "message": reminder.title,
          "at": ISO8601DateFormatter().string(from: reminder.date), "due": reminder.fired || reminder.date <= Date(),
-         "notification_scheduled": reminder.notificationScheduled, "requires_app_open": !reminder.notificationScheduled]
+         "notification_scheduled": reminder.notificationScheduled, "requires_app_open": !reminder.notificationScheduled,
+         "sound_enabled": reminder.playsSound]
     }
 
     static func evaluate(_ input: String) -> [String: Any] {
