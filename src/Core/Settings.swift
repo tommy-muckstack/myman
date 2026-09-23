@@ -306,8 +306,11 @@ struct SettingsPanelView: View {
                     .font(MM.Fonts.title)
                     .foregroundStyle(MM.Colors.textPrimary)
                 Spacer()
-                Button(action: onDismiss) { IconView(icon: .close, size: 16, color: MM.Colors.textTertiary) }
-                    .buttonStyle(.plain).accessibilityLabel("Close settings").clickable(minSize: 32)
+                Button(action: onDismiss) {
+                    IconView(icon: .close, size: 16, color: MM.Colors.textTertiary)
+                        .clickable(minSize: 32)
+                }
+                .buttonStyle(.plain).accessibilityLabel("Close settings")
             }
             .padding(.horizontal, MM.Layout.paddingLarge)
             .padding(.vertical, MM.Layout.padding)
