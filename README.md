@@ -30,9 +30,9 @@ Everything you capture lands in **`~/MyManBrain`** as plain markdown in a git re
 
 ## Finding and remembering
 
-An optional **Settings → General → Appearance → Adaptive launcher (experimental)**
-starts My Man with one input field. It is **off by default**; the classic launcher
-remains the default. Reopen the launcher after changing the setting. Explicit
+My Man opens with one input for search, tools and capture actions. This is the
+standard launcher; no separate Adaptive setting is needed. Dark is the default,
+with Light available in Settings. Explicit
 “find…” requests search saved captures; “make…” requests preview a new note or
 tool. Ambiguous text offers **Search existing** and **Create new**, and either
 choice can override the suggested route. Screenshots and recordings start only
@@ -44,7 +44,7 @@ for a timed message. Timers and reminders share a small countdown widget that
 expands on hover. Reminders can notify while My Man is closed when notifications
 are allowed. Type `/` to browse and filter commands.
 
-With Adaptive enabled, opening the launcher starts local voice-to-text listening
+Opening the launcher starts local voice-to-text listening
 after microphone permission and model readiness. Pause after speaking to append
 words to the same field. Typing immediately stops listening and discards pending
 speech. Turning the mic off pauses automatic listening for one hour, including
