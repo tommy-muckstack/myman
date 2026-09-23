@@ -52,8 +52,7 @@ prepare a message and deadline. `reminder` opens a compact title/date editor;
 reminder button or Return confirms typed previews; typing or parsing never schedules an alert. A complete spoken timer/reminder request submits automatically after the pause. “Set a timer for thirty seconds to remind me to take a pizza out of the oven” creates a message reminder. Missing or invalid deadlines stay editable; a running timer is never silently replaced.
 
 Reminders persist locally across restarts. With notification permission, macOS
-schedules the alert even while My Man is closed. Without permission, the UI explains
-that My Man must remain open. Due reminders remain in the widget until dismissed.
+schedules the alert even while My Man is closed. Without permission, My Man must remain open to deliver the alert. Due reminders remain in the widget until dismissed.
 
 Starting a timer or setting a reminder shows one top-right countdown widget. Hover
 or click expands it to timer controls and reminder messages; leaving collapses it.
