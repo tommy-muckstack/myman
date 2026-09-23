@@ -2,13 +2,46 @@ import AppKit
 import Foundation
 import UserNotifications
 
+@MainActor enum QuickCompletionSound {
+    private static var chime: NSSound?
+    static func play() {
+        if chime == nil { chime = NSSound(named: NSSound.Name("Glass")) }
+        if let chime { chime.stop(); chime.play() }
+        else { NSSound.beep() }
+    }
+}
+
+enum QuickTimerRequest {
+    static func commandText(_ input: String) -> String {
+        input.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"[.!?]+$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)^(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:please\s+)?"#, with: "", options: .regularExpression)
+    }
+
+    static func messageReminder(_ input: String, now: Date) -> ReminderDraft? {
+        let text = commandText(input)
+        let prefix = #"(?i)^(?:(?:set|start)\s+(?:me\s+)?(?:a\s+)?)?timer(?:\s+for)?\s+"#
+        guard let range = text.range(of: prefix, options: .regularExpression) else { return nil }
+        let body = String(text[range.upperBound...])
+        let pattern = #"(?i)^(.+?)\s+(?:to remind me to|to remind me about|to remind me|for|to)\s+(.+)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: body, range: NSRange(body.startIndex..., in: body)),
+              let durationRange = Range(match.range(at: 1), in: body), let titleRange = Range(match.range(at: 2), in: body),
+              let seconds = QuickToolParser.duration(String(body[durationRange])) else { return nil }
+        return ReminderDraft(title: String(body[titleRange]), date: now.addingTimeInterval(seconds))
+    }
+}
+
 struct ReminderDraft: Equatable {
     var title: String
     var date: Date
+    /// Editor defaults are useful previews, but must not auto-submit as spoken deadlines.
+    var hasExplicitTime = true
 
     static func parse(_ input: String, now: Date = Date(), calendar: Calendar = .current) -> ReminderDraft? {
-        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix = #"(?i)^(?:remind me(?: to)?|reminder(?: to)?)(?:\s+|$)"#
+        if let timer = QuickTimerRequest.messageReminder(input, now: now) { return timer }
+        let text = QuickTimerRequest.commandText(input)
+        let prefix = #"(?i)^(?:remind me(?: to)?|(?:(?:set|create)\s+(?:a\s+)?)?reminder(?: to)?)(?:\s+|$)"#
         guard let range = text.range(of: prefix, options: .regularExpression) else { return nil }
         let body = String(text[range.upperBound...])
         if let parts = groups(#"(?i)^in\s+(.+?)\s+(?:for|to)\s+(.+)$"#, body),
@@ -29,7 +62,7 @@ struct ReminderDraft: Equatable {
                 return Self(title: parts[1], date: date)
             }
         }
-        return Self(title: body, date: now.addingTimeInterval(3_600))
+        return Self(title: body, date: now.addingTimeInterval(3_600), hasExplicitTime: false)
     }
 
     private static func groups(_ pattern: String, _ text: String) -> [String]? {
@@ -46,6 +79,9 @@ struct LocalReminder: Identifiable, Codable, Equatable {
     var agentOwner: String? = nil
     var fired = false
     var notificationScheduled = false
+    // Optional on disk so reminders saved before this setting still decode.
+    var soundEnabled: Bool? = nil
+    var playsSound: Bool { soundEnabled ?? true }
     var notificationID: String { "myman.reminder." + id.uuidString }
 }
 
@@ -56,12 +92,14 @@ struct LocalReminder: Identifiable, Codable, Equatable {
     private let schedule: @MainActor (LocalReminder) async -> Bool
     private let cancelNotification: @MainActor (String) -> Void
     private let alert: @MainActor () -> Void
+    private var notificationTasks: [UUID: Task<Bool, Never>] = [:]
+    private var notificationGenerations: [UUID: UUID] = [:]
     private static let key = "localReminders.v1"
 
     init(defaults: UserDefaults = .standard,
          schedule: (@MainActor (LocalReminder) async -> Bool)? = nil,
          cancelNotification: (@MainActor (String) -> Void)? = nil,
-         alert: @escaping @MainActor () -> Void = { NSSound.beep() }) {
+         alert: @escaping @MainActor () -> Void = { QuickCompletionSound.play() }) {
         self.defaults = defaults
         self.schedule = schedule ?? Self.scheduleNotification
         self.cancelNotification = cancelNotification ?? Self.cancelNotification
@@ -76,27 +114,65 @@ struct LocalReminder: Identifiable, Codable, Equatable {
         } catch { return error.localizedDescription }
     }
 
-    func create(_ draft: ReminderDraft, owner: String? = nil, now: Date = Date()) async throws -> LocalReminder {
+    func create(_ draft: ReminderDraft, owner: String? = nil, soundEnabled: Bool = true, now: Date = Date()) async throws -> LocalReminder {
         let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.count <= 500 else { throw AgentError("INVALID_ARGUMENTS", "Add a reminder title of 1–500 characters.") }
         guard draft.date > now else { throw AgentError("INVALID_ARGUMENTS", "Choose a future time.") }
         guard reminders.count < 32 else { throw AgentError("LIMIT_REACHED", "Dismiss a reminder before adding another.") }
-        let reminder = LocalReminder(id: UUID(), title: title, date: draft.date, agentOwner: owner)
+        let reminder = LocalReminder(id: UUID(), title: title, date: draft.date, agentOwner: owner, soundEnabled: soundEnabled)
         reminders.append(reminder)
         persist()
-        let scheduled = await schedule(reminder)
+        await refreshNotification(reminder.id)
         guard let index = reminders.firstIndex(where: { $0.id == reminder.id }) else {
-            cancelNotification(reminder.notificationID)
             throw AgentError("CANCELLED", "Reminder dismissed")
         }
-        reminders[index].notificationScheduled = scheduled
-        persist()
         return reminders[index]
+    }
+
+    @discardableResult func setSoundEnabled(_ enabled: Bool, for id: UUID) async throws -> LocalReminder {
+        guard let index = reminders.firstIndex(where: { $0.id == id }) else { throw AgentError("NOT_FOUND", "Reminder not found.") }
+        reminders[index].soundEnabled = enabled
+        reminders[index].notificationScheduled = false
+        cancelNotification(reminders[index].notificationID)
+        persist()
+        await refreshNotification(id)
+        guard let updated = reminders.first(where: { $0.id == id }) else { throw AgentError("CANCELLED", "Reminder dismissed") }
+        return updated
+    }
+
+    /// Serialize replacement requests so an older permission/schedule callback
+    /// cannot restore a sound after mute or resurrect a dismissed reminder.
+    private func refreshNotification(_ id: UUID) async {
+        let previous = notificationTasks[id]
+        let generation = UUID()
+        notificationGenerations[id] = generation
+        let task = Task { @MainActor [weak self] in
+            if let previous { _ = await previous.value }
+            guard let self, self.notificationGenerations[id] == generation,
+                  let reminder = self.reminders.first(where: { $0.id == id }), !reminder.fired, reminder.date > Date() else { return false }
+            let scheduled = await self.schedule(reminder)
+            guard self.notificationGenerations[id] == generation, self.reminders.contains(where: { $0.id == id }) else {
+                self.cancelNotification(reminder.notificationID)
+                return false
+            }
+            return scheduled
+        }
+        notificationTasks[id] = task
+        let scheduled = await task.value
+        guard notificationGenerations[id] == generation else { return }
+        notificationTasks[id] = nil
+        notificationGenerations[id] = nil
+        if let index = reminders.firstIndex(where: { $0.id == id }) {
+            reminders[index].notificationScheduled = scheduled
+            persist()
+        }
     }
 
     func dismiss(_ id: UUID) {
         guard let reminder = reminders.first(where: { $0.id == id }) else { return }
         reminders.removeAll { $0.id == id }
+        notificationGenerations[id] = nil
+        notificationTasks[id] = nil
         cancelNotification(reminder.notificationID)
         persist()
     }
@@ -106,7 +182,7 @@ struct LocalReminder: Identifiable, Codable, Equatable {
         var shouldAlert = false
         for index in reminders.indices where !reminders[index].fired && reminders[index].date <= now {
             reminders[index].fired = true
-            shouldAlert = shouldAlert || !reminders[index].notificationScheduled
+            shouldAlert = shouldAlert || (!reminders[index].notificationScheduled && reminders[index].playsSound)
             changed = true
         }
         if changed { persist() }
@@ -131,7 +207,8 @@ struct LocalReminder: Identifiable, Codable, Equatable {
             let content = UNMutableNotificationContent()
             content.title = "Reminder"
             content.body = reminder.title
-            content.sound = .default
+            guard reminder.date > Date() else { return false }
+            content.sound = reminder.playsSound ? .default : nil
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, reminder.date.timeIntervalSinceNow), repeats: false)
             try await center.add(UNNotificationRequest(identifier: reminder.notificationID, content: content, trigger: trigger))
             return true

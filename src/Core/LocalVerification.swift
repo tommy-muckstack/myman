@@ -60,7 +60,7 @@ import GRDB
             let capture = CaptureController(), meetings = MeetingController(), voice = VoiceController()
             let actions = AgentActions(capture: capture, meetings: meetings, voice: voice)
             capture.meetingIDProvider = { meetings.activeCaptureMeetingID }
-            let launcher = LauncherPanelController(actions: { [] }, openNote: { NoteDocumentController.shared.open($0) }, openScreenshot: { capture.openInEditor(fileURL: $0) }, saveQueryAsNote: { _ in }, openChat: {})
+            let launcher = LauncherPanelController(actions: { [] }, saveQueryAsNote: { _ in })
             actions.openSurface = { surface in
                 switch surface { case "settings": SettingsController.shared.show(); case "note": NoteDocumentController.shared.open(Note(body: "Verification draft")); case "briefs": AgentBriefWindow.shared.open(); case "workflows": WorkflowCenter.shared.open(); default: launcher.open() }
             }

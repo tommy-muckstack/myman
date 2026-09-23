@@ -2498,6 +2498,7 @@ struct MeetingPillView: View {
 /// Level history drawn newest-on-the-right, as many bars as the width holds.
 struct WaveformBars: View {
     let levels: [Float]
+    var color: Color = MM.Colors.accent
     static let barWidth: CGFloat = 2
     static let gap: CGFloat = 2
     static let compactWidth: CGFloat = 16 * (barWidth + gap) - gap
@@ -2509,7 +2510,7 @@ struct WaveformBars: View {
             HStack(spacing: Self.gap) {
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, level in
                     Capsule()
-                        .fill(MM.Colors.accent)
+                        .fill(color)
                         .frame(width: Self.barWidth, height: 3 + CGFloat(min(1, level * 6)) * 12)
                 }
             }

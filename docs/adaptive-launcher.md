@@ -1,9 +1,6 @@
-# Adaptive launcher experiment
+# My Man launcher
 
-The `adaptiveLauncher` preference defaults to false. The existing launcher and
-its task/calendar side panels remain the default. Enabling the setting replaces
-the launcher with an input-first surface on the next opening; no migration,
-default change, hosted API, classifier model download or new dependency is involved.
+The input-first launcher is the standard experience from 1.1.96 onward. There is no Adaptive Launcher toggle; legacy values of `adaptiveLauncher` are ignored. Tasks and calendar open inline, and shortcut tiles retain quick access and recents. No hosted API, classifier model download or new dependency is involved. The app appearance defaults to Dark; Settings retains Light and preserves saved choices.
 
 The classifier adds no model download. Auto-listening uses MyMan's existing
 Parakeet speech engine, which may download its models on first use.
@@ -52,7 +49,7 @@ running; completion is an app sound, not a scheduled system notification.
 `reminder in 10m for taking pizza out` and `remind me to take pizza out in 10 minutes`
 prepare a message and deadline. `reminder` opens a compact title/date editor;
 `remind me to call Sam tomorrow at 9am` supports an absolute local time. The Set
-reminder button confirms the preview; typing or parsing never schedules an alert.
+reminder button or Return confirms typed previews; typing or parsing never schedules an alert. A complete spoken timer/reminder request submits automatically after the pause. “Set a timer for thirty seconds to remind me to take a pizza out of the oven” creates a message reminder. Missing or invalid deadlines stay editable; a running timer is never silently replaced.
 
 Reminders persist locally across restarts. With notification permission, macOS
 schedules the alert even while My Man is closed. Without permission, the UI explains
@@ -61,14 +58,14 @@ that My Man must remain open. Due reminders remain in the widget until dismissed
 Starting a timer or setting a reminder shows one top-right countdown widget. Hover
 or click expands it to timer controls and reminder messages; leaving collapses it.
 Multiple activities share the widget, with the next deadline shown when collapsed.
-The widget avoids the meeting recorder, does not take keyboard focus, and respects
+Successful timer/reminder submission closes the center panel. The expanded widget has a bell toggle per activity: sound starts on, mute is retained while paused and for persisted reminders, and macOS notification sound is updated too. In-app completion uses the Glass chime; scheduled notifications use the system notification sound. The widget avoids the meeting recorder, does not take keyboard focus, and respects
 Reduce Motion. Its fixed-size window is resized asynchronously outside layout.
 
 ## Shortcut access
 
-The empty Adaptive input keeps the classic action tiles and hotkey hints beneath
+The empty input keeps the classic action tiles and hotkey hints beneath
 it. Hovering a capture tile reveals its recent captures using the same library
-view. Typing replaces that row with the relevant result.
+view. Quick Tools hover/click expands all eight tools in that same panel; selecting one opens it inline. The visible slash hint is removed, while `/` still opens commands. Typing replaces the shortcut row with the relevant result.
 
 ## Agent access
 
@@ -80,8 +77,7 @@ Existing native grants apply; see [the CLI guide](agent-cli.md).
 
 Results measure their own height up to a 320pt scroll limit. Window resizing remains
 deferred by the existing panel controller. Tasks and calendar use full-width inline
-lists, small empty states, and a week selector; classic companion panels keep their
-existing layouts. The muted microphone uses the supplied `micOff` SVG path.
+lists, small empty states, and a week selector. The muted microphone uses the supplied `micOff` SVG path.
 
 `8am in Iceland` means today's 8am in Iceland expressed in the Mac's time zone.
 `8am New York to Iceland` specifies both ends; `8am to Iceland` starts locally.
@@ -99,20 +95,20 @@ copies its own hex code; the result's Copy/Save actions retain the entered base 
 
 ## Voice input
 
-The listening footer says “Speak or type” and uses the meeting recorder’s waveform.
+The input placeholder says “Speak or Type to Search or Create”. A gray version of the meeting recorder’s waveform sits beside the microphone; listening has no separate footer.
 
-Only the enabled adaptive launcher's controller automatically starts listening,
+The launcher's controller automatically starts listening,
 after the panel is visible. It uses a raw session on `AudioCapture.shared`, avoiding
 a second microphone engine or a new voice-processing request. Parakeet transcribes
 utterances locally after a pause. The microphone stops at the first pause (about one second), transcribes that
 request once, and stays off. The completed text is routed immediately to its result.
 Spoken arithmetic such as “what’s one plus one” uses the local calculator.
-Capture, reminder creation, and note saving still use their explicit controls. Editing the input stops listening immediately
-and rejects pending transcription.
+Complete spoken timers and reminders submit once and close the launcher. Incomplete reminders, capture, and note saving still use their explicit controls. Editing the input stops listening immediately
+and rejects pending transcription. Clearing the input resets it and starts listening again, unless the one-hour listening pause is active.
 Turning off the microphone explicitly persists a one-hour pause in UserDefaults
 (`adaptiveListeningPausedUntil`). New panels respect that timestamp; automatic
 listening resumes on the next opening after expiry. It never interrupts ongoing
-typing when the hour expires. The mic button or General → Appearance → Reset can
+typing when the hour expires. The mic button or General → Launcher → Reset can
 clear the pause early. Closing the panel only stops its session; it does not snooze.
 
 The panel's dismissal callback explicitly stops capture; relying on SwiftUI
@@ -184,3 +180,6 @@ without the environment variable. It does not save notes or start recording.
 
 `QuickReminderTests` verifies natural-language messages, persistence, one-shot due
 alerts, cancellation while notification permission is pending, and widget geometry.
+
+When input is populated, a generous text-only **Clear** button replaces the microphone and Settings buttons. Clear restores the empty launcher and automatic listening, while respecting a one-hour listening pause. Both `set timer for 5m` and `timer 5m` preview five minutes; Return starts the timer and dismisses the launcher.
+The input always reserves the same leading icon space: Search by default, then the recognized tool/action icon. Recognition never moves the text horizontally.

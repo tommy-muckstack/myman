@@ -17,6 +17,7 @@ struct AdaptiveLauncherView: View {
     @StateObject private var filters = CaptureLibraryFilters()
     @State private var libraryMode: CaptureLibraryMode = .search
     @ObservedObject var tools = QuickToolsController.shared.model
+    var reminders: ReminderStore? = nil
     @FocusState private var focused: Bool
 
     private var effectiveIntent: AdaptiveLauncherIntent {
@@ -27,15 +28,16 @@ struct AdaptiveLauncherView: View {
     }
     private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var resolvedAction: LauncherAction? {
-        guard case .action(let id) = effectiveIntent else { return nil }
+        guard case .action(let id) = effectiveIntent, id != "quick_tools" else { return nil }
         return actions.first { $0.id == id }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: MM.Layout.spacing) {
-                if effectiveIntent == .create, let icon = tools.tool.icon { IconView(icon: icon) }
-                TextField(showingCommands ? "Search commands…" : "Find something or make something…", text: Binding(get: { query }, set: {
+                IconView(icon: effectiveIntent == .create ? (tools.tool.icon ?? .search) : (resolvedAction?.icon ?? .search))
+                    .accessibilityHidden(true)
+                TextField(showingCommands ? "Search commands…" : "Speak or Type to Search or Create", text: Binding(get: { query }, set: {
                     guard query != $0 else { return }
                     voice.stop()
                     if $0.hasPrefix(dictatedPrefix) {
@@ -45,7 +47,10 @@ struct AdaptiveLauncherView: View {
                         showingCommands = true
                         routing = AdaptiveLauncherRouting()
                         query = String($0.dropFirst())
-                    } else { query = $0 }
+                    } else {
+                        query = $0
+                        if $0.isEmpty { showingCommands = false; voice.startAutomatically() }
+                    }
                 }))
                     .textFieldStyle(.plain).font(MM.Fonts.bodyInput).focused($focused)
                     .onSubmit { submit() }
@@ -81,16 +86,30 @@ struct AdaptiveLauncherView: View {
                         .accessibilityLabel("Request options").help("Request options")
                 }
                 if effectiveIntent == .search { CaptureFilterMenu(mode: $libraryMode, filters: filters) }
-                Button { voice.toggle() } label: {
-                    IconView(icon: voice.enabled ? .mic : .micOff,
-                             color: voice.enabled ? MM.Colors.accent : MM.Colors.textTertiary).clickable()
-                }.buttonStyle(.plain)
-                    .accessibilityLabel(voice.enabled ? "Pause listening for one hour" : "Start listening")
-                    .help(voice.enabled ? voice.status + " · Pause for 1 hour" : "Start listening · Clears any listening pause")
-                Button {
-                    onDismiss(); SettingsController.shared.show()
-                } label: { IconView(icon: .settings).clickable() }
-                    .buttonStyle(.plain).accessibilityLabel("Settings")
+                if !query.isEmpty {
+                    Button { clearInput() } label: {
+                        Text("Clear").font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                            .padding(.horizontal, MM.Layout.spacing / 2)
+                            .frame(minWidth: 60, minHeight: 28)
+                            .contentShape(Rectangle()).clickable()
+                    }.buttonStyle(.plain).accessibilityLabel("Clear input")
+                } else {
+                    if voice.phase == .listening {
+                        WaveformBars(levels: voice.levels, color: MM.Colors.textTertiary)
+                            .frame(width: WaveformBars.compactWidth, height: 18)
+                            .accessibilityLabel("Microphone sound level")
+                    }
+                    Button { voice.toggle() } label: {
+                        IconView(icon: voice.enabled ? .mic : .micOff,
+                                 color: voice.enabled ? MM.Colors.accent : MM.Colors.textTertiary).clickable()
+                    }.buttonStyle(.plain)
+                        .accessibilityLabel(voice.enabled ? "Pause listening for one hour" : "Start listening")
+                        .help(voice.enabled ? voice.status + " · Pause for 1 hour" : "Start listening · Clears any listening pause")
+                    Button {
+                        onDismiss(); SettingsController.shared.show()
+                    } label: { IconView(icon: .settings).clickable() }
+                        .buttonStyle(.plain).accessibilityLabel("Settings")
+                }
             }.padding(MM.Layout.padding)
 
             if resolvedAction != nil {
@@ -101,9 +120,8 @@ struct AdaptiveLauncherView: View {
             } else {
                 Divider().overlay(MM.Colors.border)
                 AdaptiveQuickActions(actions: actions, libraryModel: libraryModel,
-                                     onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote)
+                                     onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, onSelectTool: openTool)
                 HStack {
-                    Text("Type / for actions and tools").font(MM.Fonts.metadata)
                     Spacer()
                     Button("Browse library") { routing.selection = .search; query = "find " }
                         .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
@@ -113,14 +131,9 @@ struct AdaptiveLauncherView: View {
             if effectiveIntent != .create || !tools.tool.isTimer {
                 QuickTimerStatus(model: tools)
             }
-            if voice.phase != .off {
+            if voice.phase != .off && voice.phase != .listening {
                 HStack(spacing: MM.Layout.spacing) {
                     Text(voice.status).font(MM.Fonts.metadata)
-                    if voice.phase == .listening {
-                        WaveformBars(levels: voice.levels)
-                            .frame(width: WaveformBars.compactWidth, height: 18)
-                            .accessibilityLabel("Microphone sound level")
-                    }
                     if voice.phase == .denied {
                         Button("Microphone settings") { Permission.microphone.request() }
                             .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
@@ -149,6 +162,17 @@ struct AdaptiveLauncherView: View {
                 dictatedPrefix = query.isEmpty ? "" : query + (query.last?.isWhitespace == true ? "" : " ")
                 query = AdaptiveLauncherVoice.appending(utterance.text, to: query)
                 correctionLearner.begin(utterance.text)
+                let input = query
+                // A completed, unambiguous spoken timer/reminder is a submit.
+                // Search mode and command browsing must never schedule anything.
+                if !showingCommands, routing.selection != .search, libraryMode == .search, !filters.active,
+                   AdaptiveLauncherIntent.resolve(input) == .create {
+                    let activity = QuickToolParser.parse(input)
+                    Task { @MainActor in
+                        guard voice.utterance?.id == utterance.id, query == input else { return }
+                        if await tools.startActivity(activity, reminders: reminders) { activityStarted() }
+                    }
+                }
             }
         }
         .onChange(of: query) { _, value in
@@ -174,9 +198,11 @@ struct AdaptiveLauncherView: View {
             CaptureLibraryView(query: Binding(get: { AdaptiveLauncherIntent.searchText(query) }, set: { query = $0 }),
                                mode: $libraryMode, controls: filters, onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, model: libraryModel)
         case .create:
-            AdaptiveResultScroll { QuickToolCard(model: tools, onTyping: { voice.stop() }) }
+            AdaptiveResultScroll { QuickToolCard(model: tools, onTyping: { voice.stop() }, onActivityStarted: activityStarted, reminders: reminders) }
         case .action(let id):
-            if let action = actions.first(where: { $0.id == id }) {
+            if id == "quick_tools" {
+                AdaptiveResultScroll { QuickToolMenu(onSelect: openTool) }
+            } else if let action = actions.first(where: { $0.id == id }) {
                 actionButton(action).padding(MM.Layout.padding)
             } else {
                 Text("This action isn’t available on this Mac.").font(MM.Fonts.body).padding(MM.Layout.padding)
@@ -247,7 +273,9 @@ struct AdaptiveLauncherView: View {
 
     private func actionButton(_ action: LauncherAction) -> some View {
         Button {
-            onDismiss(); action.run()
+            if action.id == "quick_tools" {
+                voice.stop(); showingCommands = false; query = "quick tools"; routing.update(query)
+            } else { onDismiss(); action.run() }
         } label: {
             HStack(spacing: MM.Layout.spacing) {
                 IconView(icon: action.icon)
@@ -258,6 +286,29 @@ struct AdaptiveLauncherView: View {
         }.buttonStyle(.plain).disabled(!action.enabled)
     }
 
+    private func clearInput() {
+        voice.stop()
+        correctionLearner.cancel()
+        dictatedPrefix = ""
+        showingCommands = false
+        routing = AdaptiveLauncherRouting()
+        filters.reset(); libraryMode = .search
+        query = ""
+        tools.update("")
+        focused = true
+        voice.startAutomatically()
+    }
+
+    private func openTool(_ input: String) {
+        voice.stop(); correctionLearner.cancel()
+        showingCommands = false
+        filters.reset(); libraryMode = .search
+        routing.selection = .create
+        query = input
+        tools.update(AdaptiveLauncherIntent.creationText(input))
+        focused = true
+    }
+
     private func submit() {
         switch effectiveIntent {
         case .search:
@@ -265,14 +316,21 @@ struct AdaptiveLauncherView: View {
         case .create:
             // A late model suggestion is a preview, never a new Return action.
             if routing.selection == .create || AdaptiveLauncherIntent.resolve(query) == .create {
-                if case .timer(let seconds) = tools.tool {
-                    if !tools.timerActive { tools.start(seconds: seconds) }
-                } else { tools.save() }
+                switch tools.tool {
+                case .timer, .reminder:
+                    Task { @MainActor in if await tools.startActivity(reminders: reminders) { activityStarted() } }
+                default: tools.save()
+                }
             }
         // Capture always requires selecting the labeled action. Return on a
         // classifier transition must never unexpectedly start a recording.
         default: break
         }
+    }
+
+    private func activityStarted() {
+        voice.stop()
+        onDismiss()
     }
 
     private func moveResult(_ command: String) -> KeyPress.Result {

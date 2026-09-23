@@ -14,11 +14,16 @@ final class AgentQuickToolsTests: XCTestCase {
         let result = try await call("timer.start", ["seconds": 600.0])
         let id = try XCTUnwrap(result["session_id"] as? String)
         XCTAssertEqual(result["state"] as? String, "running")
+        XCTAssertEqual(result["sound_enabled"] as? Bool, true)
+        do { _ = try await call("timer.sound", ["session_id": id, "enabled": false], owner: "agent-b"); XCTFail("Must enforce sound owner") } catch {}
+        let muted = try await call("timer.sound", ["session_id": id, "enabled": false])
+        XCTAssertEqual(muted["sound_enabled"] as? Bool, false)
         do { _ = try await call("timer.start", ["seconds": 10.0]); XCTFail("Must not replace timer") } catch {}
         do { _ = try await call("timer.cancel", ["session_id": id], owner: "agent-b"); XCTFail("Must enforce owner") } catch {}
         _ = try await call("timer.pause", ["session_id": id])
         let resumed = try await call("timer.resume", ["session_id": id])
         XCTAssertEqual(resumed["session_id"] as? String, id)
+        XCTAssertEqual(resumed["sound_enabled"] as? Bool, false)
         timer.stop() // Human can always dismiss an agent's widget.
         timer.start(seconds: 300)
         do { _ = try await call("timer.cancel", ["session_id": id]); XCTFail("Old ID must not cancel a new human timer") } catch {}
@@ -34,8 +39,15 @@ final class AgentQuickToolsTests: XCTestCase {
         XCTAssertEqual(result["message"] as? String, "Take pizza out")
         XCTAssertEqual(result["requires_app_open"] as? Bool, true)
         let id = try XCTUnwrap(result["id"] as? String)
+        do {
+            _ = try await AgentQuickTools.execute("reminder.sound", ["id": id, "enabled": false], timer: timer, reminders: store, owner: "agent-b")
+            XCTFail("Must enforce sound owner")
+        } catch {}
+        let muted = try await AgentQuickTools.execute("reminder.sound", ["id": id, "enabled": false], timer: timer, reminders: store, owner: "agent-a")
+        XCTAssertEqual(muted["sound_enabled"] as? Bool, false)
         let restored = ReminderStore(defaults: defaults, schedule: { _ in false }, cancelNotification: { _ in }, alert: {})
         XCTAssertEqual(restored.reminders.first?.agentOwner, "agent-a")
+        XCTAssertEqual(restored.reminders.first?.playsSound, false)
         do {
             _ = try await AgentQuickTools.execute("reminder.cancel", ["id": id], timer: timer, reminders: restored, owner: "agent-b")
             XCTFail("Must enforce owner")

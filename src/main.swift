@@ -44,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installMainMenu()
         CrashReporting.setup()
         MM.Fonts.registerFonts()
-        SettingsStore.shared.theme?.apply()
+        SettingsStore.shared.theme.apply()
         QuickActivityWidgetController.shared.start()
         Analytics.setup()
         _ = Database.shared
@@ -81,14 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         launcher = LauncherPanelController(
             actions: { [weak self] in self?.launcherActions() ?? [] },
-            openNote: { note in NoteDocumentController.shared.open(note) },
-            openScreenshot: { [weak self] url in self?.capture.openInEditor(fileURL: url) },
             saveQueryAsNote: { [weak self] text in
                 if let note = self?.notesStore.save(body: text, source: "search_empty_state", continueWriting: true) {
                     NoteDocumentController.shared.open(note, focusAtEnd: true)
                 }
-            },
-            openChat: { BrainChatController.shared.show() }
+            }
         )
         let actions = AgentActions(capture: capture, meetings: meetings, voice: voice)
         actions.openSurface = { [weak self] surface in

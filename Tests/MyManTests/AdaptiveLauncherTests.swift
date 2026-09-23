@@ -207,10 +207,11 @@ final class AdaptiveLauncherTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["MYMAN_ADAPTIVE_UI_REVIEW"] != nil else { throw XCTSkip("Opt-in native input verification") }
         _ = NSApplication.shared
         var ended = 0
+        let preferences = UserDefaults(suiteName: UUID().uuidString)!
         let voice = AdaptiveLauncherVoice(dependencies: .init(
             authorize: { true }, prepare: { true }, begin: { UUID() }, end: { _ in ended += 1; return [] },
             discard: { _ in }, level: { _ in 0 }, transcribe: { _ in "" }
-        ), automaticallyPoll: false)
+        ), automaticallyPoll: false, preferences: preferences)
         let panel = FloatingPanel(content: AdaptiveLauncherView(actions: [], voice: voice,
             onSaveQueryAsNote: { _ in }, onDismiss: {}, onSizeChange: { _ in }, tools: QuickToolsModel()), fixedSize: true)
         panel.isReleasedWhenClosed = false
@@ -240,6 +241,15 @@ final class AdaptiveLauncherTests: XCTestCase {
         editor.insertText("record", replacementRange: NSRange(location: NSNotFound, length: 0))
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(field.stringValue, "record")
+        editor.insertText("", replacementRange: NSRange(location: 0, length: field.stringValue.utf16.count))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(voice.phase, .listening, "Clearing a request restarts listening")
+        voice.pauseForOneHour()
+        editor.insertText("calculator", replacementRange: NSRange(location: NSNotFound, length: 0))
+        editor.insertText("", replacementRange: NSRange(location: 0, length: field.stringValue.utf16.count))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(voice.phase, .off, "Clearing must respect an explicit one-hour mute")
+        preferences.removeObject(forKey: AdaptiveListeningPreference.key)
     }
 
     @MainActor func testRecordCommandButton() async throws {
@@ -290,7 +300,7 @@ final class AdaptiveLauncherTests: XCTestCase {
                         ("split", "split $100 between 3"), ("timer", "timer for 20m"), ("running", "timer for 20m"),
                         ("paused", "timer for 20m"), ("color", "#fffffd"), ("orange", "#ff6b35"),
                         ("timezone", "8am in Iceland"), ("calculation", "18% of 240"), ("record", "record meeting"),
-                        ("commands", "/record"), ("calculator-open", "calculator"),
+                        ("commands", "/record"), ("calculator-open", "calculator"), ("quick-tools", "quick tools"),
                         ("reminder", "reminder in 10m for taking pizza out"),
                         ("long", "checklist " + (1...30).map { "Task \($0)" }.joined(separator: ", "))]
         for scheme in [ColorScheme.dark, .light] {
