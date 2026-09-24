@@ -10,22 +10,22 @@ import Foundation
         switch action {
         case "tool.evaluate": return evaluate(args["input"] as! String)
         case "timer.start":
-            guard !timer.timerActive else { throw AgentError("BUSY", "A timer already exists. Inspect timer.status before changing it.") }
-            timer.start(seconds: args["seconds"] as! Double)
-            timer.soundEnabled = args["sound_enabled"] as? Bool ?? true
-            timer.timerAgentOwner = owner
-            return timerStatus(timer)
-        case "timer.status": return timerStatus(timer)
+            let id = timer.addTimer(seconds: args["seconds"] as! Double, soundEnabled: args["sound_enabled"] as? Bool ?? true, owner: owner)
+            return timerStatus(timer, id: id)
+        case "timer.status":
+            var result = timerStatus(timer, id: timer.timerID)
+            result["timers"] = timer.timers.map { timerJSON($0) }
+            return result
         case "timer.pause", "timer.resume", "timer.cancel", "timer.sound":
-            guard timer.timerActive, args["session_id"] as? String == timer.timerID else {
+            guard let id = args["session_id"] as? String, let current = timer.timer(id) else {
                 throw AgentError("SESSION_MISMATCH", "This timer is no longer active. Inspect timer.status.")
             }
-            guard timer.timerAgentOwner == owner else { throw AgentError("NOT_OWNER", "Only the timer’s creating agent or human controls can change it.") }
-            if action == "timer.cancel" { timer.stop() }
-            else if action == "timer.sound" { timer.soundEnabled = args["enabled"] as! Bool }
-            else if action == "timer.pause" { timer.pause() }
-            else if let seconds = timer.pausedSeconds { timer.start(seconds: seconds) }
-            return timerStatus(timer)
+            guard current.agentOwner == owner else { throw AgentError("NOT_OWNER", "Only the timer’s creating agent or human controls can change it.") }
+            if action == "timer.cancel" { timer.stop(id) }
+            else if action == "timer.sound" { timer.setSound(args["enabled"] as! Bool, id: id) }
+            else if action == "timer.pause" { timer.pause(id) }
+            else { timer.resume(id) }
+            return timerStatus(timer, id: id)
         case "reminder.create":
             guard (args["seconds"] != nil) != (args["at"] != nil) else {
                 throw AgentError("INVALID_ARGUMENTS", "Provide seconds or at, not both.")
@@ -72,12 +72,20 @@ import Foundation
         return formatter.date(from: text)
     }
 
-    static func timerStatus(_ timer: QuickToolsModel) -> [String: Any] {
-        var result: [String: Any] = ["active": timer.timerActive, "state": timer.finished ? "finished" : timer.pausedSeconds != nil ? "paused" : timer.deadline != nil ? "running" : "idle",
-                                  "requires_app_open": true, "sound_enabled": timer.soundEnabled]
-        if let id = timer.timerID { result["session_id"] = id }
+    static func timerStatus(_ timer: QuickToolsModel, id: String?) -> [String: Any] {
+        var result: [String: Any] = ["requires_app_open": true, "active_count": timer.timers.count]
+        guard let id, let current = timer.timer(id) else {
+            result["active"] = false; result["state"] = "idle"; result["remaining_seconds"] = 0
+            return result
+        }
+        return result.merging(timerJSON(current)) { $1 }
+    }
+
+    static func timerJSON(_ timer: QuickTimer) -> [String: Any] {
+        var result: [String: Any] = ["active": true, "session_id": timer.id, "state": timer.state,
+                                     "sound_enabled": timer.soundEnabled, "duration_seconds": timer.duration,
+                                     "remaining_seconds": timer.remaining(at: Date())]
         if let deadline = timer.deadline { result["deadline"] = ISO8601DateFormatter().string(from: deadline) }
-        result["remaining_seconds"] = max(0, timer.deadline?.timeIntervalSinceNow ?? timer.pausedSeconds ?? 0)
         return result
     }
 

@@ -129,9 +129,7 @@ struct AdaptiveLauncherView: View {
                 AdaptiveQuickActions(actions: actions, libraryModel: libraryModel,
                                      onDismiss: onDismiss, onSaveQueryAsNote: onSaveQueryAsNote, onSelectTool: openTool)
             }
-            if effectiveIntent != .create || !tools.tool.isTimer {
-                QuickTimerStatus(model: tools)
-            }
+            QuickTimerStatus(model: tools)
             if voice.phase != .off && voice.phase != .listening {
                 HStack(spacing: MM.Layout.spacing) {
                     Text(voice.status).font(MM.Fonts.metadata)
