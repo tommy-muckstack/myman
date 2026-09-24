@@ -80,3 +80,10 @@ final class AdaptiveToolTests: XCTestCase {
         XCTAssertEqual(complement.1, complement.2, accuracy: 0.01)
     }
 }
+
+final class LocalTimeZoneLabelTests: XCTestCase {
+    func testLocalZoneIsNamedForTheRegionNotTheZoneCity() {
+        XCTAssertEqual(QuickTimeZone.localLabel(TimeZone(identifier: "America/New_York")!), "Eastern Time")
+        XCTAssertEqual(QuickTimeZone.localLabel(TimeZone(identifier: "America/Los_Angeles")!), "Pacific Time")
+    }
+}

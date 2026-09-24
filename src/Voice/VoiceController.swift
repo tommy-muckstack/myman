@@ -128,6 +128,8 @@ final class VoiceController: ObservableObject {
         // Keep the starting app only as cleanup context; delivery targets
         // whichever focused control the user has when transcription finishes.
         targetApp = NSWorkspace.shared.frontmostApplication
+        DictationCleanup.prepare(tone: DictationAppStyles.tone(for: targetApp?.bundleIdentifier,
+                                                               fallback: SettingsStore.shared.dictationTone))
 
         // Pill appears the instant the key goes down — everything else is
         // behind it, not in front of it.

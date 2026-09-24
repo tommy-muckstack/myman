@@ -42,7 +42,7 @@ struct QuickTimeZone: Equatable {
             .timeZone(Self(date: date, source: source, destination: destination,
                            sourceName: from, destinationName: to))
         }
-        let localName = "Your time · " + label(local)
+        let localName = "Your time · " + localLabel(local)
         if let match = groups(#"^(?:what time is it|current time|time|now) in (.+?)[?]?$"#, text) {
             guard let destination = zone(match[1], local: local) else { return unknown }
             return result(now, local, destination, localName, label(destination))
@@ -114,6 +114,12 @@ struct QuickTimeZone: Equatable {
             $0.lowercased() == key || $0.split(separator: "/").last?.replacingOccurrences(of: "_", with: " ").lowercased() == key
         }
         return matches.count == 1 ? TimeZone(identifier: matches[0]) : nil
+    }
+
+    /// The Mac's own zone is named for the region, not a city: macOS stores
+    /// Boston as America/New_York, so "New York" would name the wrong place.
+    static func localLabel(_ zone: TimeZone) -> String {
+        zone.localizedName(for: .generic, locale: Locale(identifier: "en_US")) ?? label(zone)
     }
 
     private static func label(_ zone: TimeZone) -> String {

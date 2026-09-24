@@ -65,14 +65,19 @@ enum DictationCleanup {
             try? seed.write(to: url, atomically: true, encoding: .utf8)
         }
         var content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        // Remove defaults from older My Man releases. These were never meant
-        // to be a permanent product list in a person's Settings vocabulary.
-        let retainedLines = content.split(separator: "\n", omittingEmptySubsequences: false)
-            .filter { !retiredBundledVocabulary.contains($0.trimmingCharacters(in: .whitespaces).lowercased()) }
-        let migrated = retainedLines.joined(separator: "\n")
-        if migrated != content {
-            content = migrated + (migrated.hasSuffix("\n") ? "" : "\n")
-            try? content.write(to: url, atomically: true, encoding: .utf8)
+        // Remove defaults from older My Man releases once. These were never
+        // meant to be a permanent product list, but a person may add them
+        // back on purpose, so the cleanup must not run on every read.
+        let marker = url.deletingLastPathComponent().appendingPathComponent(".vocabulary-defaults-retired")
+        if !FileManager.default.fileExists(atPath: marker.path) {
+            let retainedLines = content.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !retiredBundledVocabulary.contains($0.trimmingCharacters(in: .whitespaces).lowercased()) }
+            let migrated = retainedLines.joined(separator: "\n")
+            if migrated != content {
+                content = migrated + (migrated.hasSuffix("\n") ? "" : "\n")
+                try? content.write(to: url, atomically: true, encoding: .utf8)
+            }
+            FileManager.default.createFile(atPath: marker.path, contents: Data())
         }
         return content.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -183,8 +188,10 @@ enum DictationCleanup {
                     // itself: "Amplitune C" is one mangled word plus a real
                     // one, not a two-word spelling of Amplitude.
                     let termWords = term.canonical.split(whereSeparator: \.isWhitespace).count
+                    // Lengths must be close too, or a short common word
+                    // swallows a longer term ("next" → "Next.js").
                     let fuzzy = term.key.count >= 6 && windowSize == termWords && (
-                        (key.first == term.key.first && distance <= 2)
+                        (key.first == term.key.first && distance <= 2 && abs(key.count - term.key.count) <= 1)
                         || (abs(key.count - term.key.count) <= 1 && distance <= 1)
                     )
                     if exact || fuzzy {
@@ -214,6 +221,8 @@ enum DictationCleanup {
             ("(?i)\\bavantik\\b", "EventKit"),
             ("(?i)\\bmuck\\s*stack\\b", "MuckStack"),
             ("(?i)\\bmyman\\b", "My Man"),
+            ("(?i)\\bhuddle\\s*upro\\s*map\\b", "HuddleUp roadmap"),
+            ("(?i)\\bhuddle\\s+up\\b(?=\\s+(?:app|roadmap|sports|team|web|ios|android)\\b)", "HuddleUp"),
         ]
         return aliases.reduce(text) { result, alias in
             guard let regex = try? NSRegularExpression(pattern: alias.0) else { return result }
@@ -239,11 +248,14 @@ enum DictationCleanup {
         return result
     }
 
-    private static func deterministicCleanup(_ text: String, terms: [String]? = nil) -> String {
+    /// Everything that does not need the model. Idempotent, so it runs both
+    /// before the model (which then only handles corrections and wordy
+    /// fillers) and again on the model's output.
+    static func deterministicCleanup(_ text: String, terms: [String]? = nil) -> String {
         let restored = applyVocabulary(canonicalizeKnownTerms(text), terms: terms ?? vocabulary())
-        return applyEmoji(stripFillers(applyVoiceCommands(assembleEmails(
-            normalizeDictationFormatting(restored)
-        ))))
+        return applyEmoji(collapseStutters(stripFillers(applyVoiceCommands(assembleEmails(
+            SpokenForms.apply(normalizeDictationFormatting(restored))
+        )))))
     }
 
     static func editDistance(_ a: String, _ b: String) -> Int {
@@ -279,7 +291,7 @@ enum DictationCleanup {
             guard !stopwords.contains(name.lowercased()) else { continue }
             let full = ns.substring(with: match.range)
             result = result.replacingOccurrences(
-                of: full, with: "\(name.lowercased())@\(domain)")
+                of: full, with: "\(name.lowercased())@\(domain.lowercased())")
         }
         return result
     }
@@ -324,12 +336,53 @@ enum DictationCleanup {
                     withTemplate: replacement)
             }
         }
+        result = applySpokenPunctuation(result)
         // Re-capitalize after breaks and trim.
         result = result.trimmingCharacters(in: .whitespacesAndNewlines)
         if let first = result.first, first.isLowercase {
             result = first.uppercased() + result.dropFirst()
         }
         return result
+    }
+
+    /// "comma", "question mark", "open quote … close quote" become marks.
+    /// "period", "full stop", and "colon" are ordinary words too ("the trial
+    /// period ends"), so they count only at the end of a phrase.
+    static func applySpokenPunctuation(_ text: String) -> String {
+        let open = "\u{E000}", close = "\u{E001}"
+        var result = text
+        let always: [(String, String)] = [
+            ("question mark", "?"), ("exclamation point", "!"), ("exclamation mark", "!"),
+            ("comma", ","), ("semicolon", ";"),
+        ]
+        let endOnly: [(String, String)] = [("period", "."), ("full stop", "."), ("colon", ":")]
+        for (words, mark) in always {
+            result = SpokenForms.replace(result, "(?i)[ \\t]*[,;:]?[ \\t]*\\b\(words)\\b[,.;:!?]*") { _ in mark + " " }
+        }
+        for (words, mark) in endOnly {
+            result = SpokenForms.replace(result, "(?i)[ \\t]*[,;:]?[ \\t]*\\b\(words)\\b[,.;:!?]*(?=[ \\t]*(?:$|\\n|(?-i:[A-Z])|\(open)))") { _ in mark + " " }
+        }
+        result = SpokenForms.replace(result, "(?i)[ \\t]*,?[ \\t]*\\b(?:open|begin|start) quote\\b[,.]?[ \\t]*") { _ in " " + open }
+        result = SpokenForms.replace(result, "(?i)[,.]?[ \\t]*\\b(?:(?:close|end) quote|unquote)\\b") { _ in close }
+        guard result != text else { return text }
+        // Tidy the marks: no space before, one after, no doubled marks.
+        for (pattern, template) in [
+            ("[ \\t]+([,.;:!?])", "$1"),
+            ("([,;:])[,;:]+", "$1"),
+            ("([.!?])[.!?,;:]+", "$1"),
+            ("[,;:]([.!?])", "$1"),
+            ("[ \\t]{2,}", " "),
+            ("\(open)[ \\t]+", open),
+            ("[ \\t]+\(close)", close),
+        ] {
+            result = SpokenForms.replace(result, pattern) { groups in
+                template.replacingOccurrences(of: "$1", with: groups.count > 1 ? groups[1] : "")
+            }
+        }
+        result = result.replacingOccurrences(of: open, with: "\"").replacingOccurrences(of: close, with: "\"")
+        // Capitalize a sentence the spoken mark just ended (not after a.m./p.m.).
+        result = SpokenForms.replace(result, "(?<![ap]\\.m)([.!?][ \\t]+)([a-z])") { $0[1] + $0[2].uppercased() }
+        return result.replacingOccurrences(of: " \n", with: "\n").trimmingCharacters(in: .whitespaces)
     }
 
     /// Strip LLM preamble the prompt forbids but small models still emit
@@ -370,7 +423,10 @@ enum DictationCleanup {
         guard let regex = try? NSRegularExpression(
             pattern: "(?i)(^|[.!?]\\s+|, )(um|uh|ah|er|hmm)[,.]?\\s+",
             options: []) else { return text }
-        var result = text
+        // Pure vocalizations anywhere in a sentence ("So um I was", "that uh
+        // we"). "ah"/"er" stay start-only: "ER" and "Ah, I see" carry meaning.
+        var result = SpokenForms.replace(text, "(?i)[ \\t]*,?[ \\t]*\\b(?:u+m+|u+h+|uhm|hm+|mm+)\\b[,.]?(?=[ \\t]|$)") { _ in "" }
+        result = result.trimmingCharacters(in: .whitespaces)
         // Repeat until stable — handles "Ah, um, so..."
         for _ in 0..<3 {
             let ns = result as NSString
@@ -385,6 +441,15 @@ enum DictationCleanup {
             result = first.uppercased() + result.dropFirst()
         }
         return result
+    }
+
+    /// "it's it's not" → "it's not". Grammatical doubles ("had had",
+    /// "that that") stay; words separated by punctuation are deliberate.
+    static func collapseStutters(_ text: String) -> String {
+        let keep: Set<String> = ["had", "that", "is", "do", "bye", "ha", "very", "no"]
+        return SpokenForms.replace(text, "(?i)\\b([A-Za-z]+(?:'[A-Za-z]+)?)[ \\t]+\\1\\b") { groups in
+            keep.contains(groups[1].lowercased()) ? groups[0] : groups[1]
+        }
     }
 
     static func applyEmoji(_ text: String) -> String {
@@ -407,7 +472,7 @@ enum DictationCleanup {
     static func requiresModelPolish(_ text: String, tone: DictationTone) -> Bool {
         if tone == .verbatim { return false }
         if tone != .neutral { return true }
-        let special = #"(?i)\b(no wait|i mean|rather|scratch that|actually make that|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|hundred|thousand|million|percent|dollars|dot com)\b"#
+        let special = #"(?i)\b(no wait|i mean|rather|scratch that|make that|actually|sorry|wait|you know|kind of|sort of|i just i|like,)"#
         return text.first?.isUppercase != true || ![".", "?", "!"].contains(text.last.map(String.init) ?? "")
             || text.range(of: special, options: .regularExpression) != nil
     }
@@ -417,53 +482,101 @@ enum DictationCleanup {
         (try? await AsyncDeadline.run(seconds: seconds, operation: operation)) ?? fallback
     }
 
+    /// The model's time budget. Warm calls take ~0.5–1 s on Apple silicon;
+    /// longer dictations get a little more before we fall back to rules.
+    static func polishDeadline(for text: String) -> Double {
+        min(2.5, 1.2 + Double(text.count) / 500)
+    }
+
+    private static let correctionCue = #"(?i)\b(no wait|actually,? no|make that|scratch that|sorry,? i mean|i mean to say|wait)\b"#
+    private static let removableWords: Set<String> = [
+        "um", "uh", "hmm", "like", "you", "know", "so", "i", "mean", "just", "actually", "no", "wait",
+        "sorry", "make", "that", "kind", "sort", "of", "well", "okay", "ok", "basically", "literally",
+    ]
+
+    /// Share of the speaker's meaningful words the model threw away. Filler
+    /// and correction words may go; content words should survive. Without an
+    /// explicit correction cue, dropping more than a fifth is a rewrite.
+    static func droppedContent(_ output: String, from input: String) -> Double {
+        func words(_ s: String) -> Set<String> {
+            Set(s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+        }
+        let kept = words(output)
+        let meaningful = words(input).subtracting(removableWords)
+        guard !meaningful.isEmpty else { return 0 }
+        return Double(meaningful.subtracting(kept).count) / Double(meaningful.count)
+    }
+
+    static func acceptsPolish(_ output: String, from input: String) -> Bool {
+        let limit = input.range(of: correctionCue, options: .regularExpression) != nil ? 0.5 : 0.2
+        return !output.isEmpty && output.count > input.count / 3 && output.count < input.count * 2
+            && wordOverlap(output, input) > 0.5 && droppedContent(output, from: input) <= limit
+            && preservesStructure(output, from: input)
+    }
+
+    /// The rules already placed quotes, brackets, and numbers; the model may
+    /// drop a replaced number in a correction but must not unbalance marks
+    /// or invent digits.
+    static func preservesStructure(_ output: String, from input: String) -> Bool {
+        for mark in ["\"", "(", ")"] where output.components(separatedBy: mark).count != input.components(separatedBy: mark).count {
+            return false
+        }
+        func numbers(_ s: String) -> Set<String> {
+            Set(s.split(whereSeparator: { !$0.isNumber }).map(String.init))
+        }
+        return numbers(output).isSubset(of: numbers(input))
+    }
+
+    static func instructions(tone: DictationTone, terms: [String]) -> String {
+        """
+        You clean up dictated text. Rules, in order:
+        1. Remove filler words (um, uh, like, you know, I mean when it is \
+        filler) and stutters or restarts ("I just I want" → "I just want").
+        2. Apply the speaker's self-corrections: "meet Tuesday — no wait, \
+        Wednesday" becomes "meet Wednesday"; "send it to Sam, sorry I mean \
+        Jess" becomes "send it to Jess". Drop only the replaced part.
+        3. Fix punctuation, capitalization, and obvious homophone slips from \
+        context. Numbers, emails, and links are already formatted: copy digits, \
+        symbols, and addresses exactly.
+        4. NEVER add, remove, or rephrase actual content. Every sentence and \
+        clause the speaker meant must stay, including a leading label or \
+        heading. Keep the speaker's words and tone. Output ONLY the cleaned \
+        text — no preamble, no quotes.
+        5. Preserve these exact proper-noun spellings when they occur or are \
+        clearly dictated: \(terms.prefix(50).joined(separator: ", ")).
+        6. Output style: \(tone.promptRules)
+        """
+    }
+
     static func clean(_ raw: String, tone: DictationTone = .neutral,
                       targetBundleID: String? = nil) async -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let terms = vocabulary()
-        guard trimmed.count > 12 else { return deterministicCleanup(trimmed, terms: terms) }
-        guard requiresModelPolish(trimmed, tone: tone) else { return deterministicCleanup(trimmed, terms: terms) }
+        // Rules first: the model then sees formatted numbers, links, and
+        // punctuation, and only has corrections and wordy fillers left to do.
+        let prepared = deterministicCleanup(trimmed, terms: terms)
+        guard prepared.count > 12, prepared.count < 1000,
+              requiresModelPolish(trimmed, tone: tone) else {
+            PreparedPolish.shared.discard()
+            return prepared
+        }
         // Long transcripts degrade the 3B model — it starts rewriting numbers
         // ($92,000 → "9,200") and paraphrasing (churn → "turnover"). Wrong
-        // beats unpolished, so beyond this: deterministic cleanup only.
-        guard trimmed.count < 1000 else {
-            return deterministicCleanup(trimmed, terms: terms)
-        }
+        // beats unpolished, so beyond 1,000 characters: rules only.
         #if canImport(FoundationModels)
-        guard #available(macOS 26.0, *) else { return deterministicCleanup(trimmed, terms: terms) }
-        guard case .available = SystemLanguageModel.default.availability else {
-            return deterministicCleanup(trimmed, terms: terms)
-        }
-        let protectedTerms = terms.prefix(50).joined(separator: ", ")
-        let session = LanguageModelSession(instructions: """
-            You clean up dictated text. Rules, in order:
-            1. Remove filler words (um, uh, ah, er, hmm, like, you know) \
-            and stutters.
-            2. Apply the speaker's self-corrections: "meet Tuesday — no wait, \
-            Wednesday" becomes "meet Wednesday".
-            3. Fix punctuation, capitalization, and obvious homophone slips \
-            from context. Write spoken numbers the way a person types them: \
-            "twelve hundred" → "1,200", "forty percent" → "40%", "three pm" \
-            → "3pm", "march third" → "March 3rd". Spoken emails and URLs \
-            become real ones: "john dot smith at example dot com" → \
-            "john.smith@example.com", "example dot com slash download" → \
-            "example.com/download".
-            4. NEVER add, remove, or rephrase actual content. Keep the \
-            speaker's words and tone. Output ONLY the cleaned text — no \
-            preamble, no quotes.
-            5. Preserve these exact proper-noun spellings when they occur or
-            are clearly dictated: \(protectedTerms).
-            6. Output style: \(tone.promptRules)
-            """)
+        guard #available(macOS 26.0, *) else { return prepared }
+        guard case .available = SystemLanguageModel.default.availability else { return prepared }
+        let session = PreparedPolish.shared.take(tone: tone)
+            ?? LanguageModelSession(instructions: instructions(tone: tone, terms: terms))
         // Delimited so the model can never mistake the transcript for a
         // question addressed to it (it once ANSWERED "how we doing?"
         // instead of cleaning it).
-        let response = await boundedPolish(fallback: trimmed) {
+        let response = await boundedPolish(fallback: prepared, seconds: polishDeadline(for: prepared)) {
             try await session.respond(to: """
             Clean up the dictated text between the markers. Output only \
             the cleaned text, nothing else.
             <<<TRANSCRIPT
-            \(trimmed)
+            \(prepared)
             TRANSCRIPT>>>
             """).content
         }
@@ -472,17 +585,57 @@ enum DictationCleanup {
             .replacingOccurrences(of: "<<<TRANSCRIPT", with: "")
             .replacingOccurrences(of: "TRANSCRIPT>>>", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        // Guards: sane length AND the output must be built from the
-        // speaker's own words — low overlap means the model went rogue.
-        guard !cleaned.isEmpty,
-              cleaned.count > trimmed.count / 3,
-              cleaned.count < trimmed.count * 2,
-              wordOverlap(cleaned, trimmed) > 0.5 else {
-            return deterministicCleanup(trimmed, terms: terms)
-        }
+        // Guards: sane length, built from the speaker's own words, and no
+        // meaningful words silently dropped. Otherwise the rules-only text wins.
+        guard acceptsPolish(cleaned, from: prepared) else { return prepared }
         return deterministicCleanup(cleaned, terms: terms)
         #else
-        return deterministicCleanup(trimmed, terms: terms)
+        return prepared
         #endif
     }
+
+    /// Warm the on-device model when recording starts, so the first dictation
+    /// after a pause does not spend its whole budget loading the model (it
+    /// timed out on every cold call before).
+    static func prepare(tone: DictationTone) {
+        guard tone != .verbatim else { return }
+        #if canImport(FoundationModels)
+        guard #available(macOS 26.0, *), case .available = SystemLanguageModel.default.availability else { return }
+        let terms = vocabulary()
+        Task.detached(priority: .userInitiated) {
+            let session = LanguageModelSession(instructions: instructions(tone: tone, terms: terms))
+            session.prewarm()
+            PreparedPolish.shared.store(session, tone: tone)
+        }
+        #endif
+    }
+}
+
+/// One warmed session per dictation. Sessions keep a transcript, so each is
+/// used once and then discarded.
+final class PreparedPolish: @unchecked Sendable {
+    static let shared = PreparedPolish()
+    private let lock = NSLock()
+    private var session: AnyObject?
+    private var tone: DictationTone?
+
+    func store(_ session: AnyObject, tone: DictationTone) {
+        lock.lock(); defer { lock.unlock() }
+        self.session = session; self.tone = tone
+    }
+
+    func discard() {
+        lock.lock(); defer { lock.unlock() }
+        session = nil; tone = nil
+    }
+
+    #if canImport(FoundationModels)
+    @available(macOS 26.0, *)
+    func take(tone: DictationTone) -> LanguageModelSession? {
+        lock.lock(); defer { lock.unlock() }
+        defer { session = nil; self.tone = nil }
+        guard self.tone == tone else { return nil }
+        return session as? LanguageModelSession
+    }
+    #endif
 }
