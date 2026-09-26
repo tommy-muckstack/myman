@@ -66,7 +66,7 @@ The installer creates `${XDG_CONFIG_HOME:-~/.config}/myman/agents.json` with all
 }
 ```
 
-The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. Recording remains unsupported even if its grant is set. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
+The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. The `recording` grant enables video-only screen recording. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
 
 ### Optional administrator ceiling
 
@@ -106,6 +106,21 @@ Screenshot results include the same ID, PNG/Brain paths, dimensions, scale, time
 Use `--request-id UUID` for writes. The receipt is claimed before starting a detached local worker; identical retries return the original result, and different arguments with that ID return `ID_CONFLICT`. `--no-wait` returns a pending `job_id`; `job UUID` polls it, and `jobs` lists the latest 100 receipts. A waiting command that times out does not cancel or replay the worker. Receipts are stored privately in `${XDG_STATE_HOME:-~/.local/state}/myman/jobs`; they remain until the owner removes them. Removing receipts also removes deduplication history. Worker receipts bind the PID to Linux `/proc/<pid>/stat` field 22 and the boot ID; a reused PID, zombie, previous boot or legacy PID-only receipt cannot keep a job alive. A stopped worker becomes `interrupted`; inspect saved artifacts before issuing a new request.
 
 Brain writes are serialized with `.myman-linux-write.lock`. An interrupted writer can leave this lock behind. Inspect `owner.json` and verify its process is no longer running before manually removing that lock. The companion does not discard locks or replay interrupted work automatically.
+
+## Screen recording (video only)
+
+With the `recording` grant on (in the user file and, when present, `/etc/myman/agents.json`), agents can record the screen:
+
+```sh
+myman record start --display main --max-duration 30 --json   # returns session_id
+myman record status --session-id rec-session-UUID --json
+myman record stop --session-id rec-session-UUID --json       # finalizes and saves to the Brain
+myman record cancel --session-id rec-session-UUID --json     # discards the video
+```
+
+X11 uses `ffmpeg` x11grab; Hyprland/Sway use `wf-recorder`. Regions follow the screenshot rules. Output is H.264 MP4 at 30 fps with the pointer drawn. `max_duration` defaults to 300 seconds. Only one recording can be active per login, and sessions are durable files under `${XDG_STATE_HOME:-~/.local/state}/myman/recordings`, so any later CLI or MCP process can stop them. Microphone, system audio, webcam and window recording remain Mac-only and return `unsupported_on_platform`.
+
+Stopping saves `recordings/*.md`, a catalog entry, and a 400px thumbnail. The MP4 lives in `assets/recordings/`, which the companion adds to the Brain's `.gitignore`: videos stay on disk and are never committed, so the Brain's Git history stays small.
 
 ## Brain and MCP
 

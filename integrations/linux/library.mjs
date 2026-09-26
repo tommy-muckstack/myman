@@ -109,7 +109,12 @@ export async function saveRecording(rec) {
     catalog.exports.push({ item_id:`rec-${id}`, revision:1, path:brain_path, kind:'recordings', title, timestamp:created_at, video_path, ...(thumb?{thumbnail_path}:{}), duration, width:rec.width, height:rec.height, captured_local:rec.started_at, timezone, themes:[], tags:[], meetings:[], pinned:false });
     catalog.generated_at=created_at;
     await atomic(path.join(root,'catalog.json'),JSON.stringify(catalog,null,2)+'\n');
-    const git=await gitSave(root,[brain_path,videoRelative,...(thumb?[thumbnailRelative]:[]),'catalog.json']);
+    // Videos stay on disk but out of Git history so the Brain repo never bloats.
+    const ignore=path.join(root,'.gitignore'); let rules='';
+    try { rules=(await readSafe(ignore,1024*1024)).toString(); } catch (error) { if (error.code!=='ENOENT') throw error; }
+    const ignoreChanged=!rules.split('\n').includes('assets/recordings/');
+    if (ignoreChanged) await atomic(ignore,rules+(rules&&!rules.endsWith('\n')?'\n':'')+'# MyMan: large media is kept locally, not in Git\nassets/recordings/\n');
+    const git=await gitSave(root,[brain_path,...(thumb?[thumbnailRelative]:[]),'catalog.json',...(ignoreChanged?['.gitignore']:[])]);
     return { id:`rec-${id}`, kind:'recording', path:video_path, video_path, brain_path, width:rec.width, height:rec.height, duration, created_at, timezone, backend:rec.backend, attachment:{path:video_path,mime_type:'video/mp4',width:rec.width,height:rec.height,duration,file_size:size,preview_path:thumb?thumbnail_path:null}, git };
   });
 }
