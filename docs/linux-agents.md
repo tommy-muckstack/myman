@@ -277,7 +277,7 @@ In a recipe, `music` is a track name, an absolute path, or an object: `{"track":
 - **Polish.** By default the demo uses `{"zoom": "steps", "cursor": {"size": "big"}, "background": "dusk", "music": "upbeat"}`. `polish` in the file overrides any of those keys (the same recipe `record polish` takes), and `"polish": false` keeps just the raw recording. The raw recording is always kept too, as `recording_id`.
 - **Safety.** A demo starts a program and types and clicks into your desktop, so it needs the separate `control` grant as well as `recording`. `control` is off by default, is capped by `/etc/myman/agents.json` like every grant, and must be in a named agent's credential scopes. Recording and polishing run through `myman record start`, `record stop` and `record polish`. Keystrokes go to whichever window has focus, so don't use your computer while a demo runs. If a step fails, the recording is cancelled, not saved half-done. `--dry-run` checks the file and prints the plan, with the estimated length, without opening anything.
 
-`myman demo` drives the app with `xdotool`, so for now it needs X11. On Wayland (Omarchy, Sway), record with `record start` and polish with `record polish`. The Mac app has no one-command demo yet.
+`myman demo` drives the app with `xdotool`, so for now it needs X11. On Wayland (Omarchy, Sway), record with `record start` and polish with `record polish`. On the Mac, `myman demo` takes the same steps file and runs the same way; it needs Accessibility access for MyMan as well as the grants.
 
 ## Brain and MCP
 
