@@ -50,13 +50,13 @@ myman capture targets --id SHOT-ID [--query TEXT] [--granularity line|word] --js
 myman capture compare --before-id ID --after-id ID [--ignore-rects JSON] [--threshold 20] --json (library grant)
 myman windows list --json (X11, Hyprland, Sway; pass id to --window-id)
 myman clipboard read --format text|image --json; myman clipboard write --text T --json
-myman record start [--display main] [--region x,y,w,h] [--max-duration 30] --json
+myman record start [--display main] [--region x,y,w,h] [--max-duration 30] [--hide-cursor] --json (--hide-cursor: X11; record polish draws a smooth cursor instead)
 myman record stop|cancel|status|pause|resume --session-id ID --json (video only; needs recording grant)
 myman timer start --seconds N [--sound-enabled false] --json; myman timer status --json (library grant)
 myman timer pause|resume|cancel --session-id ID --json; myman timer sound --session-id ID --enabled true|false --json
 myman reminder create --message TEXT --seconds N|--at ISO-WITH-OFFSET --json; myman reminder list|cancel [--id ID] --json
 myman record cursor --id REC-ID [--full] --json (pointer path, clicks, typing moments and where the action is)
-myman record polish --id REC-ID [--auto-zoom [subtle|normal|strong|1.1-4]] [--recipe FILE|JSON] [--dry-run] --json (polished copy with smooth zoom on the action)
+myman record polish --id REC-ID [--auto-zoom [subtle|normal|strong|1.1-4]] [--cursor [normal|big|huge|1-3]] [--recipe FILE|JSON] [--dry-run] --json (polished copy: smooth zoom on the action, cursor highlight, click ripples)
 myman record frames --id REC-ID [--times 0,2.5|--count 6] [--width 400] --json (temporary PNGs + contact sheet)
 myman record export --id REC-ID [--start S] [--end S] [--max-bytes N] [--edits JSON] --json (new recording; caption/step/title/zoom/redact)
 myman agent whoami|list --json; myman machine current --json (named agents: set MYMAN_AGENT_TOKEN)
@@ -110,6 +110,7 @@ export async function main(argv) {
   if (argv.includes('--mode=interactive') || argv.some((v,i)=>v==='--mode'&&argv[i+1]==='interactive')) unsupported('The Linux companion has no interactive UI.');
   if (argv[0]==='screenshot' && !argv.some(v=>v==='--mode'||v.startsWith('--mode='))) argv=[...argv,'--mode','agent'];
   if (argv[0]==='record' && argv[1]==='track' && argv[2] && !process.env.MYMAN_AGENT_TOKEN) { await recording.trackSession(argv[2]); process.exit(0); }
+  if (argv[0]==='record' && argv[1]==='start' && argv.includes('--hide-cursor')) { argv=argv.filter(a=>a!=='--hide-cursor'); await recording.requestHiddenCursor(); }
   if (argv[0]==='record' && argv[1]==='cursor') {
     await authorize(['library']); identity.validate(await identity.authenticate(),['library']);
     const k=argv.indexOf('--id'); return cursor.read(k>=0?argv[k+1]:undefined,{full:argv.includes('--full')});
@@ -122,6 +123,8 @@ export async function main(argv) {
     if (raw!==undefined) { const { readFile }=await import('node:fs/promises'); const text=raw.trim().startsWith('{')?raw:await readFile(raw,'utf8').catch(()=>fail('INVALID_ARGUMENTS','--recipe must be JSON or a path to a JSON file.')); try { recipe=JSON.parse(text); } catch { fail('INVALID_ARGUMENTS','--recipe is not valid JSON.'); } }
     const k=argv.indexOf('--auto-zoom');
     if (k>=0) { const v=argv[k+1]; recipe={...recipe,zoom:{...(recipe.zoom||{}),auto:true,...(v&&!v.startsWith('--')?{level:v}:{})}}; }
+    const c=argv.indexOf('--cursor');
+    if (c>=0) { const v=argv[c+1]; recipe={...recipe,cursor:{...(recipe.cursor||{}),...(v&&!v.startsWith('--')?{size:v}:{})}}; }
     return studio.polish({id:val('--id'),recipe,dryRun:argv.includes('--dry-run')});
   }
   if (argv[0]==='meeting') {
