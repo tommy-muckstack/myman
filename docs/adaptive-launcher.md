@@ -49,15 +49,19 @@ running; completion is an app sound, not a scheduled system notification.
 `reminder in 10m for taking pizza out` and `remind me to take pizza out in 10 minutes`
 prepare a message and deadline. `reminder` opens a compact title/date editor;
 `remind me to call Sam tomorrow at 9am` supports an absolute local time. The Set
-reminder button or Return confirms typed previews; typing or parsing never schedules an alert. A complete spoken timer/reminder request submits automatically after the pause. “Set a timer for thirty seconds to remind me to take a pizza out of the oven” creates a message reminder. Missing or invalid deadlines stay editable; a running timer is never silently replaced.
+reminder button or Return confirms typed previews; typing or parsing never schedules an alert. A complete spoken timer/reminder request submits automatically after the pause. “Set a timer for thirty seconds to remind me to take a pizza out of the oven” creates a message reminder. Missing or invalid deadlines stay editable; starting another timer adds it beside any running ones instead of replacing them.
 
 Reminders persist locally across restarts. With notification permission, macOS
 schedules the alert even while My Man is closed. Without permission, My Man must remain open to deliver the alert. Due reminders remain in the widget until dismissed.
 
-Starting a timer or setting a reminder shows one top-right countdown widget. Hover
-or click expands it to timer controls and reminder messages; leaving collapses it.
-Multiple activities share the widget, with the next deadline shown when collapsed.
-Successful timer/reminder submission closes the center panel. The expanded widget has a bell toggle per activity: sound starts on, mute is retained while paused and for persisted reminders, and macOS notification sound is updated too. In-app completion uses a bundled chime through retained audio playback; scheduled notifications use the system notification sound. The widget avoids the meeting recorder, does not take keyboard focus, and respects
+Starting a timer or setting a reminder shows a top-right countdown stack: one pill
+per timer (finished first, then soonest; up to four, with a `+N` overflow count)
+and one pill for the next reminder. Hover or click expands it to per-timer controls
+and reminder messages; leaving collapses it. The launcher lists running timers too.
+A finished timer rings until dismissed or muted (capped at one minute), its pill
+pulses with a wiggling icon, and the stack shakes every few seconds for the first
+minute. Reduce Motion keeps it still.
+Successful timer/reminder submission closes the center panel. The expanded widget has a bell toggle per activity: sound starts on, mute is retained while paused and for persisted reminders, and macOS notification sound is updated too. In-app timer completion loops a bundled chime through retained audio playback; scheduled notifications use the system notification sound. The widget avoids the meeting recorder, does not take keyboard focus, and respects
 Reduce Motion. Its fixed-size window is resized asynchronously outside layout.
 
 ## Shortcut access

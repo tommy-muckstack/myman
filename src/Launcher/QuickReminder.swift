@@ -5,22 +5,43 @@ import UserNotifications
 
 @MainActor enum QuickCompletionSound {
     private static var player: AVAudioPlayer?
+    private static var alarmCutoff: Task<Void, Never>?
     static var isPlaying: Bool { player?.isPlaying == true }
+    /// A timer rings like a kitchen timer: the chime repeats until the timer is
+    /// dismissed or muted, and gives up after a minute so it never rings forever.
+    static let alarmDuration: Duration = .seconds(60)
 
     /// Use the normal audio output, retain playback, and check failures instead
     /// of silently relying on the system alert-sound name and alert volume.
-    @discardableResult static func play() -> Bool {
+    @discardableResult static func play(repeating: Bool = false) -> Bool {
         player?.stop()
         do {
             guard let folder = Bundle.module.url(forResource: "Sounds", withExtension: nil) else { throw CocoaError(.fileNoSuchFile) }
             let next = try AVAudioPlayer(contentsOf: folder.appendingPathComponent("reminder-chime.wav"))
             next.volume = 1
+            next.numberOfLoops = repeating ? -1 : 0
             next.prepareToPlay()
             player = next
             if next.play() { return true }
         } catch { }
         NSSound.beep()
         return false
+    }
+
+    static func startAlarm() {
+        alarmCutoff?.cancel()
+        guard play(repeating: true) else { return }
+        alarmCutoff = Task { @MainActor in
+            try? await Task.sleep(for: alarmDuration)
+            guard !Task.isCancelled else { return }
+            stopAlarm()
+        }
+    }
+
+    static func stopAlarm() {
+        alarmCutoff?.cancel(); alarmCutoff = nil
+        guard player?.numberOfLoops != 0 else { return }
+        player?.stop(); player = nil
     }
 }
 
