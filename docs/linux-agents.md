@@ -185,6 +185,19 @@ Stopping saves the track as small JSON at `assets/recording-cursor/ID.json`. Unl
 
 On Omarchy and Hyprland the position comes from `hyprctl cursorpos`. Hyprland does not report clicks to other programs, so there the track has movement only and says `clicks_tracked: false`. On X11 the position comes from `xdotool`, and clicks and typing come from `xinput` (package `xorg-xinput`). Sway does not expose the pointer, so the track says `pointer: unavailable` rather than guessing. `MYMAN_CURSOR_TRACK=0` turns tracking off.
 
+### Polished demos: smooth auto-zoom
+
+`myman record polish --id rec-UUID --auto-zoom --json` (recording grant) makes a polished copy of a recording and leaves the original untouched, the same way `record export` does. Auto-zoom reads the recording's cursor track and zooms on each `activity` span. It eases in over about 0.6 seconds, pans smoothly when the next moment is less than 2.5 seconds away, and eases back out. The zoomed window always stays inside the frame. Levels are `subtle` (1.4×), `normal` (1.8×, the default) and `strong` (2.4×), or any number from 1.1 to 4. Motion is computed per frame with sub-pixel precision, and frames outside a zoom are passed through unchanged.
+
+Everything is a plain JSON recipe, so a result can be inspected, edited and rendered again:
+
+- `--dry-run` returns the `plan` (zoom blocks with their pan points) and a `recipe` without rendering.
+- `--recipe` takes JSON or a path to a JSON file, for example `{"zoom":{"level":"strong","moments":[{"start":2,"end":5,"x":640,"y":360}]}}`. Moments are in source seconds and source pixels. Passing back the returned `recipe` reproduces the same video.
+- Recipe keys are `zoom.auto`, `zoom.level`, `zoom.ramp` (ease time, 0.2 to 2 seconds), `zoom.gap` (seconds between moments that still share one zoom) and `zoom.moments`. Unknown keys are errors, never ignored.
+- A render allows up to 20 zooms, each panning to at most 8 spots. When auto-zoom finds more, it joins the closest neighbours; hand-written moments fail with a clear message instead.
+
+The result includes `preview_times` (the middle of each zoom) to check with `myman record frames`. A recording made before cursor tracking has no track, so pass `zoom.moments` yourself. Output is 30 fps H.264 with no audio, like `record export`. This is Linux-only for now; the Mac has `record export` zoom edits, which cut in and out without easing.
+
 ## Brain and MCP
 
 The layout is the existing `notes/*.md`, `screenshots/*.md`, version-1 `catalog.json`, and Git history. Original PNGs live under `assets/captures`, with 400px thumbnails under `assets/capture-thumbnails`. Existing catalog entries and legacy Markdown exports are preserved. Git commits include only the new document/assets and catalog, leaving unrelated staged files untouched. No remotes are added and nothing is pushed. A Git failure after a successful save returns the saved ID and `git.committed: false`, so an agent can repair Git without duplicating the item.
