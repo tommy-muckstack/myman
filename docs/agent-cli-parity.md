@@ -38,8 +38,8 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Recording export and timed edits | `record export --id [--start --end] [--max-bytes] [--edits]` | Supported (ffmpeg); captions, steps, title cards, zoom, redaction with the Mac rules; byte cap lowers resolution, never truncates; leases unsupported | New library recording, source preserved |
 | Recording narration toggle / system audio / webcam | `record start --mic/--system-audio/--webcam`, `record microphone --enabled` | Unsupported | Per-start audio/camera settings; existing camera bubble |
 | Recording restart / countdown | cancel then explicit start; countdown is UI-only | Unsupported | No autonomous retry or hidden picker |
-| Meeting start / title / stop / discard | `meeting start/status/rename/stop/cancel` | Unsupported | Records an existing call on this Mac, never auto-joins |
-| Meeting transcript / notes / related captures | `meetings`, `read`, `meeting notes`, `library related`, `screenshots --meeting` | Existing exports readable; meeting operations unsupported | Summary generation uses existing service; processing can be pending |
+| Meeting start / title / stop / discard | `meeting start/status/rename/stop/cancel` | Linux: `meeting start/stop/cancel/status` (microphone as You, computer audio as Others; rename via `library rename`) | Records an existing call on this Mac, never auto-joins |
+| Meeting transcript / notes / related captures | `meetings`, `read`, `meeting notes`, `library related`, `screenshots --meeting` | Existing exports readable; Linux writes the same `meetings/` format with a local Whisper transcript (`transcript_status` processing, ready, unavailable or failed); notes and summaries Mac-only | Summary generation uses existing service; processing can be pending |
 | Meeting auto-detection preference | `meeting config get/set` | Unsupported | Exposes existing auto_record_meetings; no new scheduling behavior |
 | Dictation hold / toggle / cancel | `dictation start/status/stop/cancel` | Unsupported (Linux: Voxtype, F9; history via `dictation connect`) | Existing paste/clipboard behavior; result text and saved ID |
 | Notes create / append / replace / open | `note create/append/update/open` | Create, append and replace (revision guard); open unsupported | Markdown, title, stdin/file input; replacement revision guard |
@@ -94,6 +94,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Attachment metadata | Capture/edit/record/export results | Supported for capture/edit/preview | Path, MIME, dimensions, duration, bytes and preview |
 | Person shows agents a region | `show --note` (person only), Omarchy `SUPER+SHIFT+PRINT` via `omarchy install` | Unsupported | Saved as a `shown` library capture with the note; agents cannot trigger it |
 | Dictation history | `dictation connect` (person only) saves each Voxtype dictation; read with `library search --kind dictations` | Dictation start/stop and paste are Voxtype's (F9) | Same `dictations/` export format as the Mac |
+| Meetings | `meeting start [--title] [--no-system-audio] [--keep-audio]`, `meeting stop`, `meeting cancel`, `meeting status`; read with `library search --kind meetings` | Live notes, the meeting assistant and auto-detection are Mac-only | Same `meetings/` export format as the Mac; agents need the recording and microphone grants |
 
 Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
 

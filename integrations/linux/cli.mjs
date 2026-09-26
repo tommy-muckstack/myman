@@ -9,6 +9,7 @@ import * as identity from './identity.mjs';
 import * as omarchy from './omarchy.mjs';
 import { show } from './show.mjs';
 import * as dictation from './dictation.mjs';
+import * as meeting from './meeting.mjs';
 import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
@@ -62,9 +63,12 @@ myman show [--note TEXT] (people: drag over part of the screen to save it for yo
 myman dictation connect|disconnect|status (people: save each Voxtype dictation to the Brain)
 myman omarchy install|remove|status (people: SUPER+SHIFT+PRINT for show, plus a MyMan menu under Trigger)
 myman agents list|add NAME --scopes capture,markup|revoke ID|require on|off (people only, at a terminal)
+myman meeting start [--title TEXT] [--no-system-audio] [--keep-audio] [--max-minutes 240] --json (mic as You, computer audio as Others)
+myman meeting stop|cancel [--id ID] [--keep-audio] --json; myman meeting status --json; myman meeting transcribe ID (retry)
+  Transcribed on this computer with Whisper (voxtype or whisper.cpp). Agents need the recording and microphone grants.
 myman indicator (Waybar-style JSON: is an agent recording or capturing right now?)
 Every agent screenshot and recording shows a desktop notification.
-Meetings, Live Text, native UI and audio/webcam recording are unsupported. Dictation uses Voxtype (see dictation connect).
+Every meeting recording shows a notification and the indicator. Live Text, native UI, live meeting notes and webcam recording are unsupported. Dictation uses Voxtype (see dictation connect).
 `;
 // Person-only credential management. Never a catalog action, never reachable
 // through MCP or the app server, and refused inside an agent's environment.
@@ -100,6 +104,17 @@ export async function main(argv) {
   // default, while explicit interactive requests remain unsupported.
   if (argv.includes('--mode=interactive') || argv.some((v,i)=>v==='--mode'&&argv[i+1]==='interactive')) unsupported('The Linux companion has no interactive UI.');
   if (argv[0]==='screenshot' && !argv.some(v=>v==='--mode'||v.startsWith('--mode='))) argv=[...argv,'--mode','agent'];
+  if (argv[0]==='meeting') {
+    const val=f=>{const k=argv.indexOf(f); return k>=0?argv[k+1]:undefined;}, has=f=>argv.includes(f);
+    const sub=argv[1];
+    if (sub==='start') return meeting.start({title:val('--title'),systemAudio:!has('--no-system-audio'),keepAudio:has('--keep-audio'),maxMinutes:val('--max-minutes')??240});
+    if (sub==='stop') return meeting.stop({id:val('--id'),keepAudio:has('--keep-audio')?true:undefined});
+    if (sub==='cancel') return meeting.cancel({id:val('--id')});
+    if (sub==='status') return meeting.status();
+    if (sub==='transcribe' && argv[2]) return meeting.resume(argv[2]);
+    unsupported('Use myman meeting start|stop|cancel|status. Live meeting notes and the meeting assistant are Mac-only.');
+  }
+  if (['cancel-meeting'].includes(argv[0])) return meeting.cancel({});
   if (['meeting','dictation','live-text','livetext','cancel-meeting'].includes(argv[0])) unsupported(`${argv[0]} is not supported on Linux.`);
   if (argv[0]==='indicator') return indicator();
   const task=await plan(argv);
