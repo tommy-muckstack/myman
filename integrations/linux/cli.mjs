@@ -19,7 +19,9 @@ Regions: global bottom-left, or display-local top-left with --display.
 Annotations: arrow, box, highlight, text, pixelate; crop applies last.
 Human permissions: ~/.config/myman/agents.json (or XDG_CONFIG_HOME).
 All grants start off. CLI and MCP cannot grant access.
-Meetings, dictation, Live Text, native UI and recording are unsupported.
+myman record start [--display main] [--region x,y,w,h] [--max-duration 30] --json
+myman record stop|cancel|status --session-id ID --json (video only; needs recording grant)
+Meetings, dictation, Live Text, native UI and audio/webcam recording are unsupported.
 `;
 export async function main(argv) {
   if (argv.some(v=>v==='--machine'||v.startsWith('--machine=')) || process.env.MYMAN_MACHINE_ID || process.env.MYMAN_AGENT_TOKEN) unsupported('Named Mac agents and remote machine targeting are unavailable on Linux. Run on the intended Linux host with local owner grants.');
@@ -27,7 +29,7 @@ export async function main(argv) {
   // default, while explicit interactive requests remain unsupported.
   if (argv.includes('--mode=interactive') || argv.some((v,i)=>v==='--mode'&&argv[i+1]==='interactive')) unsupported('The Linux companion has no interactive UI.');
   if (argv[0]==='screenshot' && !argv.some(v=>v==='--mode'||v.startsWith('--mode='))) argv=[...argv,'--mode','agent'];
-  if (['meeting','dictation','record','live-text','livetext','cancel-meeting'].includes(argv[0])) unsupported(`${argv[0]} is not supported on Linux.`);
+  if (['meeting','dictation','live-text','livetext','cancel-meeting'].includes(argv[0])) unsupported(`${argv[0]} is not supported on Linux.`);
   // library search is a documented keyword query on Linux, using the unchanged
   // Brain reader. Never silently advertise the Mac's semantic search.
   if(argv[0]==='library'&&argv[1]==='search'&&!argv.includes('--offline')) argv=[...argv,'--offline'];

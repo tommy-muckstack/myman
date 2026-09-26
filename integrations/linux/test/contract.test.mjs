@@ -55,10 +55,10 @@ for(const entry of entries) {
   assert.equal(caps.actions.find(a=>a.name==='screenshot.capture').supported,true);
   assert.equal((await ok(entry,['actions','--offline'],f.env)).live,false);
   const action=await ok(entry,['actions','screenshot.capture'],f.env);assert.equal(action.name,'screenshot.capture');assert.ok(action.inputSchema);assert.deepEqual(action.permissions,['capture']);
-  for(const args of [['screenshot'],['note','create','--body','private'],['annotate','--id','shot-x','--ops','[]']]) {
+  for(const args of [['screenshot'],['note','create','--body','private'],['annotate','--id','shot-x','--ops','[]'],['record','start']]) {
    const r=await cli(entry,args,f.env);assert.equal(r.code,4);assert.equal(r.data.error.code,'AGENT_DISABLED');
   }
-  for(const args of [['meeting','start'],['dictation','start'],['record','start'],['live-text'],['capture','ocr','--id','shot-x'],['open']]) {
+  for(const args of [['meeting','start'],['dictation','start'],['live-text'],['capture','ocr','--id','shot-x'],['open']]) {
    const r=await cli(entry,args,f.env);assert.equal(r.code,6);assert.equal(r.data.error.code,'unsupported_on_platform');
   }
   const invalid=await cli(entry,['annotate','--id','a','--ops','not-json'],f.env);assert.equal(invalid.code,5);assert.equal(invalid.data.error.code,'INVALID_ARGUMENTS');

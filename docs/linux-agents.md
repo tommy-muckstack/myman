@@ -66,7 +66,7 @@ The installer creates `${XDG_CONFIG_HOME:-~/.config}/myman/agents.json` with all
 }
 ```
 
-The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. Recording remains unsupported even if its grant is set. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
+The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. The `recording` grant enables video-only screen recording. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
 
 ### Optional administrator ceiling
 
@@ -99,13 +99,28 @@ Bare `screenshot` captures the whole desktop. `--display main`, monitor index, `
 
 Annotations accept up to 100 arrows, boxes, highlights, text labels and pixelation operations. Explicit rectangles use integer image pixels, top-left. Colors and text `font_size` follow the shared schema. Crop applies last. A saved annotation gets a new ID; the original PNG and Markdown stay unchanged. `--dry-run` validates without rendering or saving an item. `--preview` renders a private temporary PNG without saving an item; previews expire after one hour and old files are cleaned on the next preview. Both still produce job receipts. No clipboard or editor is opened.
 
-Screenshot results include the same ID, PNG/Brain paths, dimensions, scale, timestamp, timezone, attachment metadata, and job ID fields as the Mac capture subset. Tesseract OCR runs locally before the screenshot is indexed when available. `ocr_status` is `ready`, `unavailable`, or `failed`; missing OCR does not prevent capture. OCR is in the Markdown body and searchable by existing Brain tools. Live Text/OCR targeting, `capture ocr` bounding boxes, image/circle/callout overlays, window capture, native UI, clipboard, recording, meetings, dictation and the other Mac-only actions return `unsupported_on_platform`.
+Screenshot results include the same ID, PNG/Brain paths, dimensions, scale, timestamp, timezone, attachment metadata, and job ID fields as the Mac capture subset. Tesseract OCR runs locally before the screenshot is indexed when available. `ocr_status` is `ready`, `unavailable`, or `failed`; missing OCR does not prevent capture. OCR is in the Markdown body and searchable by existing Brain tools. Live Text/OCR targeting, `capture ocr` bounding boxes, image/circle/callout overlays, window capture, native UI, clipboard, audio/webcam recording, meetings, dictation and the other Mac-only actions return `unsupported_on_platform`.
 
 `search` and `library search` use Brain keywords, not semantic search. All existing read-only export queries (`collect`, `recent`, `read`, `image`, and kind aliases) are available. For MCP search, use `myman-brain`; the Mac's `myman_app_capture_search` action is unsupported. `--root` changes retrieval only; set `MYMAN_BRAIN_ROOT` in the process environment to choose the Linux writer's Brain. Mutations do not alter permissions or change that environment variable.
 
 Use `--request-id UUID` for writes. The receipt is claimed before starting a detached local worker; identical retries return the original result, and different arguments with that ID return `ID_CONFLICT`. `--no-wait` returns a pending `job_id`; `job UUID` polls it, and `jobs` lists the latest 100 receipts. A waiting command that times out does not cancel or replay the worker. Receipts are stored privately in `${XDG_STATE_HOME:-~/.local/state}/myman/jobs`; they remain until the owner removes them. Removing receipts also removes deduplication history. Worker receipts bind the PID to Linux `/proc/<pid>/stat` field 22 and the boot ID; a reused PID, zombie, previous boot or legacy PID-only receipt cannot keep a job alive. A stopped worker becomes `interrupted`; inspect saved artifacts before issuing a new request.
 
 Brain writes are serialized with `.myman-linux-write.lock`. An interrupted writer can leave this lock behind. Inspect `owner.json` and verify its process is no longer running before manually removing that lock. The companion does not discard locks or replay interrupted work automatically.
+
+## Screen recording (video only)
+
+With the `recording` grant on (in the user file and, when present, `/etc/myman/agents.json`), agents can record the screen:
+
+```sh
+myman record start --display main --max-duration 30 --json   # returns session_id
+myman record status --session-id rec-session-UUID --json
+myman record stop --session-id rec-session-UUID --json       # finalizes and saves to the Brain
+myman record cancel --session-id rec-session-UUID --json     # discards the video
+```
+
+X11 uses `ffmpeg` x11grab; Hyprland/Sway use `wf-recorder`. Regions follow the screenshot rules. Output is H.264 MP4 at 30 fps with the pointer drawn. `max_duration` defaults to 300 seconds. Only one recording can be active per login, and sessions are durable files under `${XDG_STATE_HOME:-~/.local/state}/myman/recordings`, so any later CLI or MCP process can stop them. Microphone, system audio, webcam and window recording remain Mac-only and return `unsupported_on_platform`.
+
+Stopping saves `recordings/*.md`, a catalog entry, and a 400px thumbnail. The MP4 lives in `assets/recordings/`, which the companion adds to the Brain's `.gitignore`: videos stay on disk and are never committed, so the Brain's Git history stays small.
 
 ## Brain and MCP
 

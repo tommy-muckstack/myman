@@ -7,7 +7,7 @@ import { ocr } from './images.mjs';
 
 export async function initBrain() {
   const root = await directory(rootPath());
-  for (const folder of [...folders,'assets','assets/captures','assets/capture-thumbnails']) await directory(path.join(root, folder));
+  for (const folder of [...folders,'assets','assets/captures','assets/capture-thumbnails','assets/recordings','assets/recording-thumbnails']) await directory(path.join(root, folder));
   return root;
 }
 export async function lockedWrite(fn) {
@@ -91,4 +91,30 @@ export async function captureEntry(id) {
   if (!path.isAbsolute(entry.image_path || '') || path.extname(entry.image_path) !== '.png') fail('INVALID_IMAGE','Screenshot has no PNG reference.');
   pngSize(await readSafe(entry.image_path,128*1024*1024));
   return entry;
+}
+export async function saveRecording(rec) {
+  if (!await command('git')) fail('DEPENDENCY_MISSING', 'Install git before saving recordings.');
+  return lockedWrite(async root => {
+    const id=randomUUID(), created_at=new Date().toISOString();
+    const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const brain_path=`recordings/${created_at.slice(0,10)}-${id.slice(0,8)}.md`, videoRelative=`assets/recordings/${id}.mp4`, thumbnailRelative=`assets/recording-thumbnails/${id}.png`;
+    const video_path=path.join(root,videoRelative), thumbnail_path=path.join(root,thumbnailRelative);
+    const catalog=await catalogForWrite(root);
+    await atomic(video_path, await readSafe(rec.file, 1024*1024*1024));
+    const ffmpeg = await command('ffmpeg');
+    let thumb=false;
+    if (ffmpeg) { try { await run(ffmpeg,['-nostdin','-loglevel','error','-ss',String(Math.min(1,rec.duration/2)),'-i',video_path,'-frames:v','1','-vf','scale=400:-2','-y',thumbnail_path]); thumb=true; } catch {} }
+    const title=`Recording ${created_at}`, duration=+rec.duration.toFixed(2), size=(await stat(video_path)).size;
+    await atomic(path.join(root,brain_path),`---\nid: ${id}\ncreated: ${created_at}\nrecorded: ${rec.started_at}\nduration: ${duration}\nfile: ${video_path}\n---\n\n# ${title}\n\nScreen recording, ${duration}s, ${rec.width}x${rec.height}, captured with ${rec.backend}.\n`);
+    catalog.exports.push({ item_id:`rec-${id}`, revision:1, path:brain_path, kind:'recordings', title, timestamp:created_at, video_path, ...(thumb?{thumbnail_path}:{}), duration, width:rec.width, height:rec.height, captured_local:rec.started_at, timezone, themes:[], tags:[], meetings:[], pinned:false });
+    catalog.generated_at=created_at;
+    await atomic(path.join(root,'catalog.json'),JSON.stringify(catalog,null,2)+'\n');
+    // Videos stay on disk but out of Git history so the Brain repo never bloats.
+    const ignore=path.join(root,'.gitignore'); let rules='';
+    try { rules=(await readSafe(ignore,1024*1024)).toString(); } catch (error) { if (error.code!=='ENOENT') throw error; }
+    const ignoreChanged=!rules.split('\n').includes('assets/recordings/');
+    if (ignoreChanged) await atomic(ignore,rules+(rules&&!rules.endsWith('\n')?'\n':'')+'# MyMan: large media is kept locally, not in Git\nassets/recordings/\n');
+    const git=await gitSave(root,[brain_path,...(thumb?[thumbnailRelative]:[]),'catalog.json',...(ignoreChanged?['.gitignore']:[])]);
+    return { id:`rec-${id}`, kind:'recording', path:video_path, video_path, brain_path, width:rec.width, height:rec.height, duration, created_at, timezone, backend:rec.backend, attachment:{path:video_path,mime_type:'video/mp4',width:rec.width,height:rec.height,duration,file_size:size,preview_path:thumb?thumbnail_path:null}, git };
+  });
 }
