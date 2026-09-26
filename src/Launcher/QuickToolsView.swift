@@ -1,21 +1,58 @@
 import AppKit
 import SwiftUI
 
+struct QuickTimer: Identifiable, Equatable {
+    let id: String
+    let duration: TimeInterval
+    var deadline: Date?
+    var pausedSeconds: TimeInterval?
+    var finished = false
+    var finishedAt: Date?
+    var soundEnabled = true
+    var agentOwner: String?
+
+    var state: String { finished ? "finished" : pausedSeconds != nil ? "paused" : "running" }
+    func remaining(at now: Date) -> TimeInterval {
+        finished ? 0 : max(0, deadline?.timeIntervalSince(now) ?? pausedSeconds ?? 0)
+    }
+    /// A short name so stacked timers are distinguishable, e.g. "10 min".
+    var label: String {
+        let total = Int(duration.rounded())
+        if total % 3600 == 0 { return "\(total / 3600) hr" }
+        if total >= 3600 { return "\(total / 3600) hr \(total / 60 % 60) min" }
+        if total % 60 == 0 { return "\(total / 60) min" }
+        return total > 60 ? "\(total / 60) min \(total % 60) sec" : "\(total) sec"
+    }
+}
+
 @MainActor
 final class QuickToolsModel: ObservableObject {
     @Published var tool: QuickTool = .note("")
     @Published var checked: Set<Int> = []
     @Published var feedback = ""
-    @Published private(set) var deadline: Date?
-    @Published private(set) var pausedSeconds: TimeInterval?
-    @Published private(set) var finished = false
-    @Published var soundEnabled = true
+    /// Every running, paused, or finished timer, oldest first. The singular
+    /// accessors below address the newest one for single-timer call sites.
+    @Published private(set) var timers: [QuickTimer] = []
     @Published private(set) var startingActivity = false
     private var alarm: Timer?
-    private(set) var timerID: String?
-    var timerAgentOwner: String?
-    var onFinish: () -> Void = { QuickCompletionSound.play() }
-    var timerActive: Bool { deadline != nil || pausedSeconds != nil || finished }
+    var onFinish: () -> Void = { QuickCompletionSound.startAlarm() }
+    var onAlarmCleared: () -> Void = { QuickCompletionSound.stopAlarm() }
+    var timerActive: Bool { !timers.isEmpty }
+    var deadline: Date? { timers.last?.deadline }
+    var pausedSeconds: TimeInterval? { timers.last?.pausedSeconds }
+    var finished: Bool { timers.last?.finished ?? false }
+    var timerID: String? { timers.last?.id }
+    var timerAgentOwner: String? {
+        get { timers.last?.agentOwner }
+        set { if let id = timerID { mutate(id) { $0.agentOwner = newValue } } }
+    }
+    var soundEnabled: Bool {
+        get { timers.last?.soundEnabled ?? true }
+        set { if let id = timerID { setSound(newValue, id: id) } }
+    }
+    var ringing: Bool { timers.contains { $0.finished && $0.soundEnabled } }
+
+    func timer(_ id: String) -> QuickTimer? { timers.first { $0.id == id } }
 
     func update(_ input: String) {
         let next = QuickToolParser.parse(input)
@@ -29,15 +66,57 @@ final class QuickToolsModel: ObservableObject {
         feedback = ""
     }
 
+    /// Resumes the newest timer when it is paused; otherwise adds a new one.
     func start(seconds: TimeInterval, now: Date = Date()) {
-        alarm?.invalidate()
-        if pausedSeconds == nil { timerID = UUID().uuidString; timerAgentOwner = nil; soundEnabled = true }
-        deadline = now.addingTimeInterval(seconds)
-        pausedSeconds = nil
-        finished = false
+        if let id = timerID, pausedSeconds != nil { resume(id, now: now) }
+        else { addTimer(seconds: seconds, now: now) }
+    }
+
+    @discardableResult
+    func addTimer(seconds: TimeInterval, soundEnabled: Bool = true, owner: String? = nil, now: Date = Date()) -> String {
+        let timer = QuickTimer(id: UUID().uuidString, duration: seconds, deadline: now.addingTimeInterval(seconds),
+                               soundEnabled: soundEnabled, agentOwner: owner)
+        timers.append(timer)
+        scheduleTicks()
+        return timer.id
+    }
+
+    func resume(_ id: String, now: Date = Date()) {
+        guard let seconds = timer(id)?.pausedSeconds else { return }
+        mutate(id) { $0.deadline = now.addingTimeInterval(seconds); $0.pausedSeconds = nil }
+        scheduleTicks()
+    }
+
+    func pause(_ id: String, now: Date = Date()) {
+        guard let deadline = timer(id)?.deadline else { return }
+        mutate(id) { $0.pausedSeconds = max(0, deadline.timeIntervalSince(now)); $0.deadline = nil }
+        scheduleTicks()
+    }
+
+    func stop(_ id: String) {
+        timers.removeAll { $0.id == id }
+        scheduleTicks()
+        if !ringing { onAlarmCleared() }
+    }
+
+    func setSound(_ enabled: Bool, id: String) {
+        mutate(id) { $0.soundEnabled = enabled }
+        if !ringing { onAlarmCleared() }
+    }
+
+    private func mutate(_ id: String, _ change: (inout QuickTimer) -> Void) {
+        guard let index = timers.firstIndex(where: { $0.id == id }) else { return }
+        change(&timers[index])
+    }
+
+    private func scheduleTicks() {
+        let running = timers.contains { $0.deadline != nil }
+        if !running { alarm?.invalidate(); alarm = nil; return }
+        guard alarm == nil else { return }
         alarm = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        alarm.map { RunLoop.main.add($0, forMode: .common) }
     }
 
     /// Parsing stays side-effect free. Return, a labeled button, or a completed
@@ -46,9 +125,7 @@ final class QuickToolsModel: ObservableObject {
         guard !startingActivity else { return false }
         switch requested ?? tool {
         case .timer(let seconds):
-            guard !timerActive else { feedback = "A timer is already running. Use its widget to pause or cancel it."; return false }
-            soundEnabled = true
-            start(seconds: seconds)
+            addTimer(seconds: seconds)
             return true
         case .reminder(let draft):
             guard draft.hasExplicitTime else { return false }
@@ -63,24 +140,25 @@ final class QuickToolsModel: ObservableObject {
     }
 
     func tick(now: Date = Date()) {
-        guard let deadline, now >= deadline else { return }
-        alarm?.invalidate(); alarm = nil
-        self.deadline = nil
-        finished = true
-        if soundEnabled { onFinish() }
+        var alert = false
+        for index in timers.indices {
+            guard let deadline = timers[index].deadline, now >= deadline else { continue }
+            timers[index].deadline = nil
+            timers[index].finished = true
+            timers[index].finishedAt = now
+            alert = alert || timers[index].soundEnabled
+        }
+        scheduleTicks()
+        if alert { onFinish() }
     }
 
-    func pause(now: Date = Date()) {
-        guard let deadline else { return }
-        pausedSeconds = max(0, deadline.timeIntervalSince(now))
-        self.deadline = nil
-        alarm?.invalidate(); alarm = nil
-    }
+    func pause(now: Date = Date()) { if let id = timerID { pause(id, now: now) } }
 
+    /// Clears every timer.
     func stop() {
-        alarm?.invalidate(); alarm = nil
-        deadline = nil; pausedSeconds = nil; finished = false
-        timerID = nil; timerAgentOwner = nil
+        timers.removeAll()
+        scheduleTicks()
+        onAlarmCleared()
     }
 
     func save() {
@@ -153,7 +231,7 @@ struct QuickToolsView: View {
                                 .font(MM.Fonts.body)
                         }
                     } else { QuickToolCard(model: model, onActivityStarted: onDismiss) }
-                    if !model.tool.isTimer { QuickTimerStatus(model: model) }
+                    QuickTimerStatus(model: model)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -348,16 +426,26 @@ struct QuickReminderInput: View {
     }
 }
 
+/// Existing timers, newest first. The top-right widget shows the full stack.
 struct QuickTimerStatus: View {
     @ObservedObject var model: QuickToolsModel
+    static let visibleLimit = 3
 
     var body: some View {
         if model.timerActive {
-            QuickTimerRow(model: model, seconds: 0).padding(MM.Layout.padding)
+            let newest = Array(model.timers.reversed())
+            VStack(alignment: .leading, spacing: MM.Layout.spacing) {
+                ForEach(newest.prefix(Self.visibleLimit)) { timer in QuickActiveTimerRow(model: model, timer: timer) }
+                if newest.count > Self.visibleLimit {
+                    Text("\(newest.count - Self.visibleLimit) more in the timer stack")
+                        .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                }
+            }.padding(MM.Layout.padding)
         }
     }
 }
 
+/// The typed-timer preview. Starting always adds a timer beside existing ones.
 private struct QuickTimerRow: View {
     @ObservedObject var model: QuickToolsModel
     let seconds: TimeInterval
@@ -366,42 +454,65 @@ private struct QuickTimerRow: View {
     var body: some View {
         HStack(spacing: MM.Layout.spacing) {
             VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
-                Text(model.finished ? "Timer finished" : model.pausedSeconds != nil ? "Paused" : "Timer")
+                Text(model.timerActive ? "New timer" : "Timer")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-                if let deadline = model.deadline {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        time(deadline.timeIntervalSince(context.date))
-                    }
-                } else { time(model.finished ? 0 : model.pausedSeconds ?? seconds) }
+                QuickTimerClock(seconds: seconds)
             }
             Spacer()
-            if !model.finished {
-                Button {
-                    if model.deadline != nil { model.pause() }
-                    else {
-                        if !model.timerActive { model.soundEnabled = true }
-                        model.start(seconds: model.pausedSeconds ?? seconds)
-                        onStarted()
+            Button {
+                model.addTimer(seconds: seconds)
+                onStarted()
+            } label: {
+                Text("Start")
+                    .font(MM.Fonts.secondary)
+                    .foregroundStyle(MM.Colors.onAccent)
+                    .padding(.horizontal, MM.Layout.padding).padding(.vertical, MM.Layout.spacing / 2)
+                    .background(MM.Colors.accent, in: Capsule()).clickable()
+            }.buttonStyle(.plain)
+        }
+    }
+}
+
+private struct QuickActiveTimerRow: View {
+    @ObservedObject var model: QuickToolsModel
+    let timer: QuickTimer
+
+    var body: some View {
+        HStack(spacing: MM.Layout.spacing) {
+            VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                Text(timer.finished ? "\(timer.label) · Time’s up" : timer.pausedSeconds != nil ? "\(timer.label) · Paused" : timer.label)
+                    .font(MM.Fonts.metadata).foregroundStyle(timer.finished ? MM.Colors.accent : MM.Colors.textTertiary)
+                if let deadline = timer.deadline {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        QuickTimerClock(seconds: deadline.timeIntervalSince(context.date))
                     }
+                } else { QuickTimerClock(seconds: timer.remaining(at: Date())) }
+            }
+            Spacer()
+            if !timer.finished {
+                Button {
+                    if timer.deadline != nil { model.pause(timer.id) } else { model.resume(timer.id) }
                 } label: {
-                    Text(model.deadline != nil ? "Pause" : model.pausedSeconds != nil ? "Resume" : "Start")
+                    Text(timer.deadline != nil ? "Pause" : "Resume")
                         .font(MM.Fonts.secondary)
                         .foregroundStyle(MM.Colors.onAccent)
                         .padding(.horizontal, MM.Layout.padding).padding(.vertical, MM.Layout.spacing / 2)
                         .background(MM.Colors.accent, in: Capsule()).clickable()
                 }.buttonStyle(.plain)
             }
-            if model.timerActive {
-                Button { model.stop() } label: { IconView(icon: .close).clickable() }
-                    .buttonStyle(.plain).help(model.finished ? "Dismiss timer" : "Cancel timer")
-                    .accessibilityLabel(model.finished ? "Dismiss timer" : "Cancel timer")
-            }
+            Button { model.stop(timer.id) } label: { IconView(icon: .close).clickable() }
+                .buttonStyle(.plain).help(timer.finished ? "Dismiss timer" : "Cancel timer")
+                .accessibilityLabel(timer.finished ? "Dismiss \(timer.label) timer" : "Cancel \(timer.label) timer")
         }
     }
+}
 
-    private func time(_ seconds: TimeInterval) -> some View {
+private struct QuickTimerClock: View {
+    let seconds: TimeInterval
+
+    var body: some View {
         let total = max(0, Int(ceil(seconds)))
-        return Text(total >= 3600
+        Text(total >= 3600
             ? String(format: "%d:%02d:%02d", total / 3600, total / 60 % 60, total % 60)
             : String(format: "%02d:%02d", total / 60, total % 60))
             .font(MM.Fonts.title).monospacedDigit()

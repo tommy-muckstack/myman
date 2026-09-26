@@ -32,7 +32,9 @@ final class MeetingReminderUXTests: XCTestCase {
         XCTAssertTrue(timer.finished)
         XCTAssertTrue(QuickCompletionSound.isPlaying, "The real timer starts retained audio playback")
         try await Task.sleep(for: .seconds(2))
-        XCTAssertFalse(QuickCompletionSound.isPlaying)
+        XCTAssertTrue(QuickCompletionSound.isPlaying, "The alarm keeps ringing past one chime")
+        timer.stop()
+        XCTAssertFalse(QuickCompletionSound.isPlaying, "Dismissing the timer silences it")
     }
 
     @MainActor func testReminderCanBeDismissedAndReplacedWhileNotificationPermissionIsPending() async throws {

@@ -63,8 +63,8 @@ Quick Tools recognizes checklists, timers, arithmetic, length/weight/temperature
 conversions, time-zone conversions, bill splits and hex colors with four coordinating
 swatches. Click a companion swatch to copy its hex. Results fit the panel; tasks and
 calendar become full-width lists. Non-timer results can be copied or saved to Notes;
-saved results are Markdown, not persistent interactive widgets. A started timer
-continues while My Man is running and sounds when it finishes; the expanded widget has a bell toggle for sound. Timers do not
+saved results are Markdown, not persistent interactive widgets. Several timers can run at once and stack in the top-right corner. A started timer
+continues while My Man is running and rings, shakes, and pulses when it finishes until you dismiss it; the expanded widget has a bell toggle for sound. Timers do not
 survive quitting the app. Simple requests use local rules; ambiguous phrasing may
 use Apple's on-device Foundation Models on supported Macs with Apple Intelligence
 enabled. No hosted classifier or API key is used. This is a bounded adaptive
