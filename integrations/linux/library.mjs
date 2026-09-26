@@ -213,7 +213,8 @@ export async function saveRecording(rec) {
     let thumb=false;
     if (ffmpeg) { try { await run(ffmpeg,['-nostdin','-loglevel','error','-ss',String(Math.min(1,rec.duration/2)),'-i',video_path,'-frames:v','1','-vf','scale=400:-2','-y',thumbnail_path]); thumb=true; } catch {} }
     const title=`Recording ${created_at}`, duration=+rec.duration.toFixed(2), size=(await stat(video_path)).size;
-    // The cursor log is small JSON, so unlike the video it is kept in Git.
+    // The cursor log holds pointer paths and typing times, so like the video it
+    // stays on this computer and out of Git history.
     const cursorRelative=rec.cursor?`assets/recording-cursor/${id}.json`:null, cursor_path=cursorRelative?path.join(root,cursorRelative):null;
     if (cursorRelative) await atomic(cursor_path, JSON.stringify(rec.cursor)+'\n');
     const cursorLine=rec.cursor?`\n\nCursor track: ${cursorSummary(rec.cursor)}. Saved at \`${cursorRelative}\`; read it with \`myman record cursor --id rec-${id} --json\`, or make a smooth-zoom copy with \`myman record polish --id rec-${id} --auto-zoom --json\`.`:'';
@@ -222,12 +223,14 @@ export async function saveRecording(rec) {
     catalog.exports.push({ item_id:`rec-${id}`, revision:1, path:brain_path, kind:'recordings', title, timestamp:created_at, video_path, ...(thumb?{thumbnail_path}:{}), duration, width:rec.width, height:rec.height, captured_local:rec.started_at, timezone, themes:[], tags:[], meetings:[], pinned:false, alt_text, ...(rec.source_id?{source_id:rec.source_id}:{}), ...(cursor_path?{cursor_path}:{}) });
     catalog.generated_at=created_at;
     await atomic(path.join(root,'catalog.json'),JSON.stringify(catalog,null,2)+'\n');
-    // Videos stay on disk but out of Git history so the Brain repo never bloats.
+    // Videos and cursor tracks stay on disk but out of Git history: videos are
+    // large, and cursor tracks record typing times.
     const ignore=path.join(root,'.gitignore'); let rules='';
     try { rules=(await readSafe(ignore,1024*1024)).toString(); } catch (error) { if (error.code!=='ENOENT') throw error; }
-    const ignoreChanged=!rules.split('\n').includes('assets/recordings/');
-    if (ignoreChanged) await atomic(ignore,rules+(rules&&!rules.endsWith('\n')?'\n':'')+'# MyMan: large media is kept locally, not in Git\nassets/recordings/\n');
-    const git=await gitSave(root,[brain_path,...(thumb?[thumbnailRelative]:[]),...(cursorRelative?[cursorRelative]:[]),'catalog.json',...(ignoreChanged?['.gitignore']:[])]);
+    const have=rules.split('\n'), missing=[['assets/recordings/','# MyMan: large media is kept locally, not in Git'],['assets/recording-cursor/','# MyMan: recording cursor tracks (pointer and typing times) stay local']].filter(([rule])=>!have.includes(rule));
+    const ignoreChanged=missing.length>0;
+    if (ignoreChanged) await atomic(ignore,rules+(rules&&!rules.endsWith('\n')?'\n':'')+missing.map(([rule,comment])=>`${comment}\n${rule}\n`).join(''));
+    const git=await gitSave(root,[brain_path,...(thumb?[thumbnailRelative]:[]),'catalog.json',...(ignoreChanged?['.gitignore']:[])]);
     return { id:`rec-${id}`, kind:'recording', title, alt_text, path:video_path, video_path, brain_path, width:rec.width, height:rec.height, duration, created_at, timezone, backend:rec.backend, ...(rec.source_id?{source_id:rec.source_id}:{}), attachment:{path:video_path,mime_type:'video/mp4',width:rec.width,height:rec.height,duration,file_size:size,preview_path:thumb?thumbnail_path:null}, ...(rec.cursor?{cursor:{path:cursor_path,pointer:rec.cursor.pointer,clicks_tracked:rec.cursor.clicks_tracked,clicks:rec.cursor.clicks.length,activity:rec.cursor.activity.length,summary:cursorSummary(rec.cursor)}}:{}), git };
   });
 }

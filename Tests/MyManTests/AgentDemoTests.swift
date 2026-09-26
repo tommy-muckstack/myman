@@ -19,7 +19,7 @@ final class AgentDemoTests: XCTestCase {
         XCTAssertEqual(plan.polish?["music"] as? String, "upbeat")
         XCTAssertEqual(plan.polish?["title"] as? String, "Spotify in 20 seconds")
         XCTAssertEqual(plan.json["hides_other_apps"] as? Bool, true)
-        XCTAssertEqual(plan.estimatedSeconds, 5.5, accuracy: 0.01)
+        XCTAssertEqual(plan.estimatedSeconds, 4.9, accuracy: 0.01, "lead-in 0.8 + lead-out 1.2 + the steps, same sum as Linux")
         let quiet = try DemoScript.parse(["app": "MyMan", "focus": false, "polish": false, "steps": [["wait": 1]]])
         XCTAssertFalse(quiet.focus); XCTAssertNil(quiet.polish)
     }
