@@ -19,6 +19,9 @@ Regions: global bottom-left, or display-local top-left with --display.
 Annotations: arrow, box, highlight, text, pixelate; crop applies last.
 Human permissions: ~/.config/myman/agents.json (or XDG_CONFIG_HOME).
 All grants start off. CLI and MCP cannot grant access.
+myman capture ocr --id SHOT-ID --json (line text + pixel boxes)
+myman windows list --json (X11; region is ready for --region)
+myman clipboard read --format text|image --json; myman clipboard write --text T --json
 myman record start [--display main] [--region x,y,w,h] [--max-duration 30] --json
 myman record stop|cancel|status --session-id ID --json (video only; needs recording grant)
 Meetings, dictation, Live Text, native UI and audio/webcam recording are unsupported.
