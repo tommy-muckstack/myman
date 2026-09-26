@@ -20,16 +20,18 @@ export async function lockedWrite(fn) {
   try { await atomic(path.join(lock,'owner.json'), JSON.stringify({pid:process.pid,created_at:new Date().toISOString()})); return await fn(root); }
   finally { await rm(lock, { recursive: true, force: true }); }
 }
-async function catalogForWrite(root) {
+export async function catalogForWrite(root) {
   const brain = new Brain(root);
   const existing = await brain.catalog();
-  if (existing) return { version: 1, generated_at: existing.generated_at, exports: existing.exports };
+  // Hidden (excluded) items stay recoverable but outside exports, so every
+  // reader and search omits them.
+  if (existing) return { version: 1, generated_at: existing.generated_at, exports: existing.exports, ...(Array.isArray(existing.excluded)&&existing.excluded.length?{ excluded: existing.excluded }:{}) };
   // Preserve a legacy Brain's documents when introducing its first catalog.
   const scan = await brain.scan();
   if (scan.partial) fail('EXPORT_CHANGED', 'Existing legacy exports could not be read completely; no catalog was written.');
   return { version: 1, exports: scan.documents.filter(doc=>doc.path.includes('/')).map(doc=>({ item_id: `${doc.kind==='screenshots'?'shot':'note'}-${doc.id || randomUUID()}`, revision:1, path:doc.path, kind:doc.kind, title:doc.title, timestamp:doc.timestamp, ...(doc.image_path?{image_path:doc.image_path}:{}), themes:[], pinned:false })) };
 }
-async function gitSave(root, files) {
+export async function gitSave(root, files, message = 'MyMan Linux: save local capture') {
   const git = await command('git');
   if (!git) fail('DEPENDENCY_MISSING', 'Install git before saving to MyManBrain.');
   try {
@@ -37,8 +39,8 @@ async function gitSave(root, files) {
     // gitdirs, and disable hooks and signing for companion-created commits.
     try { const info = await lstat(path.join(root,'.git')); if (!info.isDirectory() || info.isSymbolicLink()) fail('UNSAFE_PATH','Brain .git must be an ordinary directory.'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; await run(git, ['-C',root,'init','--quiet']); }
-    await run(git, ['-C',root,'-c','core.hooksPath=/dev/null','add','--',...files]);
-    await run(git, ['-C',root,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=MyMan','-c','user.email=myman@localhost','commit','--quiet','--only','-m','MyMan Linux: save local capture','--',...files]);
+    await run(git, ['-C',root,'-c','core.hooksPath=/dev/null','add','-A','--',...files]);
+    await run(git, ['-C',root,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=MyMan','-c','user.email=myman@localhost','commit','--quiet','--only','-m',message,'--',...files]);
     return { committed: true };
   } catch (error) {
     // A file already saved must still return its ID if git fails; retrying the
@@ -46,7 +48,7 @@ async function gitSave(root, files) {
     return { committed: false, error: { code: error.code, message: error.message } };
   }
 }
-const titleLine = value => value.replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0,1000);
+export const titleLine = value => value.replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0,1000);
 export async function saveNote(args) {
   if (!await command('git')) fail('DEPENDENCY_MISSING', 'Install git before saving notes.');
   return lockedWrite(async root => {

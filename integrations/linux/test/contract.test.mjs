@@ -74,12 +74,17 @@ for(const entry of entries) {
   const conflict=await cli(entry,['note','create','--body','different','--request-id',request],f.env);assert.equal(conflict.data.error.code,'ID_CONFLICT');
   const search=await ok(entry,['search','--query','needle'],f.env);assert.match(JSON.stringify(search),/Linux note/);
   const native=await ok(path.join(repo,'integrations/brain/cli.mjs'),['search','{"query":"needle"}'],f.env);assert.match(JSON.stringify(native),/Linux note/);
+  // Library actions run end to end through the CLI and worker on Linux.
+  const read=await ok(entry,['library','read','--id',note.id],f.env);assert.equal(read.body,'Local Linux needle evidence');assert.equal(read.revision,1);
+  const appended=await ok(entry,['note','append','--id',note.id,'--body','More evidence','--expected-updated-at',read.updated_at],f.env);assert.equal(appended.revision,2);
+  const found=await ok(entry,['library','search','--query','more evidence'],f.env);assert.equal(found.results[0].id,note.id);assert.equal(found.applied.semantic,false);
+  const noConfirm=await cli(entry,['library','delete','--id',note.id],f.env);assert.equal(noConfirm.code,5);assert.equal(noConfirm.data.error.code,'CONFIRMATION_REQUIRED');
   const files=(await exec('git',['-C',f.root,'show','--pretty=','--name-only','HEAD'])).stdout;assert.match(files,/catalog.json/);assert.doesNotMatch(files,/personal.txt/);
   assert.match((await exec('git',['-C',f.root,'status','--porcelain'])).stdout,/A  personal.txt/);
   const second=randomUUID(),pending=await ok(entry,['note','create','--body','async receipt','--request-id',second,'--no-wait'],f.env);
   assert.equal(pending.job_id,second);
   let receipt;for(let i=0;i<100;i++){receipt=await ok(entry,['job',second],f.env);if(receipt.job.state!=='running')break;await new Promise(r=>setTimeout(r,50));}
-  assert.equal(receipt.job.state,'succeeded');assert.equal((await ok(entry,['jobs'],f.env)).jobs.length,2);
+  assert.equal(receipt.job.state,'succeeded');const ids=(await ok(entry,['jobs'],f.env)).jobs.map(j=>j.job_id??j.id);assert.ok(ids.includes(request)&&ids.includes(second),'both note receipts are listed');
   const shared=randomUUID(),sharedArgs=['note','create','--body','Concurrent retry','--request-id',shared];
   const twins=await Promise.all([ok(entry,sharedArgs,f.env),ok(entry,sharedArgs,f.env)]);assert.equal(twins[0].id,twins[1].id);
 

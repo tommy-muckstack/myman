@@ -1,6 +1,6 @@
 # Linux (agents)
 
-MyMan's Linux companion runs locally on Ubuntu/X11 (including Xvfb) and Omarchy/Arch with Hyprland/Wayland, using Node.js 22+. It captures screenshots, annotates PNGs, creates Markdown notes, and searches a local MyManBrain. It is not a Swift UI port. It uses no cloud services, model downloads or API keys. Existing macOS executables and committed Brain bundles are unchanged.
+MyMan's Linux companion runs locally on Ubuntu/X11 (including Xvfb) and Omarchy/Arch with Hyprland/Wayland, using Node.js 22+. It captures screenshots, annotates PNGs, and creates, edits, searches, pins, hides and deletes Markdown notes and captures in a local MyManBrain. It is not a Swift UI port. It uses no cloud services, model downloads or API keys. Existing macOS executables and committed Brain bundles are unchanged.
 
 ## Install
 
@@ -109,9 +109,30 @@ Bare `screenshot` captures the whole desktop. `--display main`, monitor index, `
 
 Annotations accept up to 100 arrows, boxes, highlights, text labels and pixelation operations. Explicit rectangles use integer image pixels, top-left. Colors and text `font_size` follow the shared schema. Crop applies last. A saved annotation gets a new ID; the original PNG and Markdown stay unchanged. `--dry-run` validates without rendering or saving an item. `--preview` renders a private temporary PNG without saving an item; previews expire after one hour and old files are cleaned on the next preview. Both still produce job receipts. No clipboard or editor is opened.
 
-Screenshot results include the same ID, PNG/Brain paths, dimensions, scale, timestamp, timezone, attachment metadata, and job ID fields as the Mac capture subset. Tesseract OCR runs locally before the screenshot is indexed when available. `ocr_status` is `ready`, `unavailable`, or `failed`; missing OCR does not prevent capture. OCR is in the Markdown body and searchable by existing Brain tools. Live Text/OCR targeting, `capture ocr` bounding boxes, image/circle/callout overlays, window capture, native UI, clipboard, audio/webcam recording, meetings, dictation and the other Mac-only actions return `unsupported_on_platform`.
+Screenshot results include the same ID, PNG/Brain paths, dimensions, scale, timestamp, timezone, attachment metadata, and job ID fields as the Mac capture subset. Tesseract OCR runs locally before the screenshot is indexed when available. `ocr_status` is `ready`, `unavailable`, or `failed`; missing OCR does not prevent capture. OCR is in the Markdown body and searchable by existing Brain tools. Live Text targeting, image/circle/callout overlays, native UI, audio/webcam recording, meetings, dictation and the other Mac-only actions return `unsupported_on_platform`. (`capture ocr` boxes, window capture and the clipboard are covered below.)
 
-`search` and `library search` use Brain keywords, not semantic search. All existing read-only export queries (`collect`, `recent`, `read`, `image`, and kind aliases) are available. For MCP search, use `myman-brain`; the Mac's `myman_app_capture_search` action is unsupported. `--root` changes retrieval only; set `MYMAN_BRAIN_ROOT` in the process environment to choose the Linux writer's Brain. Mutations do not alter permissions or change that environment variable.
+## Library: read, search and edit
+
+```sh
+myman library search --query "pricing page" --kind screenshots --after 2026-09-01 --json
+myman library read --id note-ID --json
+myman note append --id note-ID --body "Reviewed" --expected-updated-at UPDATED_AT --json
+myman note update --id note-ID --body-file body.md --expected-updated-at UPDATED_AT --json
+myman note attach --id note-ID --source-id shot-ID --alt "Pricing table with the new tier" --json
+myman library rename --id shot-ID --title "Pricing page" --expected-revision 1 --json
+myman library pin|unpin|hide|unhide --id ID --json
+myman library delete --id ID --confirm --json
+```
+
+`library read` returns the note body exactly as written (without its title heading), plus `revision`, `updated_at`, `pinned`, alt text and the source path. `library search` ranks exact phrases first, then items containing every word, then near spellings (one typo in words of five or more letters; `--lexical-only` turns that off). Each result says why it matched in `reasons`. Filters: `--kind`, `--after`/`--before` (capture time, before is exclusive), `--pinned-only`, `--limit`/`--offset`. Semantic search and themes are not available on Linux and return `unsupported_on_platform` instead of quietly returning keyword results.
+
+Edits need the library grant. Replacing a note requires `--expected-updated-at` from `library read`; append accepts it too. Rename, pin, hide and delete accept `--expected-revision`. A stale value fails with `EDIT_CONFLICT` (exit 5) and never overwrites a newer change by a person or another agent. `--lease-id` is refused because named agents are Mac-only. Every edit is committed to the Brain's Git history with a plain message such as `MyMan Linux: append to note`.
+
+Attached images are copied into `assets/note-images/NOTE-ID/`, so deleting the source never breaks the note. The Markdown image always has alt text: yours from `--alt`, the source screenshot's description, or the file name and size with an `ALT_TEXT_MISSING` warning asking you to describe it.
+
+Hidden items move out of the catalog's exports into its `excluded` list. Every reader, `collect`, `recent` and search then omits them; `library read` says the item is hidden without returning its contents. Unhide restores it unchanged. Delete requires `--confirm`, removes the Markdown and the files it owns (image, thumbnail, recording, note images), and records the removal in Git; earlier committed versions remain in Git history.
+
+`search` (without `library`) keeps the plain Brain keyword query and still accepts `--root` for another Brain folder. `--root` changes retrieval only; set `MYMAN_BRAIN_ROOT` in the process environment to choose the Linux writer's Brain. Mutations do not alter permissions or change that environment variable.
 
 Use `--request-id UUID` for writes. The receipt is claimed before starting a detached local worker; identical retries return the original result, and different arguments with that ID return `ID_CONFLICT`. `--no-wait` returns a pending `job_id`; `job UUID` polls it, and `jobs` lists the latest 100 receipts. A waiting command that times out does not cancel or replay the worker. Receipts are stored privately in `${XDG_STATE_HOME:-~/.local/state}/myman/jobs`; they remain until the owner removes them. Removing receipts also removes deduplication history. Worker receipts bind the PID to Linux `/proc/<pid>/stat` field 22 and the boot ID; a reused PID, zombie, previous boot or legacy PID-only receipt cannot keep a job alive. A stopped worker becomes `interrupted`; inspect saved artifacts before issuing a new request.
 
