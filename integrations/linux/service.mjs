@@ -12,6 +12,7 @@ import { execute } from '../brain/tools.mjs';
 import { annotate, capture, importImage, ocr, screens, validateMarkup } from './images.mjs';
 import { captureEntry, saveCapture, saveNote } from './library.mjs';
 import * as recording from './recording.mjs';
+import * as video from './video.mjs';
 import * as comparison from './compare.mjs';
 import { announce } from './indicator.mjs';
 import * as items from './items.mjs';
@@ -21,7 +22,7 @@ import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.13.0';
-export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import']);
+export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function errorData(error) { return {...(error.alternative?{alternative:error.alternative}:{}),...(error.details&&typeof error.details==='object'?{details:error.details}:{}),code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
@@ -46,7 +47,7 @@ function validate(name,args) {
   return parsed.data;
 }
 // Capture and recording always tell the person at the machine (see indicator.mjs).
-const visible=new Set(['screenshot.capture','screenshot.capture_markup','recording.start','recording.stop','recording.cancel']);
+const visible=new Set(['screenshot.capture','screenshot.capture_markup','recording.start','recording.pause','recording.resume','recording.stop','recording.cancel']);
 export async function dispatch(name,args) {
   const result=await perform(name,args);
   if(visible.has(name)&&!args?.dry_run) await announce(name,result);
@@ -64,6 +65,10 @@ async function perform(name,args) {
   if (name==='recording.start') return recording.start(args);
   if (name==='recording.stop') return recording.stop(args);
   if (name==='recording.cancel') return recording.cancel(args);
+  if (name==='recording.pause') return recording.pause(args);
+  if (name==='recording.resume') return recording.resume(args);
+  if (name==='recording.frames') return video.frames(args);
+  if (name==='recording.export') return video.exportClip(args);
   if (name==='recording.status') return recording.status(args);
   if (name==='windows.list') return windowsList();
   if (name==='clipboard.read') return clipboardRead(args);

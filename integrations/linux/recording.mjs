@@ -28,11 +28,18 @@ async function recorderAlive(session) {
   const current = await processIdentity(session.pid);
   return current !== null && JSON.stringify(current) === JSON.stringify(session.process_identity);
 }
-const elapsed = session => Math.max(0, ((session.ended_at ? Date.parse(session.ended_at) : Date.now()) - Date.parse(session.started_at)) / 1000);
+// Pausing finalizes the current segment and resuming starts a new one, so
+// both backends produce clean files; stop joins them. `recorded` counts
+// seconds in finished segments; `run_started_at` is the live segment's start.
+const elapsed = session => {
+  const until = session.ended_at ? Date.parse(session.ended_at) : Date.now();
+  if (session.recorded === undefined) return Math.max(0, (until - Date.parse(session.started_at)) / 1000);
+  return session.recorded + (session.state === 'recording' && session.run_started_at ? Math.max(0, (until - Date.parse(session.run_started_at)) / 1000) : 0);
+};
 function publicSession(session, live) {
-  const { pid, process_identity, file, ...rest } = session;
+  const { pid, process_identity, file, segments, run_started_at, recorded, ...rest } = session;
   const state = session.state === 'recording' && !live ? 'finished' : session.state;
-  return { ...rest, state, elapsed: +elapsed(session).toFixed(2), remaining: state === 'recording' ? +Math.max(0, session.max_duration - elapsed(session)).toFixed(2) : 0 };
+  return { ...rest, state, elapsed: +elapsed(session).toFixed(2), remaining: ['recording', 'paused'].includes(state) ? +Math.max(0, session.max_duration - elapsed(session)).toFixed(2) : 0 };
 }
 
 export async function start(args) {
@@ -50,30 +57,49 @@ export async function start(args) {
     const other = JSON.parse((await readSafe(path.join(dir, name), 64 * 1024, true)).toString());
     if (other.state === 'recording' && await recorderAlive(other)) fail('RECORDING_ACTIVE', `Recording ${other.session_id} is still running. Stop or cancel it first.`);
   }
-  const id = randomUUID(), session_id = `rec-session-${id}`, file = path.join(dir, `${id}.mp4`);
+  const id = randomUUID(), session_id = `rec-session-${id}`;
+  const session = { session_id, state: 'recording', backend: desktop.session === 'wayland' ? 'wf-recorder' : 'ffmpeg', session_type: desktop.session, origin: desktop.origin ?? [0, 0], started_at: new Date().toISOString(), max_duration: max, region: [x, y, w, h], width: w, height: h, recorded: 0, segments: [] };
+  await launch(session);
+  return { ...publicSession(session, true), next: `Stop with: myman record stop --session-id ${session_id} --json` };
+}
+async function launch(session) {
+  const deps = await dependencies(), [x, y, w, h] = session.region, seconds = Math.max(1, Math.ceil(session.max_duration - session.recorded));
+  const file = path.join(await sessionsDir(), `${session.session_id.slice(12)}-${session.segments.length}.mp4`);
   let file_, argv;
-  if (desktop.session === 'wayland') {
+  if (session.session_type === 'wayland') {
     if (!deps['wf-recorder']) fail('DEPENDENCY_MISSING', 'Install wf-recorder for Wayland (Hyprland/Sway) recording.');
-    [file_, argv] = [deps['wf-recorder'], ['-y', '-g', `${x + (desktop.origin?.[0] ?? 0)},${y + (desktop.origin?.[1] ?? 0)} ${w}x${h}`, '-c', 'libx264', '-p', 'preset=veryfast', '-x', 'yuv420p', '-f', file]];
+    [file_, argv] = [deps['wf-recorder'], ['-y', '-g', `${x + session.origin[0]},${y + session.origin[1]} ${w}x${h}`, '-c', 'libx264', '-p', 'preset=veryfast', '-x', 'yuv420p', '-f', file]];
   } else {
     if (!deps.ffmpeg) fail('DEPENDENCY_MISSING', 'Install ffmpeg for X11 screen recording.');
     // captureRect returns X11 top-left coordinates for the capture backends.
-    [file_, argv] = [deps.ffmpeg, ['-nostdin', '-loglevel', 'error', '-f', 'x11grab', '-draw_mouse', '1', '-framerate', '30', '-video_size', `${w}x${h}`, '-i', `${process.env.DISPLAY}+${x},${y}`, '-t', String(max), '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y', file]];
+    [file_, argv] = [deps.ffmpeg, ['-nostdin', '-loglevel', 'error', '-f', 'x11grab', '-draw_mouse', '1', '-framerate', '30', '-video_size', `${w}x${h}`, '-i', `${process.env.DISPLAY}+${x},${y}`, '-t', String(seconds), '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y', file]];
   }
   const child = spawn(file_, argv, { detached: true, stdio: 'ignore', env: process.env });
   const spawned = await new Promise(resolve => { child.once('spawn', () => resolve(true)); child.once('error', () => resolve(false)); });
   if (!spawned) fail('BACKEND_FAILED', `${path.basename(file_)} could not start.`);
   child.unref();
-  const session = { session_id, state: 'recording', backend: path.basename(file_), started_at: new Date().toISOString(), max_duration: max, region: [x, y, w, h], width: w, height: h, pid: child.pid, process_identity: await processIdentity(child.pid), file };
+  Object.assign(session, { state: 'recording', file, pid: child.pid, process_identity: await processIdentity(child.pid), run_started_at: new Date().toISOString() });
   await save(session);
   // Fail fast when the recorder exits immediately (bad DISPLAY, no permission).
   await new Promise(r => setTimeout(r, 600));
   if (!await recorderAlive(session)) {
-    session.state = 'failed'; session.ended_at = new Date().toISOString(); await save(session);
     await rm(file, { force: true });
-    fail('BACKEND_FAILED', 'The recorder exited immediately. Check doctor and desktop access.');
+    if (!session.segments.length) { session.state = 'failed'; session.ended_at = new Date().toISOString(); await save(session); fail('BACKEND_FAILED', 'The recorder exited immediately. Check doctor and desktop access.'); }
+    Object.assign(session, { state: 'paused', file: null, run_started_at: null }); await save(session);
+    fail('BACKEND_FAILED', 'The recorder could not restart; the recording is still paused and earlier footage is kept.');
   }
-  return { ...publicSession(session, true), next: `Stop with: myman record stop --session-id ${session_id} --json` };
+}
+// Finish the live segment and fold its duration into `recorded`.
+async function closeSegment(session) {
+  if (!session.file) return;
+  await halt(session);
+  const info = await stat(session.file).catch(() => null);
+  if (info && info.size >= 1024) {
+    session.segments.push(session.file);
+    const now = Date.now(), wall = (now - Date.parse(session.run_started_at)) / 1000;
+    session.recorded = Math.min(session.max_duration, session.recorded + Math.max(0, Math.min(wall, (await probe(session.file)) ?? wall)));
+  } else await rm(session.file, { force: true });
+  Object.assign(session, { file: null, pid: null, process_identity: null, run_started_at: null });
 }
 async function halt(session) {
   if (!await recorderAlive(session)) return;
@@ -86,25 +112,58 @@ async function probe(file) {
   if (!deps.ffprobe) return null;
   try { const { stdout } = await run(deps.ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]); const d = parseFloat(stdout); return Number.isFinite(d) ? d : null; } catch { return null; }
 }
+export async function pause({ session_id }) {
+  const session = await load(session_id);
+  if (session.state !== 'recording' || !session.segments) fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}${session.segments ? '' : ' and was started before pause support'}.`);
+  if (!await recorderAlive(session)) fail('SESSION_NOT_ACTIVE', 'The recording already reached its time limit. Stop it to save.');
+  await closeSegment(session);
+  Object.assign(session, { state: 'paused', paused_at: new Date().toISOString() }); await save(session);
+  return { ...publicSession(session, false), next: `Resume with: myman record resume --session-id ${session_id} --json` };
+}
+export async function resume({ session_id }) {
+  const session = await load(session_id);
+  if (session.state !== 'paused') fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
+  if (session.recorded >= session.max_duration - 0.5) fail('SESSION_NOT_ACTIVE', 'The recording has no time left. Stop it to save.');
+  const dir = await sessionsDir();
+  for (const name of await readdir(dir)) if (name.endsWith('.json') && name !== `${session_id}.json`) {
+    const other = JSON.parse((await readSafe(path.join(dir, name), 64 * 1024, true)).toString());
+    if (other.state === 'recording' && await recorderAlive(other)) fail('RECORDING_ACTIVE', `Recording ${other.session_id} is running. Stop or cancel it first.`);
+  }
+  delete session.paused_at;
+  await launch(session);
+  return { ...publicSession(session, true), next: `Pause or stop with: myman record pause|stop --session-id ${session_id} --json` };
+}
+async function join(session) {
+  if (session.segments.length === 1) return session.segments[0];
+  const deps = await dependencies(), list = path.join(await sessionsDir(), `${session.session_id.slice(12)}-list.txt`), out = path.join(await sessionsDir(), `${session.session_id.slice(12)}-joined.mp4`);
+  await atomic(list, session.segments.map(f => `file '${f.replaceAll("'", "'\\''")}'`).join('\n') + '\n');
+  try { await run(deps.ffmpeg, ['-nostdin', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', '-y', out]); }
+  finally { await rm(list, { force: true }); }
+  return out;
+}
 export async function stop({ session_id }) {
   const session = await load(session_id);
   if (session.state === 'saved') return session.result;
-  if (session.state !== 'recording') fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
-  await halt(session);
+  if (!['recording', 'paused'].includes(session.state)) fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
+  const legacy = !session.segments;
+  if (legacy) { await halt(session); session.segments = []; const info = await stat(session.file).catch(() => null); if (info && info.size >= 1024) session.segments.push(session.file); session.file = null; }
+  else await closeSegment(session);
   session.ended_at = new Date().toISOString();
-  const info = await stat(session.file).catch(() => null);
-  if (!info || info.size < 1024) { session.state = 'failed'; await save(session); fail('BACKEND_FAILED', 'The recorder produced no usable video.'); }
-  const duration = await probe(session.file) ?? elapsed(session);
-  const result = await saveRecording({ file: session.file, width: session.width, height: session.height, duration, started_at: session.started_at, backend: session.backend });
-  await rm(session.file, { force: true });
-  Object.assign(session, { state: 'saved', result }); await save(session);
+  if (!session.segments.length) { session.state = 'failed'; await save(session); fail('BACKEND_FAILED', 'The recorder produced no usable video.'); }
+  if (session.segments.length > 1 && !(await dependencies()).ffmpeg) fail('DEPENDENCY_MISSING', 'Install ffmpeg to join paused recording segments.');
+  const file = await join(session);
+  const duration = await probe(file) ?? elapsed(session);
+  const result = await saveRecording({ file, width: session.width, height: session.height, duration, started_at: session.started_at, backend: session.backend });
+  for (const f of new Set([file, ...session.segments])) await rm(f, { force: true });
+  Object.assign(session, { state: 'saved', result, segments: [] }); await save(session);
   return result;
 }
 export async function cancel({ session_id }) {
   const session = await load(session_id);
-  if (session.state !== 'recording') fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
+  if (!['recording', 'paused'].includes(session.state)) fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
   if (await recorderAlive(session)) process.kill(session.pid, 'SIGKILL');
-  await rm(session.file, { force: true });
+  for (const f of [session.file, ...(session.segments ?? [])]) if (f) await rm(f, { force: true });
+  session.segments = [];
   Object.assign(session, { state: 'canceled', ended_at: new Date().toISOString() }); await save(session);
   return publicSession(session, false);
 }
@@ -113,5 +172,5 @@ export async function status({ session_id } = {}) {
   const dir = await sessionsDir(), all = [];
   for (const name of await readdir(dir)) if (name.endsWith('.json')) { const s = JSON.parse((await readSafe(path.join(dir, name), 64 * 1024, true)).toString()); all.push(publicSession(s, await recorderAlive(s))); }
   all.sort((a, b) => b.started_at.localeCompare(a.started_at));
-  return { active: all.find(s => s.state === 'recording') ?? null, sessions: all.slice(0, 20) };
+  return { active: all.find(s => s.state === 'recording' || s.state === 'paused') ?? null, sessions: all.slice(0, 20) };
 }

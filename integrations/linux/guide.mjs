@@ -5,13 +5,13 @@
 export const commands = [
   'doctor', 'actions', 'jobs', 'job', 'invoke', 'screenshot', 'annotate', 'search', 'recent', 'latest', 'collect', 'read', 'image', 'status', 'meetings', 'screenshots', 'tasks', 'indicator',
   'screens list', 'windows list', 'capture ocr', 'capture compare', 'capture targets', 'capture import', 'capture-markup', 'capture image', 'capture copy', 'clipboard read', 'clipboard write',
-  'record start', 'record stop', 'record cancel', 'record status', 'record result',
+  'record start', 'record pause', 'record resume', 'record stop', 'record cancel', 'record status', 'record result', 'record frames', 'record export',
   'note create', 'note append', 'note update', 'note attach',
   'library search', 'library recent', 'library read', 'library related', 'library rename', 'library pin', 'library unpin', 'library hide', 'library unhide', 'library delete',
   'task list', 'task add', 'task update', 'task complete', 'task reopen', 'task delete',
 ];
 export const flags = ['json', 'help', 'id', 'query', 'kind', 'limit', 'offset', 'after', 'before', 'title', 'body', 'body-file', 'file', 'display', 'region', 'window-id', 'coordinates', 'ops', 'ops-file',
-  'before-id', 'after-id', 'ignore-rects', 'threshold', 'granularity', 'color', 'dry-run', 'preview', 'request-id', 'no-wait', 'wait-timeout', 'root', 'offline', 'format', 'text', 'session-id', 'max-duration', 'expected-updated-at', 'expected-revision', 'expected-version',
+  'before-id', 'after-id', 'ignore-rects', 'threshold', 'granularity', 'color', 'times', 'count', 'width', 'start', 'end', 'max-bytes', 'edits', 'dry-run', 'preview', 'request-id', 'no-wait', 'wait-timeout', 'root', 'offline', 'format', 'text', 'session-id', 'max-duration', 'expected-updated-at', 'expected-revision', 'expected-version',
   'source-id', 'path', 'alt', 'confirm', 'pinned-only', 'lexical-only', 'semantic', 'notes', 'due', 'clear-due', 'state', 'mode'];
 
 function distance(a, b) {
