@@ -3,7 +3,7 @@
 // renders plain text for a person at a terminal (JSON stays the default for
 // pipes and whenever --json is passed).
 export const commands = [
-  'doctor', 'actions', 'jobs', 'job', 'invoke', 'screenshot', 'annotate', 'search', 'recent', 'latest', 'collect', 'read', 'image', 'status', 'meetings', 'screenshots', 'tasks',
+  'doctor', 'actions', 'jobs', 'job', 'invoke', 'screenshot', 'annotate', 'search', 'recent', 'latest', 'collect', 'read', 'image', 'status', 'meetings', 'screenshots', 'tasks', 'indicator',
   'screens list', 'windows list', 'capture ocr', 'capture image', 'capture copy', 'clipboard read', 'clipboard write',
   'record start', 'record stop', 'record cancel', 'record status', 'record result',
   'note create', 'note append', 'note update', 'note attach',

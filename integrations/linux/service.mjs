@@ -12,6 +12,7 @@ import { execute } from '../brain/tools.mjs';
 import { annotate, capture, ocr, screens } from './images.mjs';
 import { captureEntry, saveCapture, saveNote } from './library.mjs';
 import * as recording from './recording.mjs';
+import { announce } from './indicator.mjs';
 import * as items from './items.mjs';
 import { clipboardRead, clipboardWrite, ocrRegions, windowRegion, windowsList } from './desktop.mjs';
 import { processIdentity, workerAlive } from './process-identity.mjs';
@@ -43,7 +44,14 @@ function validate(name,args) {
   if (!parsed.success) fail('INVALID_ARGUMENTS',parsed.error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('; '));
   return parsed.data;
 }
+// Capture and recording always tell the person at the machine (see indicator.mjs).
+const visible=new Set(['screenshot.capture','recording.start','recording.stop','recording.cancel']);
 export async function dispatch(name,args) {
+  const result=await perform(name,args);
+  if(visible.has(name)&&!args?.dry_run) await announce(name,result);
+  return result;
+}
+async function perform(name,args) {
   args=validate(name,args);
   if (name==='app.doctor') return doctor();
   await authorize(catalog.actions.find(a=>a.name===name).permissions);
