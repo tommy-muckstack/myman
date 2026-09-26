@@ -222,12 +222,15 @@ extension RecordingPolishTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let source = dir.appendingPathComponent("take.mov"), song = dir.appendingPathComponent("song.wav")
         try await fixtureVideo(source)
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
-        let file = try AVAudioFile(forWriting: song, settings: format.settings)
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44_100)!
-        buffer.frameLength = 44_100
-        for ch in 0..<2 { for i in 0..<44_100 { buffer.floatChannelData![ch][i] = 0.2 * sin(Float(i) * 2 * .pi * 440 / 44_100) } }
-        try file.write(from: buffer)
+        do {
+            // Scoped so the file is closed (and its WAV header finished) before it is read.
+            let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+            let file = try AVAudioFile(forWriting: song, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44_100)!
+            buffer.frameLength = 44_100
+            for ch in 0..<2 { for i in 0..<44_100 { buffer.floatChannelData![ch][i] = 0.2 * sin(Float(i) * 2 * .pi * 440 / 44_100) } }
+            try file.write(from: buffer)
+        }
         let plan = try AgentPolish.plan(["title": ["text": "Launch day", "seconds": 1] as [String: Any], "end": "Thanks", "music": ["file": song.path]])
         let destination = dir.appendingPathComponent("finished.mp4")
         let length = try await AVURLAsset(url: source).load(.duration).seconds
@@ -236,7 +239,8 @@ extension RecordingPolishTests {
         let asset = AVURLAsset(url: destination)
         let duration = try await asset.load(.duration).seconds
         XCTAssertEqual(duration, length + 3, accuracy: 0.2, "title and end cards add their seconds")
-        XCTAssertFalse(try await asset.loadTracks(withMediaType: .audio).isEmpty, "music is mixed in")
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(audioTracks.isEmpty, "music is mixed in")
         XCTAssertEqual((done["cards"] as? [String: Any])?["video_starts_at"] as? Double, 1)
         let size = try await asset.loadTracks(withMediaType: .video).first?.load(.naturalSize)
         XCTAssertEqual(size, CGSize(width: 320, height: 200), "cards match the video frame")

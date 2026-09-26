@@ -581,8 +581,11 @@ enum DemoLook {
         let near = labels.filter { let n = normalized($0); return n.contains(want) || (n.count >= 3 && want.contains(n)) }
         let count = elements.filter { normalized($0.label) == want }.count
         let head = count > 0 && nth > count ? "Found only \(count) \"\(text)\", not \(nth)." : "Could not find \"\(text)\" in the recorded area within \(Int(seconds)) s."
-        let tail = !near.isEmpty ? " Close matches: " + near.prefix(5).map { "\"\($0)\"" }.joined(separator: ", ") + "."
-            : !labels.isEmpty ? " Visible labels: " + labels.prefix(12).map { "\"\($0)\"" }.joined(separator: ", ") + "." : " No text could be read there."
+        let quoted: (ArraySlice<String>) -> String = { $0.map { "\"\($0)\"" }.joined(separator: ", ") }
+        let tail: String
+        if !near.isEmpty { tail = " Close matches: " + quoted(near.prefix(5)) + "." }
+        else if !labels.isEmpty { tail = " Visible labels: " + quoted(labels.prefix(12)) + "." }
+        else { tail = " No text could be read there." }
         return head + tail + " Use the exact label from myman demo --look, or a point [x, y] for icons."
     }
 
