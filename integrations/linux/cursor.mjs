@@ -58,7 +58,7 @@ export async function track(session, logFile, alive, { exit = true } = {}) {
 }
 // Fold the raw log into the saved track: compact arrays plus a summary that
 // says, in plain terms, where the action is.
-export async function build(logFile, { width, height, duration }) {
+export async function build(logFile, { width, height, duration, cursorInVideo = true }) {
   let raw = '';
   try { raw = await readFile(logFile, 'utf8'); } catch {}
   const moves = [], clicks = [], keys = []; let pointerOk = true, inputOk = raw.length > 0;
@@ -71,7 +71,7 @@ export async function build(logFile, { width, height, duration }) {
     else moves.push([r.t, r.x, r.y]);
   }
   moves.sort((a, b) => a[0] - b[0]); clicks.sort((a, b) => a[0] - b[0]); keys.sort((a, b) => a - b);
-  return { version: 1, rate: RATE, width, height, duration, pointer: pointerOk && moves.length ? 'tracked' : 'unavailable', clicks_tracked: inputOk, fields: { moves: ['t', 'x', 'y'], clicks: ['t', 'x', 'y', 'button'], keys: ['t'] }, moves, clicks, keys, activity: activity({ moves, clicks, keys, width, height, duration }) };
+  return { version: 1, rate: RATE, width, height, duration, cursor_in_video: cursorInVideo, pointer: pointerOk && moves.length ? 'tracked' : 'unavailable', clicks_tracked: inputOk, fields: { moves: ['t', 'x', 'y'], clicks: ['t', 'x', 'y', 'button'], keys: ['t'] }, moves, clicks, keys, activity: activity({ moves, clicks, keys, width, height, duration }) };
 }
 // Where something is happening: clicks and typing bursts, plus places the
 // pointer settled after moving. Each span has a focus point and a reason.

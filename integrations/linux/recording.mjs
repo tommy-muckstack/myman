@@ -1,4 +1,4 @@
-import { readdir, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,16 @@ import { atomic, command, dependencies, directory, fail, readSafe, run, statePat
 const sessionId = /^rec-session-[0-9a-f-]{36}$/;
 const DEFAULT_MAX = 300;
 async function sessionsDir() { return directory(path.join(statePath(), 'recordings'), true, true); }
+// `record start --hide-cursor` is a Linux-only CLI flag, so it cannot ride in
+// the shared recording.start schema. The CLI leaves a short-lived request
+// file that the next start (in the worker) consumes.
+const cursorRequest = async () => path.join(await sessionsDir(), 'hide-cursor-request.json');
+export async function requestHiddenCursor() { await writeFile(await cursorRequest(), JSON.stringify({ expires: Date.now() + 20_000 }), { mode: 0o600 }); }
+async function takeHiddenCursor() {
+  const file = await cursorRequest(), taken = `${file}.${process.pid}`;
+  try { await rename(file, taken); } catch { return false; }
+  try { return JSON.parse(await readFile(taken, 'utf8')).expires > Date.now(); } catch { return false; } finally { await rm(taken, { force: true }); }
+}
 async function sessionFile(id) {
   if (!sessionId.test(id || '')) fail('INVALID_ARGUMENTS', 'Use the session_id returned by recording.start.');
   return path.join(await sessionsDir(), `${id}.json`);
@@ -64,8 +74,10 @@ export async function start(args) {
     const other = JSON.parse((await readSafe(path.join(dir, name), 64 * 1024, true)).toString());
     if (other.state === 'recording' && await recorderAlive(other)) fail('RECORDING_ACTIVE', `Recording ${other.session_id} is still running. Stop or cancel it first.`);
   }
+  const hideCursor = await takeHiddenCursor();
+  if (hideCursor && desktop.session === 'wayland') unsupported('--hide-cursor needs X11 for now; on Wayland the cursor is always in the video. record polish still adds a highlight and click ripples around it.');
   const id = randomUUID(), session_id = `rec-session-${id}`;
-  const session = { session_id, state: 'recording', backend: desktop.session === 'wayland' ? 'wf-recorder' : 'ffmpeg', session_type: desktop.session, origin: desktop.origin ?? [0, 0], started_at: new Date().toISOString(), max_duration: max, region: [x, y, w, h], width: w, height: h, recorded: 0, segments: [] };
+  const session = { session_id, state: 'recording', backend: desktop.session === 'wayland' ? 'wf-recorder' : 'ffmpeg', session_type: desktop.session, origin: desktop.origin ?? [0, 0], started_at: new Date().toISOString(), max_duration: max, region: [x, y, w, h], width: w, height: h, recorded: 0, segments: [], ...(hideCursor ? { cursor_hidden: true } : {}) };
   await launch(session);
   return { ...publicSession(session, true), next: `Stop with: myman record stop --session-id ${session_id} --json` };
 }
@@ -86,7 +98,7 @@ async function launch(session) {
   } else {
     if (!deps.ffmpeg) fail('DEPENDENCY_MISSING', 'Install ffmpeg for X11 screen recording.');
     // captureRect returns X11 top-left coordinates for the capture backends.
-    [file_, argv] = [deps.ffmpeg, ['-nostdin', '-loglevel', 'error', '-f', 'x11grab', '-draw_mouse', '1', '-framerate', '30', '-video_size', `${w}x${h}`, '-i', `${process.env.DISPLAY}+${x},${y}`, '-t', String(seconds), '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y', file]];
+    [file_, argv] = [deps.ffmpeg, ['-nostdin', '-loglevel', 'error', '-f', 'x11grab', '-draw_mouse', session.cursor_hidden ? '0' : '1', '-framerate', '30', '-video_size', `${w}x${h}`, '-i', `${process.env.DISPLAY}+${x},${y}`, '-t', String(seconds), '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y', file]];
   }
   const child = spawn(file_, argv, { detached: true, stdio: 'ignore', env: process.env });
   const spawned = await new Promise(resolve => { child.once('spawn', () => resolve(true)); child.once('error', () => resolve(false)); });
@@ -129,7 +141,7 @@ export async function trackSession(session_id) {
   await cursor.track(session, await cursorLog(session), async () => { try { const now = await load(session_id); return now.state === 'recording' && now.run_started_at === session.run_started_at && await recorderAlive(now); } catch { return false; } });
   return { ok: true };
 }
-export async function cursorTrack(session, duration) { return cursor.build(await cursorLog(session), { width: session.width, height: session.height, duration }); }
+export async function cursorTrack(session, duration) { return cursor.build(await cursorLog(session), { width: session.width, height: session.height, duration, cursorInVideo: !session.cursor_hidden }); }
 // Finish the live segment and fold its duration into `recorded`.
 async function closeSegment(session) {
   if (!session.file) return;

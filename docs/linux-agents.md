@@ -198,6 +198,26 @@ Everything is a plain JSON recipe, so a result can be inspected, edited and rend
 
 The result includes `preview_times` (the middle of each zoom) to check with `myman record frames`. A recording made before cursor tracking has no track, so pass `zoom.moments` yourself. Output is 30 fps H.264 with no audio, like `record export`. This is Linux-only for now; the Mac has `record export` zoom edits, which cut in and out without easing.
 
+### Polished demos: cursor polish
+
+`myman record polish --id rec-UUID --cursor big --json` adds a soft highlight that follows the pointer and a ripple on every click. It combines with `--auto-zoom`, and the cursor layers zoom along with the picture. Sizes are `normal` (1.5×), `big` (2×) and `huge` (2.6×), or any number from 1 to 3.
+
+For the best result, record with the real cursor hidden, then let polish draw a larger, smoother one:
+
+```sh
+myman record start --hide-cursor --region 0,0,1280,800 --json
+# ...run the demo...
+myman record stop --json
+myman record polish --id rec-UUID --auto-zoom --cursor big --json
+```
+
+- `--hide-cursor` leaves the pointer out of the video but still logs its path. Polish then draws a crisp arrow at the chosen size, gliding along a smoothed path. Smoothing runs forward and backward, so the arrow never lags behind a click. A plain `record export` of such a recording has no cursor at all, so always polish it. X11 only for now; on Wayland the flag fails clearly instead of recording a cursor anyway.
+- A normal recording already has the real cursor burned in. Polish then adds only the highlight and ripples around it and returns a warning if `size` or `smooth` was asked for.
+- Recipe keys are `cursor.size`, `cursor.smooth` (0 for the raw path, up to 1, default 0.5), `cursor.highlight` and `cursor.ripple`. Each of the last two is `true`, `false`, or a colour such as `"#FFD60A"` (the default highlight is yellow, and the default ripple is white). Unknown keys are errors.
+- Ripples mark where the click really landed, even when the drawn arrow is smoothed. Up to 60 are drawn per render. Clicks need the XInput tools; without them the result warns that there are no ripples.
+
+The result adds `cursor: {drawn, highlight, ripples}` and `warnings`, and the returned `recipe` reproduces the same video. Check a few `preview_times` with `myman record frames`.
+
 ## Brain and MCP
 
 The layout is the existing `notes/*.md`, `screenshots/*.md`, version-1 `catalog.json`, and Git history. Original PNGs live under `assets/captures`, with 400px thumbnails under `assets/capture-thumbnails`. Existing catalog entries and legacy Markdown exports are preserved. Git commits include only the new document/assets and catalog, leaving unrelated staged files untouched. No remotes are added and nothing is pushed. A Git failure after a successful save returns the saved ID and `git.committed: false`, so an agent can repair Git without duplicating the item.
