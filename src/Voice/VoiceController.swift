@@ -4,8 +4,8 @@ import SwiftUI
 
 // Dictation: ⌥⇧V toggles. A small pill appears bottom-center with a live
 // waveform; toggling again (or clicking the pill) stops, transcribes, and
-// types into the currently focused control when transcription finishes. The pill then lingers ~60s offering
-// "Save as note" before quietly disappearing.
+// inserts into the focused control when transcription finishes. A compact
+// result appears at the top right, with Copy and Open for recovery.
 
 @MainActor
 final class VoiceController: ObservableObject {
@@ -398,9 +398,6 @@ final class VoiceController: ObservableObject {
                     : "Could not update recovery history or the clipboard. Use Copy to recover this dictation."
             }
             deliveryOutcome = delivery
-            if delivery.needsAttention {
-                Toast.show(delivery.reason, actionLabel: "Review", action: { WorkflowCenter.shared.open(tab: "dictation") }, duration: 12)
-            }
             TaskExtractor.run(text: text, source: .dictation)
             Analytics.track("dictation_completed", [
                 "chars": text.count,
@@ -418,7 +415,7 @@ final class VoiceController: ObservableObject {
             phase = .done(text)
             if let panel {
                 panel.layoutIfNeeded()
-                presentBottomCenter(panel)
+                presentPill(panel)
             }
             // If the text could only reach the clipboard, make the fix
             // unmissable.
@@ -488,13 +485,13 @@ final class VoiceController: ObservableObject {
     private func showPill() {
         guard panel == nil else { return }
         pillPresented = false
-        let pill = FloatingPanel(content: VoicePillView(controller: self), fixedSize: true)
+        let pill = FloatingPanel(content: VoicePillView(controller: self), becomesKey: false, fixedSize: true)
         // The pill must never steal key focus — the user is dictating into
         // another app. FloatingPanel dismisses on resignKey; this panel never
         // becomes key, so disable that path by presenting without makeKey.
         pill.onDismiss = { [weak self] in self?.panel = nil }
         panel = pill
-        presentBottomCenter(pill)
+        presentPill(pill)
         DispatchQueue.main.async { [weak self] in
             withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
                 self?.pillPresented = true
@@ -502,19 +499,25 @@ final class VoiceController: ObservableObject {
         }
     }
 
-    private func presentBottomCenter(_ panel: FloatingPanel) {
+    private func presentPill(_ panel: FloatingPanel) {
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })
             ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
-        // Estimate first (window owns its size), correct from the real
-        // rendered size on the next runloop — bottom edge stays anchored.
+        // The window owns its size. Results stay anchored at the top right;
+        // recording stays at the bottom center. Correct after SwiftUI renders.
+        let isResult: Bool
+        if case .done = phase { isResult = true } else { isResult = false }
+        func frame(for size: NSSize) -> NSRect {
+            NSRect(x: isResult ? visible.maxX - size.width - MM.Layout.paddingLarge : visible.midX - size.width / 2,
+                   y: isResult ? visible.maxY - size.height - MM.Layout.paddingLarge : visible.minY + 40,
+                   width: size.width, height: size.height)
+        }
         let estimate = { () -> NSSize in
-            if case .done = self.phase { return NSSize(width: 456, height: 240) }
+            if case .done = self.phase { return NSSize(width: 320, height: 140) }
             return NSSize(width: 300, height: 72)
         }()
         panel.setFrame(
-            NSRect(x: visible.midX - estimate.width / 2, y: visible.minY + 40,
-                   width: estimate.width, height: estimate.height),
+            frame(for: estimate),
             display: true
         )
         panel.orderFrontRegardless()
@@ -526,8 +529,7 @@ final class VoiceController: ObservableObject {
                   abs(panel.frame.width - size.width) > 2
                       || abs(panel.frame.height - size.height) > 2 else { return }
             panel.setFrame(
-                NSRect(x: visible.midX - size.width / 2, y: visible.minY + 40,
-                       width: size.width, height: size.height),
+                frame(for: size),
                 display: true
             )
         }
@@ -536,7 +538,7 @@ final class VoiceController: ObservableObject {
     private func recenterPill() {
         guard let panel else { return }
         panel.layoutIfNeeded()
-        presentBottomCenter(panel)
+        presentPill(panel)
     }
 
     private func dismissPill() {
@@ -594,76 +596,60 @@ struct VoicePillView: View {
                 }
 
             case .done(let text):
-                // Wispr-style result card: icon / status / ×, transcript, Copy.
-                // Hovering locks it open (screenshot-preview contract).
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 10) {
-                        IconView(icon: .voice, size: 15, color: .white)
+                VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                    HStack(spacing: MM.Layout.spacing / 2) {
+                        IconView(icon: .voice, size: 14, color: MM.Colors.textSecondary)
                         Spacer()
                         Text(controller.deliveryOutcome?.statusLabel ?? "Saved — use Copy")
                             .font(MM.Fonts.secondary)
-                            .foregroundStyle(Color(white: 0.62))
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Color(white: 0.75))
-                            .frame(width: 24, height: 24)
-                            .background(Circle().strokeBorder(Color(white: 0.35), lineWidth: 1))
-                            .clickable(minSize: 32)
-                            .onTapGesture { controller.dismiss() }
-                    }
-                    if let delivery = controller.deliveryOutcome, !delivery.isVerified {
-                        Text(delivery.reason)
-                            .font(MM.Fonts.secondary)
                             .foregroundStyle(MM.Colors.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .help(controller.deliveryOutcome?.reason ?? "")
+                        Button { controller.dismiss() } label: {
+                            IconView(icon: .close, size: 12, color: MM.Colors.textTertiary)
+                                .clickable()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss dictation")
                     }
                     Text(text)
-                        .font(MM.Fonts.bodyInput)
-                        .foregroundStyle(.white)
-                        .lineLimit(4)
+                        .font(MM.Fonts.secondary)
+                        .foregroundStyle(MM.Colors.textPrimary)
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
-                        Button {
-                            controller.openDraft()
-                        } label: {
-                            HStack(spacing: 5) {
-                                IconView(icon: .note, size: 12, color: Color(white: 0.62))
-                                Text("Open")
-                            }
-                            .font(MM.Fonts.secondary)
-                            .foregroundStyle(Color(white: 0.62))
-                            .clickable(minSize: 24)
+                        Button { controller.openDraft() } label: {
+                            Text("Open")
+                                .font(MM.Fonts.secondary)
+                                .foregroundStyle(MM.Colors.textSecondary)
+                                .clickable()
                         }
                         .buttonStyle(.plain)
                         Spacer()
                         Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(text, forType: .string)
+                            _ = DictationDelivery.copyToClipboard(text)
                         } label: {
                             Text("Copy")
-                                .font(MM.Fonts.body)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 6)
-                                .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(Color(white: 0.42)))
-                                .clickable(minSize: 26)
+                                .font(MM.Fonts.secondary)
+                                .foregroundStyle(MM.Colors.textPrimary)
+                                .padding(.horizontal, MM.Layout.spacing)
+                                .padding(.vertical, MM.Layout.spacing / 4)
+                                .background(RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)
+                                    .fill(MM.Colors.surface))
+                                .clickable()
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(18)
-                .frame(width: 420, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(pillBlack))
+                .padding(MM.Layout.padding)
+                .frame(width: 320, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: MM.Layout.radius, style: .continuous)
+                    .fill(MM.Colors.background))
                 .overlay(alignment: .bottom) {
-                    // Give uncertain delivery longer to review; hidden once
-                    // hover locks the card open.
                     if !hoveringResult {
-                        CountdownBar(duration: controller.resultLingerSeconds, color: .white.opacity(0.3))
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 4)
+                        CountdownBar(duration: controller.resultLingerSeconds, color: MM.Colors.textTertiary.opacity(0.3))
+                            .padding(.horizontal, MM.Layout.paddingLarge)
+                            .padding(.bottom, MM.Layout.spacing / 3)
                     }
                 }
                 .onHover { hovering in

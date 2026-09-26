@@ -38,14 +38,14 @@ struct QuickTimeZone: Equatable {
     /// macOS's time-zone database, including daylight saving for that date.
     static func parse(_ input: String, now: Date = Date(), local: TimeZone = .current) -> QuickTool? {
         let text = input.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        func result(_ date: Date, _ source: TimeZone, _ destination: TimeZone, _ from: String, _ to: String) -> QuickTool {
+        func result(_ date: Date, _ source: TimeZone, _ destination: TimeZone, _ from: String?, _ to: String?) -> QuickTool {
             .timeZone(Self(date: date, source: source, destination: destination,
-                           sourceName: from, destinationName: to))
+                           sourceName: (from == nil ? "Your time · " : "") + label(source, requested: from, date: date),
+                           destinationName: (to == nil ? "Your time · " : "") + label(destination, requested: to, date: date)))
         }
-        let localName = "Your time · " + localLabel(local)
         if let match = groups(#"^(?:what time is it|current time|time|now) in (.+?)[?]?$"#, text) {
             guard let destination = zone(match[1], local: local) else { return unknown }
-            return result(now, local, destination, localName, label(destination))
+            return result(now, local, destination, nil, match[1])
         }
         guard let clock = groups(#"^(?:convert\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+(.+)$"#, text) else { return nil }
         let rest = clock[4]
@@ -55,19 +55,19 @@ struct QuickTimeZone: Equatable {
         else { return nil }
         var source = local
         var destination = local
-        var sourceName = localName
-        var destinationName = localName
+        var sourceName: String?
+        var destinationName: String?
         if let pair = groups(#"^(?:in\s+)?(.+?)\s+(?:to|in)\s+(.+)$"#, rest) {
             guard let from = zone(pair[1], local: local), let to = zone(pair[2], local: local) else { return unknown }
             source = from; destination = to
-            sourceName = label(from); destinationName = label(to)
+            sourceName = pair[1]; destinationName = pair[2]
         } else if rest.hasPrefix("to ") {
             guard let to = zone(String(rest.dropFirst(3)), local: local) else { return unknown }
-            destination = to; destinationName = label(to)
+            destination = to; destinationName = String(rest.dropFirst(3))
         } else {
             let name = rest.hasPrefix("in ") ? String(rest.dropFirst(3)) : rest
             guard let from = zone(name, local: local) else { return unknown }
-            source = from; sourceName = label(from)
+            source = from; sourceName = name
         }
         guard var hour = Int(clock[1]), let minute = Int(clock[2].isEmpty ? "0" : clock[2]), (0...59).contains(minute),
               clock[3].isEmpty ? (0...23).contains(hour) : (1...12).contains(hour) else {
@@ -116,16 +116,33 @@ struct QuickTimeZone: Equatable {
         return matches.count == 1 ? TimeZone(identifier: matches[0]) : nil
     }
 
-    /// The Mac's own zone is named for the region, not a city: macOS stores
-    /// Boston as America/New_York, so "New York" would name the wrong place.
-    static func localLabel(_ zone: TimeZone) -> String {
-        zone.localizedName(for: .generic, locale: Locale(identifier: "en_US")) ?? label(zone)
-    }
-
-    private static func label(_ zone: TimeZone) -> String {
+    private static func label(_ zone: TimeZone, requested: String?, date: Date) -> String {
+        let key = requested?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        // Foundation names fixed-offset EST/CST/PST zones GMT-0500/etc.
+        // Keep the user's abbreviation: equal offsets do not imply equal names.
+        if ["est", "edt", "cst", "cdt", "mst", "mdt", "pst", "pdt", "utc", "gmt"].contains(key) {
+            return key.uppercased()
+        }
+        if key.hasPrefix("utc+") || key.hasPrefix("utc-") || key.hasPrefix("gmt+") || key.hasPrefix("gmt-") {
+            return key.uppercased()
+        }
+        if let abbreviation = zone.abbreviation(for: date),
+           ["EST", "EDT", "CST", "CDT", "MST", "MDT", "PST", "PDT", "AKST", "AKDT", "HST"].contains(abbreviation),
+           usRegions.contains(zone.identifier) || zone.identifier.hasPrefix("US/")
+               || zone.identifier.hasPrefix("America/Indiana/") || zone.identifier.hasPrefix("America/Kentucky/")
+               || zone.identifier.hasPrefix("America/North_Dakota/") {
+            return abbreviation
+        }
         if zone.identifier == "Atlantic/Reykjavik" { return "Iceland" }
         return zone.identifier.split(separator: "/").last.map(String.init)?.replacingOccurrences(of: "_", with: " ") ?? zone.identifier
     }
+
+    private static let usRegions: Set<String> = [
+        "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+        "America/Detroit", "America/Phoenix", "America/Boise", "America/Anchorage",
+        "America/Juneau", "America/Metlakatla", "America/Nome", "America/Sitka",
+        "America/Yakutat", "America/Adak", "Pacific/Honolulu"
+    ]
 
     private static let aliases = [
         "iceland": "Atlantic/Reykjavik", "reykjavik": "Atlantic/Reykjavik",

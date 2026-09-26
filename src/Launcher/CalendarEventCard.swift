@@ -31,13 +31,28 @@ struct CalendarEventCard: View {
     }
 
     private var inlineRow: some View {
-        HStack(spacing: MM.Layout.spacing) {
-            Text(event.start.formatted(date: .omitted, time: .shortened))
-                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-                .frame(width: 76, alignment: .leading)
+        HStack(alignment: .center, spacing: MM.Layout.spacing) {
+            VStack(alignment: .leading, spacing: MM.Layout.spacing / 3) {
+                Text(event.isAllDay ? "All day" : event.start.formatted(date: .omitted, time: .shortened))
+                    .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                if !event.isAllDay {
+                    Text(event.end.formatted(date: .omitted, time: .shortened))
+                        .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                }
+            }.monospacedDigit().frame(width: 76, alignment: .leading)
+            RoundedRectangle(cornerRadius: MM.Layout.spacing / 6)
+                .fill(event.hasMeetingLink ? MM.Colors.accent : MM.Colors.border)
+                .frame(width: MM.Layout.spacing / 4, height: MM.Layout.spacing * 3)
             Button(action: onOpen) {
-                Text(event.title).font(MM.Fonts.body).foregroundStyle(MM.Colors.textPrimary)
-                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading).clickable()
+                VStack(alignment: .leading, spacing: MM.Layout.spacing / 3) {
+                    Text(event.title).font(MM.Fonts.body).foregroundStyle(MM.Colors.textPrimary).lineLimit(2)
+                    if !event.attendeeNames.isEmpty {
+                        Text(event.attendeeNames.prefix(2).joined(separator: ", "))
+                            .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary).lineLimit(1)
+                    } else if let location = event.location, !location.isEmpty, !location.contains("://") {
+                        Text(location).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary).lineLimit(1)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).clickable()
             }.buttonStyle(.plain).focused($focused, equals: .event).help("Open calendar event")
             if event.joinURL != nil {
                 action(joinLabel, icon: "video", focus: .join, run: onJoin)
@@ -48,7 +63,7 @@ struct CalendarEventCard: View {
             action("Brief", icon: "sparkles", focus: .brief, run: onBrief)
                 .opacity(showActions ? 1 : 0).allowsHitTesting(showActions)
         }
-        .padding(.horizontal, MM.Layout.spacing / 2).padding(.vertical, MM.Layout.spacing / 2)
+        .padding(MM.Layout.spacing)
         .background(showActions ? MM.Colors.surface : .clear, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
         .contentShape(Rectangle()).accessibilityElement(children: .contain)
     }
@@ -59,7 +74,7 @@ struct CalendarEventCard: View {
                 if event.hasMeetingLink {
                     Circle().fill(MM.Colors.accent).frame(width: 5, height: 5)
                 }
-                Text(event.start.formatted(date: .omitted, time: .shortened))
+                Text(event.isAllDay ? "All day" : event.start.formatted(date: .omitted, time: .shortened))
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
                 Spacer(minLength: 0)
                 if event.meetingID != nil {

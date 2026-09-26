@@ -1,8 +1,10 @@
 # Cursor dictation delivery — issue #82
 
-The result pill now uses the delivery outcome. Only a changed field whose value matches the expected insertion can say **Pasted**. An unverified or interrupted insertion copies the full dictation, explains that the field needs checking before another paste, and keeps the result visible for 12 seconds. Older recovery history remains readable.
+The result pill now uses the delivery outcome. Only a changed field whose value matches the expected insertion can say **Pasted**. An unverified or interrupted insertion copies the full dictation and keeps the compact result visible for 12 seconds. Results appear at the top right with a short status, two-line preview, Open and Copy. The detailed delivery reason is available on status hover; there is no extra warning toast or explanatory paragraph. Older recovery history remains readable.
 
 Electron targets use one clipboard Paste command instead of AXSelectedText, which Chromium can acknowledge without updating its document. MyMan checks the foreground application and focused field before sending input and while polling for confirmation; it never retries an uncertain insertion. Cursor's empty contenteditable paragraph reports a placeholder newline that disappears on the first paste, so that exact empty-field case is also accepted on read-back.
+
+Zed and other opaque editors use their enabled native Paste menu action when available. Unsupported menu actions fall back to one shortcut; a timeout never triggers a second insertion. Zed explicitly prefers Paste even if it exposes an Accessibility text field. The dictation panel cannot become key, including when clicked to stop recording.
 
 ## Verification
 

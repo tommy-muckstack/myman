@@ -170,6 +170,7 @@ struct EditorView: View {
             toolButton(.crop)
             toolButton(.ocr)
             strokeWidthGroup
+            textSizeGroup
 
             Divider().frame(height: 18).overlay(MM.Colors.border).padding(.horizontal, 6)
 
@@ -425,6 +426,38 @@ struct EditorView: View {
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .help("Line width — \(Self.strokeName(model.strokeWidth))")
         .accessibilityLabel("Line width")
+    }
+
+    private var selectedTextID: UUID? {
+        guard pendingText == nil,
+              let annotation = model.annotations.first(where: { $0.id == selectedAnnotation }),
+              case .text = annotation else { return nil }
+        return annotation.id
+    }
+
+    private var textSizeGroup: some View {
+        let size = model.textSize(for: selectedTextID)
+        return Menu {
+            ForEach(EditorModel.textSizes, id: \.self) { value in
+                Button {
+                    model.setTextSize(value, selected: selectedTextID)
+                    if pendingText != nil { textFocused = true }
+                } label: {
+                    Label("\(Int(value)) pt", systemImage: size == value ? "checkmark" : "")
+                }
+            }
+        } label: {
+            Text("\(Int(size.rounded())) pt")
+                .font(MM.Fonts.secondary)
+                .foregroundStyle(MM.Colors.textPrimary)
+                .padding(.horizontal, MM.Layout.spacing / 2)
+                .clickable()
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Text size — applies to selected text and new text")
+        .accessibilityLabel("Text size")
+        .accessibilityValue("\(Int(size.rounded())) points")
     }
 
     private static func strokeName(_ width: CGFloat) -> String {
@@ -691,7 +724,7 @@ struct EditorView: View {
                 if let pending = pendingText {
                     TextField("", text: $textDraft)
                         .textFieldStyle(.plain)
-                        .font(MM.Fonts.gellix(model.annotationFontSize * scale, .semiBold))
+                        .font(MM.Fonts.gellix(model.textSize() * scale, .semiBold))
                         .foregroundStyle(Color(nsColor: model.annotationColor))
                         .focused($textFocused)
                         .frame(width: 240)
@@ -844,7 +877,7 @@ struct EditorView: View {
             // Same image-space size the export uses, scaled for display.
             context.draw(
                 Text(string)
-                    .font(MM.Fonts.gellix(model.annotationFontSize * scale, .semiBold))
+                    .font(MM.Fonts.gellix(model.textSize(for: id) * scale, .semiBold))
                     .foregroundColor(color),
                 at: CGPoint(x: origin.x * scale, y: origin.y * scale),
                 anchor: .topLeading

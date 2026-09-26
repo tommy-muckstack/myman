@@ -22,6 +22,8 @@ A relocated app or a symlink works: the helper resolves its own location and loa
 
 `--root` selects a Brain export for retrieval only. It never redirects mutations to that folder or to another Mac. App commands require a running MyMan instance under the same login. `doctor` checks app connectivity, OS permissions, enabled agent groups, Node, and export availability without requesting permission. Its individual permission fields describe readiness for each workflow; not every workflow needs every permission.
 
+Linux agents: the separate [Linux companion](linux-agents.md) supports X11 and Hyprland/Omarchy/Sway screenshots, explicit-pixel annotations, notes, and Brain keyword queries. It uses the same capture/library JSON schemas with owner-controlled config grants; Mac-only actions return `unsupported_on_platform`. The following native UI/session/TCC details describe macOS.
+
 ## Consent and permissions
 
 Settings → Agents has **Allow local app commands**, plus four separate, default-off grants:

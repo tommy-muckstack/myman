@@ -9,7 +9,7 @@ final class DictationFormattingTests: XCTestCase {
 
     func testNumbersMoneyTimesDatesPhonesAndEmails() {
         XCTAssertEqual(rules("The meeting is on September twenty eighth at two thirty p.m. Eastern. We have fourteen open issues, three of them are P1s, and the budget is forty-five hundred dollars per month, which is about twelve percent over the last quarter. Call me at six one seven five five five O one four two or email Tommy at muckstack dot com. The site is muckstack.com slash download slash myman."),
-                       "The meeting is on September 28 at 2:30 p.m. Eastern. We have 14 open issues, three of them are P1s, and the budget is $4,500 per month, which is about 12% over the last quarter. Call me at 617-555-0142 or email tommy@muckstack.com. The site is muckstack.com/download/My Man.")
+                       "The meeting is on September 28 at 2:30 p.m. Eastern. We have 14 open issues, three of them are P1s, and the budget is $4,500 per month, which is about 12% over the last quarter. Call me at 617-555-0142 or email tommy@muckstack.com. The site is muckstack.com/download/myman.")
         XCTAssertEqual(SpokenForms.numbers("meet at four o'clock or three pm"), "meet at 4 o'clock or 3 pm")
         XCTAssertEqual(SpokenForms.numbers("nine oh five am"), "9:05 am")
         XCTAssertEqual(SpokenForms.numbers("the twentieth time"), "the 20th time")

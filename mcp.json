@@ -13,7 +13,7 @@
       "type": "stdio",
       "command": "node",
       "args": [
-        "${PLUGIN_ROOT}/src/Resources/BrainCompanion/app-server.mjs"
+        "${PLUGIN_ROOT}/integrations/app-server.mjs"
       ],
       "cwd": "${PLUGIN_ROOT}"
     }

@@ -8,10 +8,12 @@ test('marketplace manifests match official pinned schemas and bundled MCP is por
  const ajv=new Ajv2020({strict:false,validateFormats:false});
  const plugin=await readJSON('./schemas/plugin.schema.json'), mcp=await readJSON('./schemas/mcp.schema.json');
  for(const path of ['../../../plugin.json','../../grok-bot/plugin.json']){
-   const manifest=await readJSON(path);assert.ok(ajv.validate(plugin,manifest),JSON.stringify(ajv.errors));assert.equal(manifest.version,'0.12.0');
+   const manifest=await readJSON(path);assert.ok(ajv.validate(plugin,manifest),JSON.stringify(ajv.errors));assert.equal(manifest.version,path==='../../../plugin.json'?'0.13.0':'0.12.0');
  }
  const config=await readJSON('../../../mcp.json');assert.ok(ajv.validate(mcp,config),JSON.stringify(ajv.errors));
  assert.equal(config.mcpServers['myman-brain'].args[0],'${PLUGIN_ROOT}/src/Resources/BrainCompanion/server.mjs');
+ assert.equal(config.mcpServers['myman-app'].args[0],'${PLUGIN_ROOT}/integrations/app-server.mjs');
+ await access(new URL('../../../integrations/linux/bundle/app-server.mjs',import.meta.url));
  await access(new URL('../../../src/Resources/BrainCompanion/server.mjs',import.meta.url));
  await assert.rejects(access(new URL('../../grok-bot/mcp.json',import.meta.url)));
  const skill=await readFile(new URL('../../grok-bot/skills/myman/SKILL.md',import.meta.url),'utf8');assert.match(skill,/local-computer/);assert.match(skill,/offline/);

@@ -252,10 +252,21 @@ enum DictationCleanup {
     /// before the model (which then only handles corrections and wordy
     /// fillers) and again on the model's output.
     static func deterministicCleanup(_ text: String, terms: [String]? = nil) -> String {
-        let restored = applyVocabulary(canonicalizeKnownTerms(text), terms: terms ?? vocabulary())
+        let terms = terms ?? vocabulary()
+        let restored = applyVocabulary(canonicalizeKnownTerms(text), terms: terms)
         return applyEmoji(collapseStutters(stripFillers(applyVoiceCommands(assembleEmails(
-            SpokenForms.apply(normalizeDictationFormatting(restored))
+            slugPathTerms(SpokenForms.apply(normalizeDictationFormatting(restored)), terms: terms)
         )))))
+    }
+
+    /// A multi-word term right after a "/" is a URL slug, not prose:
+    /// "download/My Man" → "download/myman".
+    static func slugPathTerms(_ text: String, terms: [String]) -> String {
+        terms.filter { $0.contains(" ") }.reduce(text) { result, term in
+            SpokenForms.replace(result, "(?i)(?<=/)\\Q\(term)\\E\\b") { groups in
+                groups[0].lowercased().replacingOccurrences(of: " ", with: "")
+            }
+        }
     }
 
     static func editDistance(_ a: String, _ b: String) -> Int {
