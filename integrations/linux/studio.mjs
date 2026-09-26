@@ -13,7 +13,7 @@ import { LICENSE as MUSIC_LICENSE, TRACKS, VERSION as MUSIC_VERSION, compose, wa
 // (--dry-run), edit it, and render the same result again.
 export const LEVELS = { subtle: 1.4, normal: 1.8, strong: 2.4 };
 export const FPS = 30;
-const RECIPE_KEYS = ['zoom', 'cursor', 'background', 'music'], MUSIC_KEYS = ['track', 'file', 'volume', 'fade_in', 'fade_out', 'duck', 'start'], BACKGROUND_KEYS = ['style', 'color', 'corner_radius', 'padding', 'shadow'], CURSOR_KEYS = ['size', 'smooth', 'highlight', 'ripple'], ZOOM_KEYS = ['auto', 'level', 'ramp', 'gap', 'moments'], MOMENT_KEYS = ['start', 'end', 'x', 'y', 'level'];
+const RECIPE_KEYS = ['zoom', 'cursor', 'background', 'music', 'title', 'end'], CARD_KEYS = ['text', 'subtitle', 'seconds'], MUSIC_KEYS = ['track', 'file', 'volume', 'fade_in', 'fade_out', 'duck', 'start'], BACKGROUND_KEYS = ['style', 'color', 'corner_radius', 'padding', 'shadow'], CURSOR_KEYS = ['size', 'smooth', 'highlight', 'ripple'], ZOOM_KEYS = ['auto', 'level', 'ramp', 'gap', 'moments'], MOMENT_KEYS = ['start', 'end', 'x', 'y', 'level'];
 const MAX_BLOCKS = 20, MAX_POINTS = 8;
 
 function num(v, lo, hi, name) {
@@ -35,7 +35,8 @@ export function level(v) {
 export function parseRecipe(recipe = {}) {
   onlyKeys(recipe, RECIPE_KEYS, 'The recipe');
   const cursor = parseCursor(recipe.cursor), background = parseBackground(recipe.background), music = parseMusic(recipe.music);
-  if (recipe.zoom === undefined) return { zoom: null, cursor, background, music };
+  const cards = { title: parseCard(recipe.title, 'title', 2.5), end: parseCard(recipe.end, 'end', 2) };
+  if (recipe.zoom === undefined) return { zoom: null, cursor, background, music, ...cards };
   onlyKeys(recipe.zoom, ZOOM_KEYS, 'recipe.zoom');
   const z = recipe.zoom;
   const zoom = { auto: z.auto !== false && !z.moments, level: level(z.level), ramp: z.ramp === undefined ? 0.6 : num(z.ramp, 0.2, 2, 'recipe.zoom.ramp'), gap: z.gap === undefined ? 2.5 : num(z.gap, 0, 10, 'recipe.zoom.gap') };
@@ -48,7 +49,7 @@ export function parseRecipe(recipe = {}) {
       return { start, end, x: num(m.x, 0, 16000, `moments[${i}].x`), y: num(m.y, 0, 16000, `moments[${i}].y`), ...(m.level !== undefined ? { level: level(m.level) } : {}) };
     });
   }
-  return { zoom, cursor, background, music };
+  return { zoom, cursor, background, music, ...cards };
 }
 // Background: the same backdrops as the image editor and the Mac app's
 // recording polish (Dusk, Ocean, Meadow, Slate, or a custom colour). The
@@ -99,6 +100,29 @@ export async function drawBackground(dir, bg, L) {
 // Filter text: pad the video onto the canvas, then lay the backdrop over it.
 export function backgroundChain(L, { input, bgIn }) {
   return `${input}pad=${L.W}:${L.H}:${L.x}:${L.y}[bp];[${bgIn}:v]format=rgba[bb];[bp][bb]overlay=0:0:shortest=1,format=yuv420p[out]`;
+}
+// Title and end cards: a full-frame card on the same backdrop as the video,
+// with a headline and an optional subtitle, joined before and after it.
+function cardText(v, name, max) {
+  if (typeof v !== 'string' || !v.trim() || v.length > max || /[\u0000-\u0009\u000b-\u001f\u007f]/.test(v) || v.split('\n').length > 2) fail('INVALID_ARGUMENTS', `${name} must be text of 1 to ${max} characters on at most 2 lines.`);
+  return v.trim();
+}
+export function parseCard(c, where, seconds) {
+  if (c === undefined || c === false || c === null) return null;
+  if (typeof c === 'string') c = { text: c };
+  onlyKeys(c, CARD_KEYS, `recipe.${where}`);
+  return { text: cardText(c.text, `recipe.${where}.text`, 80), subtitle: c.subtitle === undefined ? null : cardText(c.subtitle, `recipe.${where}.subtitle`, 120), seconds: c.seconds === undefined ? seconds : num(c.seconds, 0.5, 10, `recipe.${where}.seconds`) };
+}
+// ImageMagick reads "@file" and expands "%" escapes in -annotate text; both are escaped so text is only ever text.
+export const literalText = t => t.replace(/\\/g, '\\\\').replace(/%/g, '%%').replace(/^@/, '\\@');
+export async function drawCard(dir, name, card, { width: W, height: H, colors }) {
+  // Size text to fit: DejaVu Sans Bold averages about 0.62 em per character.
+  const fit = (text, pt, bold) => Math.max(12, Math.min(pt, Math.floor((W * 0.86) / (Math.max(...text.split('\n').map(l => l.length)) * (bold ? 0.62 : 0.56)))));
+  const file = path.join(dir, `${name}.png`), big = fit(card.text, Math.max(20, Math.round(Math.min(W / 16, H / 7))), true), small = card.subtitle ? fit(card.subtitle, Math.max(14, Math.round(big * 0.45)), false) : 0;
+  const args = ['-size', `${W}x${H}`, '-define', 'gradient:direction=SouthEast', `gradient:${colors[0]}-${colors[1]}`, '-gravity', 'center', '-fill', 'white', '-font', 'DejaVu-Sans-Bold', '-pointsize', String(big), '-annotate', `+0${card.subtitle ? `-${Math.round(small * 0.9)}` : '+0'}`, literalText(card.text)];
+  if (card.subtitle) args.push('-font', 'DejaVu-Sans', '-pointsize', String(small), '-fill', 'rgba(255,255,255,0.85)', '-annotate', `+0+${Math.round(big * 0.75)}`, literalText(card.subtitle));
+  await run(await imageCommand(), [...args, '-alpha', 'off', `PNG24:${file}`]);
+  return file;
 }
 // Music: a built-in track (composed by code, CC0) or the agent's own audio
 // file, trimmed to the video, faded in and out, and ducked under the
@@ -229,14 +253,15 @@ export function cursorCommands(frames, { arrow, halo }) {
 const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
 export const MAX_RIPPLES = 60;
 // The cursor layers as filter text. Inputs: [0:v] video, [1:v] arrow PNG when drawn.
-export function cursorChain({ clicks, opts, arrow, cmds }) {
+export function cursorChain({ clicks, opts, arrow, cmds, haloIn }) {
   // Positions ride on each layer's own input via sendcmd. The overlay pulls a
   // layer frame only when it draws that moment, so a move lands on exactly its
   // frame even when later filters (the zoom's split) make ffmpeg read ahead.
   const halo = opts.highlight ? Math.round(56 * opts.size) : 0, parts = [`[0:v]fps=${FPS}[c0]`]; let at = 0;
   if (halo) {
     const [r, g, b] = rgb(opts.highlight), R = halo / 2;
-    parts.push(`color=c=black@0:s=${halo}x${halo}:r=${FPS},format=rgba,geq=r=${r}:g=${g}:b=${b}:a='110*pow(max(0\\,1-hypot(X-${R}\\,Y-${R})/${R})\\,0.8)',sendcmd=f='${cmds.halo}'[halo]`);
+    // A looped still image, like the arrow, so both layers move on the same frames.
+    parts.push(haloIn !== undefined ? `[${haloIn}:v]format=rgba,sendcmd=f='${cmds.halo}'[halo]` : `color=c=black@0:s=${halo}x${halo}:r=${FPS},format=rgba,geq=r=${r}:g=${g}:b=${b}:a='110*pow(max(0\\,1-hypot(X-${R}\\,Y-${R})/${R})\\,0.8)',sendcmd=f='${cmds.halo}'[halo]`);
     parts.push(`[c${at}][halo]overlay@halo=x=-9999:y=-9999:shortest=1[c${at + 1}]`); at++;
   }
   if (arrow) { parts.push(`[1:v]format=rgba,sendcmd=f='${cmds.arrow}'[arw]`, `[c${at}][arw]overlay@arrow=x=-9999:y=-9999:shortest=1[c${at + 1}]`); at++; }
@@ -250,6 +275,12 @@ export function cursorChain({ clicks, opts, arrow, cmds }) {
     });
   }
   return { text: parts.join(';'), out: `[c${at}]`, ripples: rip.length };
+}
+// The highlight as a soft round glow, drawn once.
+export async function drawHalo(dir, size, color) {
+  const file = path.join(dir, 'halo.png'), R = size / 2, [r, g, b] = rgb(color);
+  await run((await dependencies()).ffmpeg, ['-nostdin', '-loglevel', 'error', '-f', 'lavfi', '-i', `color=c=black@0:s=${size}x${size},format=rgba,geq=r=${r}:g=${g}:b=${b}:a='110*pow(max(0\\,1-hypot(X-${R}\\,Y-${R})/${R})\\,0.8)'`, '-frames:v', '1', '-y', file]);
+  return file;
 }
 // A white arrow with a dark outline and soft shadow, tip at (hot, hot).
 export async function drawArrow(dir, size) {
@@ -352,7 +383,7 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
   const hidden = track?.cursor_in_video === false;
   if (hidden && !parsed.cursor) { parsed.cursor = parseCursor(true); warnings.push('This recording hid the real cursor, so a drawn cursor was added. Pass "cursor" in the recipe to change it.'); }
   const bg = parsed.background, layout = bg ? backgroundLayout(bg, source) : null, mu = parsed.music, voice = await hasAudio(entry.video_path);
-  if (!parsed.zoom && !parsed.cursor && !bg && !mu) fail('INVALID_ARGUMENTS', 'Nothing to do. Pass --auto-zoom, --cursor, --background, --music, or a recipe such as {"zoom":{"auto":true},"cursor":{"size":"big"},"background":"ocean","music":"upbeat"}.');
+  if (!parsed.zoom && !parsed.cursor && !bg && !mu && !parsed.title && !parsed.end) fail('INVALID_ARGUMENTS', 'Nothing to do. Pass --auto-zoom, --cursor, --background, --music, --title, or a recipe such as {"zoom":{"auto":true},"cursor":{"size":"big"},"background":"ocean","music":"upbeat"}.');
   // Louder on its own; quieter under narration, where it also ducks while someone speaks.
   if (mu && mu.volume === null) mu.volume = voice ? 0.4 : 0.8;
   if (mu?.file) { const info = await stat(mu.file).catch(() => null); if (!info?.isFile()) fail('NOT_FOUND', `recipe.music.file ${mu.file} is not a readable file.`); }
@@ -381,10 +412,12 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
     ...(c ? { cursor: { ...(hidden ? { size: c.size, smooth: c.smooth } : {}), highlight: c.highlight ?? false, ripple: c.ripple ?? false } } : {}),
     ...(bg ? { background: { style: bg.style, ...(bg.style === 'custom' ? { color: bg.colors[0] } : {}), corner_radius: bg.corner_radius, padding: bg.padding, shadow: bg.shadow } } : {}),
     ...(mu ? { music: { ...(mu.file ? { file: mu.file } : { track: mu.track }), volume: mu.volume, fade_in: mu.fade_in, fade_out: mu.fade_out, duck: mu.duck, start: mu.start } } : {}),
+    ...(parsed.title ? { title: parsed.title } : {}), ...(parsed.end ? { end: parsed.end } : {}),
   };
-  const summary = { ...(parsed.zoom ? { zooms: plan.length, moments_from: from } : {}), ...(c ? { cursor: { drawn: hidden, highlight: !!c.highlight, ripples: c.ripple ? Math.min(clicks.length, MAX_RIPPLES) : 0 } } : {}), ...(bg ? { background: { style: bg.style, output: { width: layout.W, height: layout.H }, video_box: { x: layout.x, y: layout.y, width: layout.w, height: layout.h } } } : {}), ...(mu ? { music: { ...(mu.file ? { file: mu.file, license: 'your file' } : { track: mu.track, about: TRACKS[mu.track].about, license: MUSIC_LICENSE }), ducked_under_recording_audio: voice && mu.duck } } : {}), audio: mu ? (voice ? 'recording audio with music' : 'music') : (voice ? 'recording audio' : 'none'), preview_times: plan.length ? plan.map(b => Math.round(((b.start + b.end) / 2) * 100) / 100) : (clicks.length ? clicks.slice(0, 6).map(k => Math.round((k[0] + 0.15) * 100) / 100) : [Math.round(source.duration * 50) / 100]), ...(warnings.length ? { warnings } : {}) };
+  const T = parsed.title?.seconds ?? 0, E = parsed.end?.seconds ?? 0, total = T + source.duration + E;
+  const summary = { ...(parsed.zoom ? { zooms: plan.length, moments_from: from } : {}), ...(c ? { cursor: { drawn: hidden, highlight: !!c.highlight, ripples: c.ripple ? Math.min(clicks.length, MAX_RIPPLES) : 0 } } : {}), ...(bg ? { background: { style: bg.style, output: { width: layout.W, height: layout.H }, video_box: { x: layout.x, y: layout.y, width: layout.w, height: layout.h } } } : {}), ...(mu ? { music: { ...(mu.file ? { file: mu.file, license: 'your file' } : { track: mu.track, about: TRACKS[mu.track].about, license: MUSIC_LICENSE }), ducked_under_recording_audio: voice && mu.duck } } : {}), audio: mu ? (voice ? 'recording audio with music' : 'music') : (voice ? 'recording audio' : 'none'), ...(T || E ? { cards: { title_seconds: T, end_seconds: E, video_starts_at: T }, duration: +total.toFixed(2) } : {}), preview_times: [...(T ? [+(T / 2).toFixed(2)] : []), ...(plan.length ? plan.map(b => (b.start + b.end) / 2) : (clicks.length ? clicks.slice(0, 6).map(k => k[0] + 0.15) : [source.duration / 2])).map(t => Math.round((t + T) * 100) / 100), ...(E ? [+(T + source.duration + E / 2).toFixed(2)] : [])], ...(warnings.length ? { warnings } : {}) };
   if (dryRun) return { music_tracks: Object.fromEntries(Object.entries(TRACKS).map(([k, v]) => [k, v.about])), ok: true, dry_run: true, source_id: entry.item_id, width: source.width, height: source.height, duration: source.duration, plan, recipe: recipeOut, ...summary, note: 'Edit the recipe and pass it back with --recipe to adjust.' };
-  if (parsed.zoom && !plan.length && !c && !bg && !mu) fail('INVALID_ARGUMENTS', 'No moments to zoom on (the cursor track found no clicks, typing or pauses). Pass recipe.zoom.moments instead.');
+  if (parsed.zoom && !plan.length && !c && !bg && !mu && !parsed.title && !parsed.end) fail('INVALID_ARGUMENTS', 'No moments to zoom on (the cursor track found no clicks, typing or pauses). Pass recipe.zoom.moments instead.');
   const work = await mkdtemp(path.join(os.tmpdir(), 'myman-polish-'));
   try {
     const out = path.join(work, 'polished.mp4'), inputs = ['-i', entry.video_path];
@@ -395,15 +428,27 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
       const frames = cursorFrames({ ...track, moves: (track.moves || []).map(([t, x, y]) => [t, x * sx, y * sy]) }, { duration: source.duration, smooth: c.smooth });
       const scripts = cursorCommands(frames, { arrow, halo: c.highlight ? Math.round(56 * c.size) : 0 }), cmds = {};
       for (const [k, text] of Object.entries(scripts)) if (text) { cmds[k] = path.join(work, `${k}.cmd`); await writeFile(cmds[k], text, { mode: 0o600 }); }
-      const chain = cursorChain({ clicks, opts: c, arrow, cmds });
+      let haloIn;
+      if (c.highlight) { haloIn = inputs.filter(a => a === '-i').length; inputs.push('-loop', '1', '-framerate', String(FPS), '-i', await drawHalo(work, Math.round(56 * c.size), c.highlight)); }
+      const chain = cursorChain({ clicks, opts: c, arrow, cmds, haloIn });
       graph = `${chain.text};`; head = chain.out;
     }
-    const tail = bg ? '[z]' : 'format=yuv420p[out]', join = head.endsWith(']') ? '' : ',';
+    const cards = T || E, fin = cards ? '[main]' : '[out]';
+    const tail = bg ? '[z]' : `format=yuv420p${fin}`, join = head.endsWith(']') ? '' : ',';
     graph += plan.length ? zoomGraph(plan, { ...source, ramp: parsed.zoom.ramp }, head, tail) : `${head}${join}${bg ? 'null[z]' : tail}`;
     if (bg) {
       const art = await drawBackground(work, bg, layout), n = inputs.filter(a => a === '-i').length;
       inputs.push('-loop', '1', '-framerate', String(FPS), '-i', art.file);
       graph += `;${backgroundChain(layout, { input: '[z]', bgIn: n })}`;
+      if (cards) graph = graph.replace(/\[out\]$/, '[main]');
+    }
+    if (cards) {
+      const size = { width: bg ? layout.W : source.width - source.width % 2, height: bg ? layout.H : source.height - source.height % 2, colors: bg ? bg.colors : BACKDROPS.slate };
+      const seq = [];
+      if (T) { const n = inputs.filter(a => a === '-i').length; inputs.push('-loop', '1', '-framerate', String(FPS), '-t', f(T), '-i', await drawCard(work, 'title', parsed.title, size)); graph += `;[${n}:v]format=yuv420p,setsar=1,fade=t=in:d=0.4,fade=t=out:st=${f(T - 0.3)}:d=0.3[tc]`; seq.push('[tc]'); }
+      graph += `;[main]scale=${size.width}:${size.height},setsar=1[mv]`; seq.push('[mv]');
+      if (E) { const n = inputs.filter(a => a === '-i').length; inputs.push('-loop', '1', '-framerate', String(FPS), '-t', f(E), '-i', await drawCard(work, 'end', parsed.end, size)); graph += `;[${n}:v]format=yuv420p,setsar=1,fade=t=in:d=0.3,fade=t=out:st=${f(E - 0.5)}:d=0.5[ec]`; seq.push('[ec]'); }
+      graph += `;${seq.join('')}concat=n=${seq.length}:v=1:a=0,format=yuv420p[out]`;
     }
     // Sound: the recording's own audio passes through (as on the Mac); music is mixed under it.
     let audio = ['-an'];
@@ -413,9 +458,11 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
       else src = await trackFile(mu.track);
       const musicIn = inputs.filter(a => a === '-i').length;
       inputs.push('-stream_loop', '-1', '-protocol_whitelist', 'file', '-i', src);
-      graph += `;${musicChain(mu, { duration: source.duration, musicIn, voice: voice ? '[0:a]' : null })}`;
+      if (voice && T) graph += `;[0:a]adelay=${Math.round(T * 1000)}:all=1[vd]`;
+      graph += `;${musicChain(mu, { duration: total, musicIn, voice: voice ? (T ? '[vd]' : '[0:a]') : null })}`;
       audio = ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k'];
-    } else if (voice) audio = ['-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k'];
+    } else if (voice && cards) { graph += `;[0:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay=${Math.round(T * 1000)}:all=1,apad,atrim=end=${f(total)}[aout]`; audio = ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k']; }
+    else if (voice) audio = ['-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k'];
     await run(deps.ffmpeg, ['-nostdin', '-loglevel', 'error', ...inputs, '-filter_complex', graph, '-map', '[out]', ...audio, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-y', out], { timeout: 30 * 60_000 });
     await stat(out);
     const info = await probeVideo(out);

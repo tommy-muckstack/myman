@@ -100,6 +100,8 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Polished demo: cursor polish | `record start --hide-cursor`; `record polish --id REC-ID --cursor [normal\|big\|huge\|1-3]` | Linux (X11) only; not on Mac yet | Drawn smooth arrow when the cursor was hidden, highlight, click ripples |
 | Polished demo: background | `record polish --id REC-ID --background dusk\|ocean\|meadow\|slate\|none [--background-color HEX] [--corner-radius N]` | Same backdrops, padding and shadow as Mac recording polish and the image editor | Rounded card on a gradient or colour; output grows by the padding |
 | Polished demo: music | `record polish --id REC-ID --music upbeat\|calm\|cinematic\|/path [--music-volume 0-1]` | Unsupported on Mac (no music option yet); recording audio is kept on both | Linux only for now: CC0 built-in tracks, looped, faded and ducked under narration |
+| Polished demo: title and end cards | `record polish --title TEXT --end TEXT` or recipe `title` / `end` | Unsupported on Mac (no cards yet) | Linux only for now: full-frame card on the video's backdrop; music spans the cards |
+| One-command demo | `demo --script steps.json [--app CMD] [--dry-run]` | Unsupported on Mac (no demo runner yet) | Linux X11 only for now: opens the app, records the window, runs click/type/key/scroll steps with xdotool, zooms where it acted, then polishes; Wayland is unsupported for now |
 
 Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
 

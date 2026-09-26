@@ -10,7 +10,7 @@ import { hostname } from 'node:os';
 import path from 'node:path';
 import { atomic, configPath, directory, fail, readSafe } from './system.mjs';
 
-export const scopesAvailable = ['capture', 'markup', 'recording', 'library', 'microphone'];
+export const scopesAvailable = ['capture', 'markup', 'recording', 'library', 'microphone', 'control'];
 export const registryPath = () => path.join(path.dirname(configPath()), 'identities.json');
 const digest = token => createHash('sha256').update(token).digest('hex');
 

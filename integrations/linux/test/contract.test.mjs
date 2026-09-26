@@ -50,7 +50,7 @@ for(const entry of entries) {
   const f=await fixture(t);
   const caps=await ok(entry,['actions'],f.env);
   assert.equal(caps.platform,'linux');assert.equal(caps.live,true);assert.equal(caps.actions.length,catalog.actions.length);
-  assert.deepEqual(caps.permissions,{enabled:false,capture:false,markup:false,recording:false,library:false,microphone:false});
+  assert.deepEqual(caps.permissions,{enabled:false,capture:false,markup:false,recording:false,library:false,microphone:false,control:false});
   assert.equal(caps.actions.find(a=>a.name==='meeting.start').supported,false);
   assert.equal(caps.actions.find(a=>a.name==='screenshot.capture').supported,true);
   assert.equal((await ok(entry,['actions','--offline'],f.env)).live,false);
