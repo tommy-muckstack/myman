@@ -122,6 +122,7 @@ export async function work(id) {
   await atomic(file,JSON.stringify(receipt));
   try { receipt.result=await dispatch(receipt.action,receipt.arguments);receipt.state='succeeded'; }
   catch(error) { receipt.state='failed';receipt.error=errorData(error); }
+  delete receipt.arguments; // Retain the fingerprint, not a second copy of a large note body.
   receipt.finished_at=new Date().toISOString();
   await atomic(file,JSON.stringify(receipt));
 }

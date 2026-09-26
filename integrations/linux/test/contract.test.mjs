@@ -134,7 +134,7 @@ test('linked/private config and linked Brain directories fail closed',async t=>{
  const outside=path.join(f.base,'outside');await mkdir(outside);await symlink(outside,path.join(f.root,'notes'));
  assert.equal((await cli(entries[0],['note','create','--body','blocked'],f.env)).data.error.code,'UNSAFE_PATH');assert.deepEqual(await readdir(outside),[]);
 });
-for(const entry of ['../app-server.mjs','../bundle/app-server.mjs'])test(`${entry}: identical MCP tool names, permissions and structured unsupported errors`,async t=>{
+for(const entry of ['../app-server.mjs','../bundle/app-server.mjs',...(process.platform==='linux'?['../../app-server.mjs']:[])])test(`${entry}: identical MCP tool names, permissions and structured unsupported errors`,async t=>{
  const f=await fixture(t),client=new Client({name:'linux-contract',version:'1.0.0'});
  const transport=new StdioClientTransport({command:process.execPath,args:[path.resolve(here,entry)],env:f.env,stderr:'pipe'});
  await client.connect(transport);t.after(()=>client.close());
@@ -164,4 +164,12 @@ test('first Linux write preserves legacy documents and catalog entries',async t=
  const before=JSON.parse(await readFile(path.join(f.root,'catalog.json'),'utf8'));before.exports[0].pinned=true;before.exports[0].custom_metadata='preserve';await writeFile(path.join(f.root,'catalog.json'),JSON.stringify(before));
  await ok(entries[0],['note','create','--body','another note'],f.env);
  const after=JSON.parse(await readFile(path.join(f.root,'catalog.json'),'utf8'));assert.deepEqual(after.exports[0],before.exports[0]);
+});
+
+test('maximum-size UTF-8 note input remains readable from its durable receipt',async t=>{
+ const f=await fixture(t);await f.grants({enabled:true,library:true});
+ const body='界'.repeat(349500), file=path.join(f.base,'large-note.md');await writeFile(file,body);
+ const note=await ok(entries[1],['note','create','--body-file',file],f.env);assert.equal(note.body,body);
+ const receipt=await ok(entries[1],['job',note.job_id],f.env);assert.equal(receipt.job.state,'succeeded');assert.equal(receipt.job.result.id,note.id);
+ const bad=await cli(entries[1],['note','create','--body','relative root'],{...f.env,MYMAN_BRAIN_ROOT:'relative'});assert.equal(bad.data.error.code,'INVALID_ROOT');
 });

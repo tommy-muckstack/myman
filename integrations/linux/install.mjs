@@ -32,7 +32,7 @@ try {
  const handle=await open(configFile,'wx',0o600);
  try {await handle.writeFile(JSON.stringify({version:1,grants:{enabled:false,capture:false,markup:false,recording:false,library:false}},null,2)+'\n');}finally{await handle.close();}
 } catch(error){if(error.code!=='EEXIST')throw error;const info=await lstat(configFile);if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.uid!==process.getuid()||(info.mode&0o077))throw new Error(`Unsafe config: ${configFile}`);}
-for(const name of ['cli.mjs','app-server.mjs','worker.mjs','LICENSES.txt']) {
+for(const name of ['cli.mjs','app-server.mjs','app-server.mjs.LEGAL.txt','worker.mjs','LICENSES.txt']) {
  await copy(path.join(source,'integrations/linux/bundle',name),path.join(install,name));
  await copy(path.join(source,'integrations/linux/bundle',name),path.join(brain,'tools',name));
 }

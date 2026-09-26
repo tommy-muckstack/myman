@@ -9,7 +9,11 @@ import { BrainError } from '../brain/brain.mjs';
 
 export const fail = (code, message) => { throw new BrainError(code, message); };
 export const unsupported = message => fail('unsupported_on_platform', message);
-export const rootPath = () => path.resolve(process.env.MYMAN_BRAIN_ROOT || path.join(homedir(), 'MyManBrain'));
+export const rootPath = () => {
+  const root = process.env.MYMAN_BRAIN_ROOT || path.join(homedir(), 'MyManBrain');
+  if (!path.isAbsolute(root) || /[\x00-\x1f]/.test(root)) fail('INVALID_ROOT', 'Brain root must be an absolute path without control characters.');
+  return path.resolve(root);
+};
 export const configPath = () => path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), '.config'), 'myman', 'agents.json');
 export const statePath = () => path.join(process.env.XDG_STATE_HOME || path.join(homedir(), '.local/state'), 'myman');
 export const defaultGrants = { enabled: false, capture: false, markup: false, recording: false, library: false };
