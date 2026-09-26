@@ -4,10 +4,11 @@
 
 <h1 align="center">My Man</h1>
 
-<p align="center"><b>The Mac sidekick: meetings, dictation, screenshots, and screen recording — all on-device, all in plain markdown you own.</b></p>
+<p align="center"><b>The Mac sidekick for people and their AI agents: meetings, dictation, screenshots, and screen recording, all on-device, all in plain markdown you own. Claude, Grok Bot, and Cursor can use it through MCP or a JSON CLI.</b></p>
 
 <p align="center">
   <a href="https://muckstack.com/download/myman">Download for Mac</a> ·
+  <a href="#for-ai-agents-claude-grok-bot-cursor">Use with AI agents</a> ·
   <a href="#building-from-source">Build from source</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
@@ -17,6 +18,74 @@
 My Man replaces a stack of subscription tools with one local app: meeting notes (Granola-style), voice dictation (Wispr-Flow-style), screenshots with a full editor (CleanShot-style), and screen recording (Loom-style). There is no backend, no account, and no cloud AI — transcription, OCR, translation, and summarization all run on-device.
 
 Everything you capture lands in **`~/MyManBrain`** as plain markdown in a git repo: meetings with speaker-attributed transcripts, notes, screenshot OCR, recording transcripts, tasks, and the people you meet with. Point Claude (or any LLM) at the folder and it knows your work. Push the repo anywhere for backup. Your data is files, forever.
+
+## For AI agents (Claude, Grok Bot, Cursor)
+
+My Man gives an AI agent working on a Mac (or Linux) eyes, hands, and memory, all on the local machine:
+
+| An agent can… | How |
+| --- | --- |
+| Search everything the user captured (meetings, notes, screenshots with OCR, dictation, recordings) with source citations | `myman-brain` MCP server (read-only) or `node ~/MyManBrain/tools/cli.mjs` |
+| Take a screenshot of a display, region, or window and get the file path back | `myman screenshot --mode agent --json` |
+| Annotate an image (arrows, boxes, highlights, text, blur) from a JSON list of operations | `myman annotate --id shot-ID --ops-file ops.json --json` |
+| Record the screen, pause, resume, pull frames, and export a clip | `myman record start` / `stop` / `frames` / `export` |
+| Start and stop meetings, dictation, notes, tasks, timers, and reminders | `myman meeting start`, `myman note create`, `myman actions` for the rest |
+| Hand work between agents with briefs, leases, and reviewer sign-off | [Multi-agent workflows](docs/multi-agent-workflows.md) |
+| Record a polished product demo (auto-zoom, smooth cursor, backgrounds, music, title cards) from a short script, on Linux today | `myman demo --script steps.json` ([Linux guide](docs/linux-agents.md)) |
+
+There are over 120 app actions. Every result is JSON with a stable error shape, every action has a strict schema (`myman actions`), and long work returns a job ID you can poll. It runs with no cloud relay, account, or API key.
+
+**Permissions stay with the person.** Capture, markup, recording, and library access are separate grants in **Settings → Agents**, and they all start off. An agent can check what it's allowed to do with `myman doctor --json` or the `myman_app_capabilities` tool. It cannot turn grants on itself.
+
+### Connect in about a minute
+
+Install [My Man](https://muckstack.com/download/myman), open it once, and install Node.js 22 or newer. Opening the app writes both MCP servers to `~/MyManBrain/tools/`, so no clone or npm install is needed.
+
+**Claude Code**
+
+```sh
+claude mcp add myman-brain -- node ~/MyManBrain/tools/server.mjs
+claude mcp add myman-app -- node ~/MyManBrain/tools/app-server.mjs
+```
+
+**Claude Desktop, or any other local MCP client.** Add this to the client's MCP config (for Claude Desktop that's `~/Library/Application Support/Claude/claude_desktop_config.json`) and replace `YOUR_USERNAME`:
+
+```json
+{
+  "mcpServers": {
+    "myman-brain": { "command": "node", "args": ["/Users/YOUR_USERNAME/MyManBrain/tools/server.mjs"] },
+    "myman-app": { "command": "node", "args": ["/Users/YOUR_USERNAME/MyManBrain/tools/app-server.mjs"] }
+  }
+}
+```
+
+**Cursor.** This repository is an [Agent Plugin](https://agent-plugins.org): `plugin.json`, `mcp.json`, and the [`myman-brain` skill](skills/myman-brain/SKILL.md) load both servers. See [local plugin setup](integrations/brain/README.md#use-with-a-local-mcp-client).
+
+**Grok Bot.** Use local-computer execution on the Mac and call the CLI directly, for example `node ~/MyManBrain/tools/cli.mjs status`. The [Grok Bot setup prompt](integrations/brain/README.md#use-with-grok-bot) is ready to paste.
+
+Then try one of these:
+
+```sh
+myman doctor --json                                   # what's ready and what's granted
+node ~/MyManBrain/tools/cli.mjs meetings --participant Jordan --after 2026-09-01T00:00:00-04:00
+myman screenshot --mode agent --display main --json   # returns the image path
+```
+
+If `myman` isn't on the PATH, it lives at `"/Applications/My Man.app/Contents/Resources/myman"`. The full reference is in [CLI setup, commands, and JSON contract](docs/agent-cli.md) and the [Mac and Linux capability matrix](docs/agent-cli-parity.md). A plain-text summary for language models is in [`llms.txt`](llms.txt).
+
+### Questions agents and people ask
+
+**Can Claude take a screenshot on my Mac?** Yes. With My Man installed and the capture grant on, Claude Code or Claude Desktop can call `myman screenshot` (or the `myman_app_screenshot_capture` tool) and get back the image file.
+
+**Can an agent search my meeting transcripts?** Yes. The read-only `myman-brain` server searches meetings, notes, screenshots, dictation, and recordings by time, person, keyword, or topic, and it cites the source file for every result.
+
+**Does anything leave my computer?** My Man itself runs its AI on-device and has no backend. An agent receives only the excerpts and images it asks for. Whether those then go to a hosted model depends on the agent you use.
+
+**Can an agent record my screen without asking?** No. Recording is a separate grant that starts off, and macOS also asks for Screen Recording permission.
+
+**Does it work on Linux?** Yes, for agents. A Node companion covers screenshots, annotation, notes, Brain search, recording, and polished demos on Ubuntu/X11 and Omarchy/Hyprland. See [Linux (agents)](#linux-agents).
+
+**Is it free and open source?** Yes. It's Apache-2.0, and agents are welcome to open pull requests (see [AGENTS.md](AGENTS.md)).
 
 ## Features
 
@@ -28,145 +97,7 @@ Everything you capture lands in **`~/MyManBrain`** as plain markdown in a git re
 - **Screen recording** — drag any region (persistent frame outline), optional webcam bubble, mic + system audio, local `.mov` files; narration transcribed into the brain
 - **Notes** — WYSIWYG markdown, instant capture
 
-## Finding and remembering
-
-My Man opens with one input for search, tools and capture actions. This is the
-standard launcher; no separate Adaptive setting is needed. Dark is the default,
-with Light available in Settings. Explicit
-“find…” requests search saved captures; “make…” requests preview a new note or
-tool. Ambiguous text offers **Search existing** and **Create new**, and either
-choice can override the suggested route. Screenshots and recordings start only
-from a labeled action.
-Hover Quick Tools to browse tools inline, or type `/` for the action list, tasks and calendar.
-Schedule phrases work directly: `meetings today`, `what's on tomorrow`,
-`meetings on Friday`, `this week's meetings`, `upcoming meetings`, and `what's next`.
-The calendar shows evenly spaced dates and a day or week agenda, including all-day events.
-`My open tasks` and `to-do list` open tasks. Explicit `find…` requests still search saved captures.
-
-Type `calculator` for calculations, or `reminder in 10m for taking pizza out`
-for a timed message. Timers and reminders share a small countdown widget that
-expands on hover. Reminders can notify while My Man is closed when notifications
-are allowed. Type `/` to browse and filter commands.
-
-Opening the launcher starts local voice-to-text listening
-after microphone permission and model readiness. Pause after speaking to append
-words to the same field. Typing immediately stops listening and discards pending
-speech. The microphone choice is persistent: mute stays muted, and turning it on
-enables listening on future openings and when the input is cleared. Use the mic
-button or **Settings → General → Launcher → Listen when the launcher opens** to
-change it. Closing the launcher or typing stops only that listening session.
-Complete spoken timer/reminder requests submit after the pause and close the launcher;
-recordings still require a labeled action. It does not listen while the launcher is hidden. First use may download the existing Parakeet
-speech model; recognition runs on-device.
-
-Quick Tools recognizes checklists, timers, arithmetic, length/weight/temperature
-conversions, time-zone conversions, bill splits and hex colors with four coordinating
-swatches. Click a companion swatch to copy its hex. Results fit the panel; tasks and
-calendar become full-width lists. Non-timer results can be copied or saved to Notes;
-saved results are Markdown, not persistent interactive widgets. Several timers can run at once and stack in the top-right corner. A started timer
-continues while My Man is running and rings, shakes, and pulses when it finishes until you dismiss it; the expanded widget has a bell toggle for sound. Timers do not
-survive quitting the app. Simple requests use local rules; ambiguous phrasing may
-use Apple's on-device Foundation Models on supported Macs with Apple Intelligence
-enabled. No hosted classifier or API key is used. This is a bounded adaptive
-interface, not an arbitrary mini-app generator. See the
-[implementation and local-model options](docs/adaptive-launcher.md).
-
-Press **⌥Space** and type what you remember. Results show the matching passage
-and its source; use **↑/↓**, **Return**, **⌘Y** to preview, or **⇧⌘C** to copy.
-Quoted phrases stay exact. The funnel menu narrows results by type/date or opens Themes.
-Conversational queries such as “Find the screenshot where the number was $49”
-also recognize simple content/date constraints.
-
-An empty search browses saved captures chronologically. Open the funnel menu to
-browse **Themes** or filter by type, date, and pinning. Hover a capture row for
-**Copy**, **Copy Path**, and **Delete**; the same controls appear on keyboard-selected
-rows. Screenshots copy as images, recordings as files, and notes/meetings as text.
-Copy Path uses the original media file or the note/meeting’s Markdown file in
-MyManBrain. Deletion asks for confirmation. Right-click to pin, rename,
-assign/remove a Theme, hide from search, or delete. **Themes** appear after at
-least three captures support a shared concept. They are collections
-of captured material; correcting one does not create tasks or initiate work.
-
-Screenshot search opens a text preview with highlighted OCR locations. Copy
-all text, individual lines or nearby paragraphs; recognized links, email
-addresses, phone numbers and dates have contextual actions. The editor’s
-**Screenshot text & related captures** button opens the same surface, alongside
-its existing Live Text selection tool. Edited screenshots clear their old text
-and are recognized again in the background.
-
-**Settings → Library** controls automatic Themes and local semantic search.
-Existing captures are indexed incrementally after the database migration.
-No app/window tracking or cloud inference is added. Deleting removes the
-capture’s local index, vectors, OCR geometry and relationships plus its current
-Brain export; Trash, earlier Git revisions and external backups can retain copies.
-
-Architecture, migration decisions and verification are documented in the
-[product audit](docs/product-architecture-audit.md) and
-[implementation notes](docs/retrieval-implementation.md).
-
-## Updating and stopping recordings
-
-Update checks and downloads remain available during capture. Only installation
-and restart wait for active work; completed dictation does not block them. A ready
-update explains the actual activity, with **Cancel Recording…** for a live take
-or unfinished screen selection. The app and menu-bar menus also offer cancellation.
-Discarding a live take requires confirmation, including its meeting note when
-applicable. Background transcription is identified separately from recording.
-
-## Writing notes and checklists
-
-Enter a new note title and press Return to open its document, with the cursor
-ready on the next line. New notes opened from the library are saved as documents
-before editing, and a failed save keeps the capture draft available.
-
-Type `[]` or `[ ]` at the start of a body line to create a checkbox (also works
-after a bullet). Click the box to check/uncheck it; completed text is struck
-through, while the saved file uses ordinary `- [ ]` / `- [x]` Markdown. Return
-continues the list with an unchecked item. Tab indents bullets and checkboxes by
-32 points; Shift-Tab outdents. Nested levels, inline formatting, and explicit
-strikethrough survive saving, reopening, and undo.
-
-## Meeting reliability and transcript fidelity (2026-09-17)
-
-Long live transcripts rebuild speaker hints and grouped rows in the background.
-Name evidence uses literal matching instead of per-turn regular expressions;
-participant refreshes are combined, and canceled refreshes cannot overwrite
-newer edits or a stopped meeting.
-
-Meeting transcription now checkpoints small audio slices during capture and resumes
-from the saved offsets after interruption. Finalization uses Parakeet rather than
-the stateful Qwen decoder implicated in a Core ML IOSurface exception. Automatic
-retries stop after three persisted attempts; **Retry transcription**, **Regenerate
-transcript**, and **Regenerate notes** keep failed recordings and prior content
-available. Capture close saves `ended` immediately. Draft notes run asynchronously
-and cache exact source windows; model deadlines fall back to extractive notes.
-
-Meeting vocabulary no longer fuzzy-matches ordinary words against product/person
-names. Only explicit spelling aliases are applied (for example, Shop Monkey →
-Shopmonkey); the original recognition stays archived. Exports flag unmentioned
-hotwords occurring at least three times and more than twice per 1,000 words in
-`flagged_hotwords`, without rewriting those mentions.
-
-An explicit `Owner <> Remote` title identifying the owner supplies two-person
-speaker evidence. Exports include `status: transcribing` / `complete`,
-`call_started_at`, `call_start_offset_seconds`, and `timestamp_origin:
-recording_start`. Solo warm-up is omitted from the finished two-person transcript;
-the original transcript retains it. Timestamps use recognizer word timing.
-
-Notes include timestamp ranges, an overview of at most three sentences, verbatim
-**Quotes**, and fixed **Next steps** with owners/dates or “None agreed.” `CI:`
-interviews also extract questions and answers. `meetingInterviewKeywords` can
-configure detection. An explicitly linked local `file://…md` prep file in the
-calendar description supplies a conservative list of unmatched questions to
-review; remote prep documents are not fetched automatically.
-
-The screenshot selection dimension label now draws with a concrete Core Text font,
-removing the NSString font-substitution path implicated in a nil-font exception.
-Regression coverage includes retry exhaustion, crash checkpoints, late model
-responses, concurrent edits, vocabulary bias, speaker identity, quotes and export
-metadata. The opt-in `MeetingRecoveryIntegrationTests` reprocess a copied recording
-and leave the live library untouched. Private recordings/transcripts are not test
-fixtures in this repository.
+Day-to-day details (launcher, search, notes, checklists, meeting transcripts) are in [Using My Man](docs/using-myman.md).
 
 ## Requirements
 
