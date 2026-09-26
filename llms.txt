@@ -1,6 +1,6 @@
 # My Man
 
-> My Man is an open-source (Apache-2.0) Mac app, with a Linux companion for agents, that gives people and their AI agents local screenshots, annotation, screen recording, meeting transcripts, dictation, notes, and searchable memory. Everything runs on-device and is saved as plain Markdown in `~/MyManBrain`. Agents such as Claude Code, Claude Desktop, Cursor, and Grok Bot use it through two local MCP servers (`myman-brain`, read-only search with citations; `myman-app`, 124 permission-controlled app actions) or through the `myman` JSON CLI. All agent permissions start off and only the user can turn them on in Settings → Agents.
+> My Man is an open-source (Apache-2.0) Mac app, with a Linux companion for agents, that gives people and their AI agents local screenshots, annotation, screen recording, meeting transcripts, dictation, notes, and searchable memory. Everything runs on-device and is saved as plain Markdown in `~/MyManBrain`. Agents such as Claude Code, Claude Desktop, Cursor, and Grok Bot use it through two local MCP servers (`myman-brain`, read-only search with citations; `myman-app`, over 120 permission-controlled app actions) or through the `myman` JSON CLI. All agent permissions start off and only the user can turn them on in Settings → Agents.
 
 Key facts:
 - Install: download the Mac app from https://muckstack.com/download/myman, open it once, and install Node.js 22+. Both MCP servers are then at `~/MyManBrain/tools/server.mjs` and `~/MyManBrain/tools/app-server.mjs`.

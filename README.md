@@ -33,7 +33,7 @@ My Man gives an AI agent working on a Mac (or Linux) eyes, hands, and memory, al
 | Hand work between agents with briefs, leases, and reviewer sign-off | [Multi-agent workflows](docs/multi-agent-workflows.md) |
 | Record a polished product demo (auto-zoom, smooth cursor, backgrounds, music, title cards) from a short script, on Linux today | `myman demo --script steps.json` ([Linux guide](docs/linux-agents.md)) |
 
-There are 124 app actions in total. Every result is JSON with a stable error shape, every action has a strict schema (`myman actions`), and long work returns a job ID you can poll. It runs with no cloud relay, account, or API key.
+There are over 120 app actions. Every result is JSON with a stable error shape, every action has a strict schema (`myman actions`), and long work returns a job ID you can poll. It runs with no cloud relay, account, or API key.
 
 **Permissions stay with the person.** Capture, markup, recording, and library access are separate grants in **Settings → Agents**, and they all start off. An agent can check what it's allowed to do with `myman doctor --json` or the `myman_app_capabilities` tool. It cannot turn grants on itself.
 
