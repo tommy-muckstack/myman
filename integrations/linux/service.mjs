@@ -11,13 +11,14 @@ import { execute } from '../brain/tools.mjs';
 import { annotate, capture, ocr, screens } from './images.mjs';
 import { captureEntry, saveCapture, saveNote } from './library.mjs';
 import * as recording from './recording.mjs';
+import * as items from './items.mjs';
 import { clipboardRead, clipboardWrite, ocrRegions, windowRegion, windowsList } from './desktop.mjs';
 import { processIdentity, workerAlive } from './process-identity.mjs';
 import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.13.0';
-export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write']);
+export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function errorData(error) { return {code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
@@ -48,6 +49,8 @@ export async function dispatch(name,args) {
   if (name==='screens.list') { const {displays,...desktop}=await screens(); return {result:displays,...desktop}; }
   if (name==='screenshot.image') return new Brain(rootPath()).image({path:(await captureEntry(args.id)).path});
   if (name==='note.create') return saveNote(args);
+  const library={'item.read':items.read,'capture.search':items.search,'note.update':items.noteUpdate,'note.append':items.noteAppend,'note.attach':items.noteAttach,'item.rename':items.rename,'item.pin':items.pin,'item.exclude':items.exclude,'item.delete':items.remove};
+  if (library[name]) return library[name](args);
   if (name==='recording.start') return recording.start(args);
   if (name==='recording.stop') return recording.stop(args);
   if (name==='recording.cancel') return recording.cancel(args);

@@ -39,12 +39,12 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Meeting transcript / notes / related captures | `meetings`, `read`, `meeting notes`, `library related`, `screenshots --meeting` | Existing exports readable; meeting operations unsupported | Summary generation uses existing service; processing can be pending |
 | Meeting auto-detection preference | `meeting config get/set` | Unsupported | Exposes existing auto_record_meetings; no new scheduling behavior |
 | Dictation hold / toggle / cancel | `dictation start/status/stop/cancel` | Unsupported | Existing paste/clipboard behavior; result text and saved ID |
-| Notes create / append / replace / open | `note create/append/update/open` | Create only; Markdown/stdin/file supported | Markdown, title, stdin/file input; replacement revision guard |
+| Notes create / append / replace / open | `note create/append/update/open` | Create, append and replace (revision guard); open unsupported | Markdown, title, stdin/file input; replacement revision guard |
 | Note bold/lists/tables/link content | Markdown supplied to note create/update | Markdown body preserved | Native visual selection menus are UI chrome |
-| Drop images into notes / full-screen image viewing | `note attach --source-id/--path` | Unsupported | Document-owned copy and Markdown; full-screen viewing remains the native UI |
-| Search / recent captures / related / kinds | `library search/recent/related`, `latest`, `collect` | Brain keyword search, recent, collect, latest; no native related/ranking | Search shares native fuzzy/semantic ranking; explicit offline mode retains export keywords |
+| Drop images into notes / full-screen image viewing | `note attach --source-id/--path` | Supported; owned PNG copy with alt text (warns when missing) | Document-owned copy and Markdown; full-screen viewing remains the native UI |
+| Search / recent captures / related / kinds | `library search/recent/related`, `latest`, `collect` | `library search`: exact phrase, all words, one-typo matches, date/kind/pinned filters; no semantic or related | Search shares native fuzzy/semantic ranking; explicit offline mode retains export keywords |
 | Themes by keywords/date/descriptors | `collect` filters, `theme list` | Read existing exports | Saved themes or agent synthesis from cited evidence |
-| Pin / rename / hide / delete | `library pin/unpin/rename/hide/unhide/delete` | Unsupported | Delete requires confirmation and normal data lifecycle |
+| Pin / rename / hide / delete | `library pin/unpin/rename/hide/unhide/delete` | Supported; revision guard; delete needs `--confirm` and removes owned media | Delete requires confirmation and normal data lifecycle |
 | Clear history | `history clear --confirm` | Unsupported | Separate library consent, native deletion pipeline |
 | Theme rename / pin / dismiss / merge / membership | `theme rename/pin/unpin/dismiss/merge/add/remove` | Unsupported | Correction controls, never tasks/projects |
 | Tasks create / list / title / notes / due / done / delete | `task add/list/update/complete/reopen/delete` | Read existing task exports only | App DB then export; IDs returned |
