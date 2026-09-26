@@ -1,6 +1,6 @@
 # Agent CLI parity
 
-Working baseline: 1.1.59 (71). The supplied GrokBot feedback inspected an older checkout: the released app already has 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
+Working baseline: 1.1.100 (112), with the Linux companion at 0.13.0; the bundled action catalog now describes 126 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
 
 ## Implementation plan
 
@@ -10,7 +10,7 @@ Working baseline: 1.1.59 (71). The supplied GrokBot feedback inspected an older 
 4. Document every capability, package a Mac-local GrokBot skill, validate manifests and bundled artifacts.
 5. Run fixture CLI/MCP and native tests, plus isolated app smoke workflows. Record host-dependent marketplace checks honestly.
 
-The working matrix and verification evidence are completed alongside implementation. Pointer simulation is excluded: structured annotation and capture APIs cover the requested workflows without a remote-control daemon. Hardware gestures, OS permission grants, and marketplace approval remain human/host responsibilities.
+The working matrix and verification evidence are completed alongside implementation. General pointer simulation is excluded: structured annotation and capture APIs cover the requested workflows without a remote-control daemon. The one exception is `myman demo`, which clicks, types and scrolls only inside the app it is recording and needs the owner's `control` grant (see the `myman demo` rows below). Hardware gestures, OS permission grants, and marketplace approval remain human/host responsibilities.
 
 ## Linux companion
 
@@ -67,7 +67,7 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Reminders | `reminder create/list/cancel/sound` | Supported (library grant); `seconds` or ISO `at` with offset; overdue reminders are delivered at the next MyMan call | Saved reminders and notifications |
 | Timers | `timer start/status/pause/resume/cancel/sound` | Supported (library grant); desktop notice and optional sound when done, no on-screen widget; systemd user timer or detached waiter | Visible widget, session IDs, creating-agent controls |
 | Chat beta / Chatterbox voice replies | Optional future phase | Unsupported | Not required for capture/recall CLI parity |
-| Pointer / click / drag / arbitrary keyboard injection | Excluded | Excluded | Structured capture/markup replaces pointer automation; no remote-control daemon |
+| Pointer / click / drag / arbitrary keyboard injection | Excluded, except inside `myman demo` | Excluded, except inside `myman demo` (X11 only) | No general pointer or keyboard API and no remote-control daemon. `myman demo` can open an app and click, type, key and scroll inside the recorded window only when the owner has turned on the `control` grant (plus `recording`; Accessibility on the Mac); `--dry-run` never drives anything |
 | Sparkle installation / TCC / Font Book | Human/app-only | Unsupported | Native installation and OS consent surfaces |
 | Remote meeting participant / cloud Brain hosting / automatic messages | Out of scope | Out of scope | No such product behavior is introduced |
 
@@ -86,13 +86,13 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Theme-matched markup colors | App accent/markup colors | Supported on Omarchy (active theme colors.toml; `MYMAN_MARKUP_THEME=none|FILE`) | Explicit op colors always win |
 | Circles and numbered callouts | `annotate --ops` | Unsupported | Text/region targets or explicit geometry; existing editor renderer |
 | Window video | `record start --window-id` | Unsupported | Selected window only; region/webcam conflicts rejected |
-| Bounded video | `record start --max-duration` | Unsupported | App-owned deadline survives client disconnect; default 300 seconds |
-| Pause/resume | `record pause/resume --session-id` | Unsupported | One session; paused time excluded through segment assembly |
-| Completed session retrieval | `record result --session-id` | Unsupported | Finalized file and attachment, including after automatic stop |
-| Frame/contact-sheet inspection | `record frames --times/--count` | Unsupported | Bounded temporary PNG previews with actual timestamps |
-| Trim/MP4/size cap | `record export --start/--end/--max-bytes` | Unsupported | New library item, source preserved; no truncation to meet size |
+| Bounded video | `record start --max-duration` | Supported; default 300 seconds | App-owned deadline survives client disconnect; default 300 seconds |
+| Pause/resume | `record pause/resume --session-id` | Supported (segments joined at stop) | One session; paused time excluded through segment assembly |
+| Completed session retrieval | `record result --session-id` | No `record result`; `record stop` on a saved session returns its result again, and `record status` reports the session | Finalized file and attachment, including after automatic stop |
+| Frame/contact-sheet inspection | `record frames --times/--count` | Supported (ffmpeg; up to 12 PNGs plus a contact sheet) | Bounded temporary PNG previews with actual timestamps |
+| Trim/MP4/size cap | `record export --start/--end/--max-bytes` | Supported (ffmpeg); leases unsupported | New library item, source preserved; no truncation to meet size |
 | Attachment metadata | Capture/edit/record/export results | Supported for capture/edit/preview | Path, MIME, dimensions, duration, bytes and preview |
-| Person shows agents a region | `show --note` (person only), Omarchy `SUPER+SHIFT+PRINT` via `omarchy install` | Unsupported | Saved as a `shown` library capture with the note; agents cannot trigger it |
+| Person shows agents a region | `show --note` (person only), Omarchy `SUPER+SHIFT+PRINT` via `omarchy install` | Supported for the person (slurp + grim on Wayland; slop or `scrot --select` on X11); refused with an agent credential (`HUMAN_REQUIRED`) | Saved as a `shown` library capture with the note; agents cannot trigger it |
 | Dictation history | `dictation connect` (person only) saves each Voxtype dictation; read with `library search --kind dictations` | Dictation start/stop and paste are Voxtype's (F9) | Same `dictations/` export format as the Mac |
 | Meetings | `meeting start [--title] [--no-system-audio] [--keep-audio]`, `meeting stop`, `meeting cancel`, `meeting status`; read with `library search --kind meetings` | Live notes, the meeting assistant and auto-detection are Mac-only | Same `meetings/` export format as the Mac; agents need the recording and microphone grants |
 | Recording cursor track | `record cursor --id REC-ID [--full]` (pointer, clicks, typing moments, activity spans) | Hyprland: movement only; Sway: unavailable | Saved beside each recording; keys are never identified |
