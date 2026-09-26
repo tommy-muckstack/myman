@@ -12,7 +12,7 @@ import { dependencies, fail, imageCommand, readSafe, rootPath, run } from './sys
 // (--dry-run), edit it, and render the same result again.
 export const LEVELS = { subtle: 1.4, normal: 1.8, strong: 2.4 };
 export const FPS = 30;
-const RECIPE_KEYS = ['zoom', 'cursor'], CURSOR_KEYS = ['size', 'smooth', 'highlight', 'ripple'], ZOOM_KEYS = ['auto', 'level', 'ramp', 'gap', 'moments'], MOMENT_KEYS = ['start', 'end', 'x', 'y', 'level'];
+const RECIPE_KEYS = ['zoom', 'cursor', 'background'], BACKGROUND_KEYS = ['style', 'color', 'corner_radius', 'padding', 'shadow'], CURSOR_KEYS = ['size', 'smooth', 'highlight', 'ripple'], ZOOM_KEYS = ['auto', 'level', 'ramp', 'gap', 'moments'], MOMENT_KEYS = ['start', 'end', 'x', 'y', 'level'];
 const MAX_BLOCKS = 20, MAX_POINTS = 8;
 
 function num(v, lo, hi, name) {
@@ -33,8 +33,8 @@ export function level(v) {
 // Validate a recipe and fill defaults. Unknown keys are errors, never ignored.
 export function parseRecipe(recipe = {}) {
   onlyKeys(recipe, RECIPE_KEYS, 'The recipe');
-  const cursor = parseCursor(recipe.cursor);
-  if (recipe.zoom === undefined) return { zoom: null, cursor };
+  const cursor = parseCursor(recipe.cursor), background = parseBackground(recipe.background);
+  if (recipe.zoom === undefined) return { zoom: null, cursor, background };
   onlyKeys(recipe.zoom, ZOOM_KEYS, 'recipe.zoom');
   const z = recipe.zoom;
   const zoom = { auto: z.auto !== false && !z.moments, level: level(z.level), ramp: z.ramp === undefined ? 0.6 : num(z.ramp, 0.2, 2, 'recipe.zoom.ramp'), gap: z.gap === undefined ? 2.5 : num(z.gap, 0, 10, 'recipe.zoom.gap') };
@@ -47,7 +47,57 @@ export function parseRecipe(recipe = {}) {
       return { start, end, x: num(m.x, 0, 16000, `moments[${i}].x`), y: num(m.y, 0, 16000, `moments[${i}].y`), ...(m.level !== undefined ? { level: level(m.level) } : {}) };
     });
   }
-  return { zoom, cursor };
+  return { zoom, cursor, background };
+}
+// Background: the same backdrops as the image editor and the Mac app's
+// recording polish (Dusk, Ocean, Meadow, Slate, or a custom colour). The
+// video becomes a rounded card with a soft shadow on a padded canvas, so the
+// output grows by the padding on every side, exactly like the Mac.
+export const BACKDROPS = {
+  dusk: ['#FA9E6B', '#94529E'],
+  ocean: ['#4D9EF0', '#1F3D7A'],
+  meadow: ['#8CD999', '#216B57'],
+  slate: ['#474747', '#1A1A1A'],
+};
+export function parseBackground(bg) {
+  if (bg === undefined || bg === false || bg === 'none') return null;
+  if (bg === true) bg = {};
+  if (typeof bg === 'string') bg = { style: bg };
+  onlyKeys(bg, BACKGROUND_KEYS, 'recipe.background');
+  const style = bg.style === undefined ? (bg.color !== undefined ? 'custom' : 'ocean') : String(bg.style).toLowerCase();
+  if (style === 'none') return null;
+  if (style !== 'custom' && !BACKDROPS[style]) fail('INVALID_ARGUMENTS', `recipe.background.style must be one of ${[...Object.keys(BACKDROPS), 'custom', 'none'].join(', ')}.`);
+  let colors;
+  if (style === 'custom') {
+    if (typeof bg.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(bg.color)) fail('INVALID_ARGUMENTS', 'A custom background needs recipe.background.color like "#1E293B".');
+    colors = [bg.color.toUpperCase(), bg.color.toUpperCase()];
+  } else {
+    if (bg.color !== undefined) fail('INVALID_ARGUMENTS', 'recipe.background.color only goes with style "custom" (or leave style out).');
+    colors = BACKDROPS[style];
+  }
+  return { style, colors, corner_radius: bg.corner_radius === undefined ? 18 : num(bg.corner_radius, 0, 200, 'recipe.background.corner_radius'), padding: bg.padding === undefined ? 0.06 : num(bg.padding, 0, 0.3, 'recipe.background.padding'), shadow: bg.shadow === undefined || bg.shadow === true ? 0.45 : bg.shadow === false ? 0 : num(bg.shadow, 0, 1, 'recipe.background.shadow') };
+}
+// Canvas geometry, matching the Mac: padding is 6% of the width, at least 32px.
+export function backgroundLayout(bg, { width: W, height: H }) {
+  const even = v => 2 * Math.ceil(v / 2), pad = bg.padding ? Math.max(32, Math.round(W * bg.padding)) : 0;
+  const w = even(W), h = even(H);
+  return { W: w + 2 * pad, H: h + 2 * pad, w, h, x: pad, y: pad, r: Math.min(Math.round(bg.corner_radius), Math.floor(Math.min(w, h) / 2)) };
+}
+// The gradient and shadow drawn once as one image with a rounded hole where
+// the video shows through. A single overlay on the padded video then gives the
+// backdrop, the shadow and the rounded corners together.
+export async function drawBackground(dir, bg, L) {
+  const file = path.join(dir, 'background.png');
+  // Top-left to bottom-right, first colour at the top left (as on the Mac).
+  const args = ['-size', `${L.W}x${L.H}`, '-define', 'gradient:direction=SouthEast', `gradient:${bg.colors[0]}-${bg.colors[1]}`];
+  if (bg.shadow > 0) args.push('(', '-size', `${L.W}x${L.H}`, 'xc:none', '-fill', `rgba(0,0,0,${f(bg.shadow)})`, '-draw', `roundrectangle ${L.x},${L.y + 8} ${L.x + L.w - 1},${L.y + L.h + 7} ${L.r},${L.r}`, '-blur', '0x11', ')', '-composite');
+  args.push('(', '-size', `${L.W}x${L.H}`, 'xc:white', '-fill', 'black', '-draw', `roundrectangle ${L.x},${L.y} ${L.x + L.w - 1},${L.y + L.h - 1} ${L.r},${L.r}`, ')', '-alpha', 'off', '-compose', 'CopyOpacity', '-composite');
+  await run(await imageCommand(), [...args, `PNG32:${file}`]);
+  return { file };
+}
+// Filter text: pad the video onto the canvas, then lay the backdrop over it.
+export function backgroundChain(L, { input, bgIn }) {
+  return `${input}pad=${L.W}:${L.H}:${L.x}:${L.y}[bp];[${bgIn}:v]format=rgba[bb];[bp][bb]overlay=0:0:shortest=1,format=yuv420p[out]`;
 }
 export const SIZES = { normal: 1.5, big: 2, huge: 2.6 };
 export const YELLOW = '#FFD60A';
@@ -212,7 +262,7 @@ export function zoomExpressions(block, { width: W, height: H, ramp = 0.6, offset
 }
 // The whole graph: split the video at block edges (exact frames after fps),
 // run perspective only on zoom blocks, pass the rest through, and concat.
-export function zoomGraph(plan, size, head = `[0:v]fps=${FPS}`) {
+export function zoomGraph(plan, size, head = `[0:v]fps=${FPS}`, tail = 'format=yuv420p[out]') {
   if (!plan.length) return null;
   const segs = []; let at = 0;
   for (const b of plan) {
@@ -226,7 +276,7 @@ export function zoomGraph(plan, size, head = `[0:v]fps=${FPS}`) {
     const persp = g.block ? `,perspective=${Object.entries(zoomExpressions(g.block, { ...size, offset: g.from / FPS })).map(([k, v]) => `${k}='${v}'`).join(':')}:interpolation=cubic:eval=frame` : '';
     return `[s${i}]${trim}${persp}[p${i}]`;
   });
-  return `${head}${head.endsWith(']') ? '' : ','}split=${segs.length}${segs.map((_, i) => `[s${i}]`).join('')};${parts.join(';')};${segs.map((_, i) => `[p${i}]`).join('')}concat=n=${segs.length}:v=1:a=0,format=yuv420p[out]`;
+  return `${head}${head.endsWith(']') ? '' : ','}split=${segs.length}${segs.map((_, i) => `[s${i}]`).join('')};${parts.join(';')};${segs.map((_, i) => `[p${i}]`).join('')}concat=n=${segs.length}:v=1:a=0${tail.startsWith('[') ? '' : ','}${tail}`;
 }
 async function cursorTrack(entry) {
   const root = rootPath();
@@ -242,7 +292,8 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
   // A recording made with --hide-cursor has no cursor in the picture, so it always gets one drawn.
   const hidden = track?.cursor_in_video === false;
   if (hidden && !parsed.cursor) { parsed.cursor = parseCursor(true); warnings.push('This recording hid the real cursor, so a drawn cursor was added. Pass "cursor" in the recipe to change it.'); }
-  if (!parsed.zoom && !parsed.cursor) fail('INVALID_ARGUMENTS', 'Nothing to do. Pass --auto-zoom, --cursor, or a recipe such as {"zoom":{"auto":true},"cursor":{"size":"big"}}.');
+  const bg = parsed.background, layout = bg ? backgroundLayout(bg, source) : null;
+  if (!parsed.zoom && !parsed.cursor && !bg) fail('INVALID_ARGUMENTS', 'Nothing to do. Pass --auto-zoom, --cursor, --background, or a recipe such as {"zoom":{"auto":true},"cursor":{"size":"big"},"background":"ocean"}.');
   if (parsed.cursor && !track) fail('NOT_FOUND', 'This recording has no cursor track, so there is no pointer to highlight. Record again with a current MyMan.');
   if (parsed.cursor && track.pointer === 'unavailable') fail('UNSUPPORTED_DESKTOP', 'The cursor track has no pointer positions on this desktop (Sway does not expose the pointer).');
   const sx = track ? source.width / (track.width || source.width) : 1, sy = track ? source.height / (track.height || source.height) : 1;
@@ -266,14 +317,15 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
   const recipeOut = {
     ...(parsed.zoom ? { zoom: { level: parsed.zoom.level, ramp: parsed.zoom.ramp, gap: parsed.zoom.gap, moments: plan.flatMap(b => b.points.map((p, i) => ({ start: i ? p.t : b.start, end: b.points[i + 1]?.t ?? b.end, x: p.x, y: p.y, level: b.level }))) } } : {}),
     ...(c ? { cursor: { ...(hidden ? { size: c.size, smooth: c.smooth } : {}), highlight: c.highlight ?? false, ripple: c.ripple ?? false } } : {}),
+    ...(bg ? { background: { style: bg.style, ...(bg.style === 'custom' ? { color: bg.colors[0] } : {}), corner_radius: bg.corner_radius, padding: bg.padding, shadow: bg.shadow } } : {}),
   };
-  const summary = { ...(parsed.zoom ? { zooms: plan.length, moments_from: from } : {}), ...(c ? { cursor: { drawn: hidden, highlight: !!c.highlight, ripples: c.ripple ? Math.min(clicks.length, MAX_RIPPLES) : 0 } } : {}), preview_times: plan.length ? plan.map(b => Math.round(((b.start + b.end) / 2) * 100) / 100) : (clicks.length ? clicks.slice(0, 6).map(k => Math.round((k[0] + 0.15) * 100) / 100) : [Math.round(source.duration * 50) / 100]), ...(warnings.length ? { warnings } : {}) };
+  const summary = { ...(parsed.zoom ? { zooms: plan.length, moments_from: from } : {}), ...(c ? { cursor: { drawn: hidden, highlight: !!c.highlight, ripples: c.ripple ? Math.min(clicks.length, MAX_RIPPLES) : 0 } } : {}), ...(bg ? { background: { style: bg.style, output: { width: layout.W, height: layout.H }, video_box: { x: layout.x, y: layout.y, width: layout.w, height: layout.h } } } : {}), preview_times: plan.length ? plan.map(b => Math.round(((b.start + b.end) / 2) * 100) / 100) : (clicks.length ? clicks.slice(0, 6).map(k => Math.round((k[0] + 0.15) * 100) / 100) : [Math.round(source.duration * 50) / 100]), ...(warnings.length ? { warnings } : {}) };
   if (dryRun) return { ok: true, dry_run: true, source_id: entry.item_id, width: source.width, height: source.height, duration: source.duration, plan, recipe: recipeOut, ...summary, note: 'Edit the recipe and pass it back with --recipe to adjust.' };
-  if (parsed.zoom && !plan.length && !c) fail('INVALID_ARGUMENTS', 'No moments to zoom on (the cursor track found no clicks, typing or pauses). Pass recipe.zoom.moments instead.');
+  if (parsed.zoom && !plan.length && !c && !bg) fail('INVALID_ARGUMENTS', 'No moments to zoom on (the cursor track found no clicks, typing or pauses). Pass recipe.zoom.moments instead.');
   const work = await mkdtemp(path.join(os.tmpdir(), 'myman-polish-'));
   try {
     const out = path.join(work, 'polished.mp4'), inputs = ['-i', entry.video_path];
-    let graph;
+    let head = `[0:v]fps=${FPS}`, graph = '';
     if (c) {
       const arrow = hidden ? await drawArrow(work, c.size) : null;
       if (arrow) inputs.push('-loop', '1', '-framerate', String(FPS), '-i', arrow.file);
@@ -281,8 +333,15 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
       const scripts = cursorCommands(frames, { arrow, halo: c.highlight ? Math.round(56 * c.size) : 0 }), cmds = {};
       for (const [k, text] of Object.entries(scripts)) if (text) { cmds[k] = path.join(work, `${k}.cmd`); await writeFile(cmds[k], text, { mode: 0o600 }); }
       const chain = cursorChain({ clicks, opts: c, arrow, cmds });
-      graph = `${chain.text};${plan.length ? zoomGraph(plan, { ...source, ramp: parsed.zoom.ramp }, chain.out) : `${chain.out}format=yuv420p[out]`}`;
-    } else graph = zoomGraph(plan, { ...source, ramp: parsed.zoom.ramp });
+      graph = `${chain.text};`; head = chain.out;
+    }
+    const tail = bg ? '[z]' : 'format=yuv420p[out]', join = head.endsWith(']') ? '' : ',';
+    graph += plan.length ? zoomGraph(plan, { ...source, ramp: parsed.zoom.ramp }, head, tail) : `${head}${join}${bg ? 'null[z]' : tail}`;
+    if (bg) {
+      const art = await drawBackground(work, bg, layout), n = inputs.filter(a => a === '-i').length;
+      inputs.push('-loop', '1', '-framerate', String(FPS), '-i', art.file);
+      graph += `;${backgroundChain(layout, { input: '[z]', bgIn: n })}`;
+    }
     await run(deps.ffmpeg, ['-nostdin', '-loglevel', 'error', ...inputs, '-filter_complex', graph, '-map', '[out]', '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-y', out], { timeout: 30 * 60_000 });
     await stat(out);
     const info = await probeVideo(out);

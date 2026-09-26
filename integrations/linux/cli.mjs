@@ -56,7 +56,7 @@ myman timer start --seconds N [--sound-enabled false] --json; myman timer status
 myman timer pause|resume|cancel --session-id ID --json; myman timer sound --session-id ID --enabled true|false --json
 myman reminder create --message TEXT --seconds N|--at ISO-WITH-OFFSET --json; myman reminder list|cancel [--id ID] --json
 myman record cursor --id REC-ID [--full] --json (pointer path, clicks, typing moments and where the action is)
-myman record polish --id REC-ID [--auto-zoom [subtle|normal|strong|1.1-4]] [--cursor [normal|big|huge|1-3]] [--recipe FILE|JSON] [--dry-run] --json (polished copy: smooth zoom on the action, cursor highlight, click ripples)
+myman record polish --id REC-ID [--auto-zoom [subtle|normal|strong|1.1-4]] [--cursor [normal|big|huge|1-3]] [--background dusk|ocean|meadow|slate|none] [--background-color '#RRGGBB'] [--corner-radius N] [--recipe FILE|JSON] [--dry-run] --json (polished copy: smooth zoom, cursor highlight, click ripples, backdrop like the image editor)
 myman record frames --id REC-ID [--times 0,2.5|--count 6] [--width 400] --json (temporary PNGs + contact sheet)
 myman record export --id REC-ID [--start S] [--end S] [--max-bytes N] [--edits JSON] --json (new recording; caption/step/title/zoom/redact)
 myman agent whoami|list --json; myman machine current --json (named agents: set MYMAN_AGENT_TOKEN)
@@ -123,6 +123,12 @@ export async function main(argv) {
     if (raw!==undefined) { const { readFile }=await import('node:fs/promises'); const text=raw.trim().startsWith('{')?raw:await readFile(raw,'utf8').catch(()=>fail('INVALID_ARGUMENTS','--recipe must be JSON or a path to a JSON file.')); try { recipe=JSON.parse(text); } catch { fail('INVALID_ARGUMENTS','--recipe is not valid JSON.'); } }
     const k=argv.indexOf('--auto-zoom');
     if (k>=0) { const v=argv[k+1]; recipe={...recipe,zoom:{...(recipe.zoom||{}),auto:true,...(v&&!v.startsWith('--')?{level:v}:{})}}; }
+    const bi=argv.indexOf('--background'), bc=argv.indexOf('--background-color'), br=argv.indexOf('--corner-radius');
+    if (bi>=0||bc>=0||br>=0) { const prev=typeof recipe.background==='string'?{style:recipe.background}:(recipe.background&&typeof recipe.background==='object'?recipe.background:{}); const b={...prev};
+      if (bi>=0) { const v=argv[bi+1]; if (v&&!v.startsWith('--')) b.style=v; }
+      if (bc>=0) { b.color=argv[bc+1]; if (bi<0) b.style='custom'; }
+      if (br>=0) { const v=Number(argv[br+1]); b.corner_radius=Number.isFinite(v)?v:argv[br+1]; }
+      recipe={...recipe,background:b}; }
     const c=argv.indexOf('--cursor');
     if (c>=0) { const v=argv[c+1]; recipe={...recipe,cursor:{...(recipe.cursor||{}),...(v&&!v.startsWith('--')?{size:v}:{})}}; }
     return studio.polish({id:val('--id'),recipe,dryRun:argv.includes('--dry-run')});
