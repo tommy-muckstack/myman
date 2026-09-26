@@ -78,6 +78,9 @@ for(const entry of entries) {
   const read=await ok(entry,['library','read','--id',note.id],f.env);assert.equal(read.body,'Local Linux needle evidence');assert.equal(read.revision,1);
   const appended=await ok(entry,['note','append','--id',note.id,'--body','More evidence','--expected-updated-at',read.updated_at],f.env);assert.equal(appended.revision,2);
   const found=await ok(entry,['library','search','--query','more evidence'],f.env);assert.equal(found.results[0].id,note.id);assert.equal(found.applied.semantic,false);
+  const task=await ok(entry,['task','add','--title','Linux task','--due','2026-10-01'],f.env);assert.equal(task.version,'1');
+  const completed=await ok(entry,['task','complete','--id',task.id,'--expected-version','1'],f.env);assert.equal(completed.done,true);
+  assert.equal((await ok(entry,['task','list','--state','done'],f.env)).results.length,1);
   const noConfirm=await cli(entry,['library','delete','--id',note.id],f.env);assert.equal(noConfirm.code,5);assert.equal(noConfirm.data.error.code,'CONFIRMATION_REQUIRED');
   const files=(await exec('git',['-C',f.root,'show','--pretty=','--name-only','HEAD'])).stdout;assert.match(files,/catalog.json/);assert.doesNotMatch(files,/personal.txt/);
   assert.match((await exec('git',['-C',f.root,'status','--porcelain'])).stdout,/A  personal.txt/);

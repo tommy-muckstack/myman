@@ -100,3 +100,33 @@ test('attached images are owned copies with alt text, and delete needs --confirm
  const status=(await exec('git',['-C',f.brain,'status','--porcelain'])).stdout;
  assert.equal(status.trim(),'');
 });
+
+test('tasks round-trip through the Mac export format with version checks',async t=>{
+ const f=await fixture(t);if(!f)return t.skip('git and ImageMagick are required');
+ const task=await f.call(items,'taskCreate',{title:'Book oil change',notes:'Odyssey',due:'2026-10-01'});
+ assert.match(task.id,/^task-/);assert.equal(task.version,'1');assert.equal(task.done,false);assert.match(task.brain_path,/^task-items\//);
+ const bad=await f.call(items,'taskCreate',{title:'x',due:'next tuesday'});assert.equal(bad.code,'INVALID_ARGUMENTS');
+ const stale=await f.call(items,'taskUpdate',{id:task.id,done:true,expected_version:'9'});assert.equal(stale.code,'EDIT_CONFLICT');
+ const done=await f.call(items,'taskUpdate',{id:task.id,done:true,expected_version:'1'});
+ assert.equal(done.done,true);assert.ok(done.completed_at);assert.deepEqual(done.changed,['done']);assert.equal(done.notes,'Odyssey');
+ const cleared=await f.call(items,'taskUpdate',{id:task.id,clear_due:true});assert.equal(cleared.due,null);
+ const r=await f.call(items,'read',{id:task.id});assert.equal(r.body,'Odyssey');assert.equal(r.version,'3');assert.equal(r.done,true);
+ // The unchanged Brain reader sees the task and its state.
+ const script=`const {Brain}=await import(${JSON.stringify(new URL('../../brain/brain.mjs',import.meta.url).href)});process.stdout.write(JSON.stringify(await new Brain(${JSON.stringify(f.brain)}).tasks({state:'done'})));`;
+ const list=JSON.parse((await exec(process.execPath,['--input-type=module','-e',script])).stdout);
+ assert.equal(list.results.length,1);assert.equal(list.results[0].title,'Book oil change');
+ assert.equal((await f.call(items,'taskDelete',{id:task.id})).code,'CONFIRMATION_REQUIRED');
+ assert.equal((await f.call(items,'taskDelete',{id:task.id,confirm:true})).deleted,true);
+});
+
+test('related items explain every match',async t=>{
+ const f=await fixture(t);if(!f)return t.skip('git and ImageMagick are required');
+ const png=path.join(f.base,'in.png');await exec(f.im,['-size','80x40','xc:white','PNG24:'+png]);
+ const shot=await f.call(lib,'saveCapture',{file:png},);
+ const note=await f.call(lib,'saveNote',{title:'Pricing review',body:'Notes'});
+ await f.call(items,'noteAttach',{id:note.id,source_id:shot.id,alt:'Pricing table'});
+ const rel=await f.call(items,'related',{id:shot.id});
+ const hit=rel.results.find(r=>r.id===note.id);
+ assert.ok(hit);assert.ok(hit.reasons.includes('note that embeds this item'));assert.ok(hit.reasons.some(r=>/captured/.test(r)));
+ const back=await f.call(items,'related',{id:note.id});assert.ok(back.results.find(r=>r.id===shot.id).reasons.includes('embedded in this note'));
+});
