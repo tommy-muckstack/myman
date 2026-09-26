@@ -62,6 +62,7 @@ test('demo reads its steps file and names the app to show',async t=>{
  assert.equal(p.name,'demo.run');assert.deepEqual(p.args,{app:'Spotify',script,dry_run:true});
  assert.ok(ajv.validate(describe('demo.run').inputSchema,p.args));
  assert.deepEqual(describe('demo.run').permissions,['recording','control']);
+ const look=await plan(['demo','--look','--app','Spotify','--window','Library']);assert.deepEqual(look.args,{look:true,app:'Spotify',window:'Library'});assert.ok(ajv.validate(describe('demo.run').inputSchema,look.args));
 });
 test('legacy UI aliases dispatch only explicit UI and never toggle on an invalid flag',async()=>{
  const opened=[];for(const host of ['open','screenshot','note','dictation','meeting','record','settings','cancel-meeting'])assert.equal((await run([host],{open:async h=>opened.push(h)})).interactive,true);

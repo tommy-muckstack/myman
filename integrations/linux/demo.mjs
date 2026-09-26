@@ -1,11 +1,13 @@
 import { execFile, spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { noteEvents } from './recording.mjs';
-import { screens } from './images.mjs';
-import { command, fail, unsupported } from './system.mjs';
+import { capture, screens } from './images.mjs';
+import { parseTsv } from './desktop.mjs';
+import { command, fail, imageCommand, run, unsupported } from './system.mjs';
 
 // myman demo: one command from a steps file to a finished, polished demo.
 // It opens the app, records it, performs each step with xdotool, then polishes
@@ -228,5 +230,116 @@ export async function demo({ script: file, app, dryRun = false }) {
   } finally {
     if (shown) await restoreOthers(shown);
     if (plan.close && child?.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch { try { process.kill(child.pid, 'SIGTERM'); } catch {} } }
+  }
+}
+
+// --look shows an agent the app before it writes steps: a picture of the
+// window, and every piece of text it can click with the point to click, in the
+// same coordinates the steps use (top-left of the window).
+// OCR joins labels on one row (a toolbar, a row of buttons) into one line, so a
+// line is split wherever the gap between words is wider than a space.
+export function splitLine(line) {
+  const words = [...(line.words || [])].sort((a, b) => a.rect[0] - b.rect[0]);
+  if (words.length < 2) return [line];
+  const gap = Math.max(8, line.rect[3] * 0.9), parts = [[words[0]]];
+  for (const w of words.slice(1)) { const prev = parts.at(-1).at(-1); if (w.rect[0] - (prev.rect[0] + prev.rect[2]) > gap) parts.push([w]); else parts.at(-1).push(w); }
+  if (parts.length === 1) return [line];
+  return parts.map(ws => { const x0 = Math.min(...ws.map(w => w.rect[0])), y0 = Math.min(...ws.map(w => w.rect[1])), x1 = Math.max(...ws.map(w => w.rect[0] + w.rect[2])), y1 = Math.max(...ws.map(w => w.rect[1] + w.rect[3])); return { ...line, text: ws.map(w => w.text).join(' '), rect: [x0, y0, x1 - x0, y1 - y0], words: ws }; });
+}
+export function lookElements(lines, size) {
+  return lines.flatMap(splitLine)
+    .filter(l => l.confidence >= 0.45 && /[\p{L}\p{N}]/u.test(l.text) && l.rect[2] >= 4 && l.rect[3] >= 4)
+    .filter(l => !size || (l.rect[0] < size[0] && l.rect[1] < size[1]))
+    .slice(0, 150)
+    .map(({ words, ...l }, i) => ({ n: i + 1, kind: 'text', text: l.text, click: [Math.round(l.rect[0] + l.rect[2] / 2), Math.round(l.rect[1] + l.rect[3] / 2)], rect: l.rect.map(Math.round), source: 'text' }));
+}
+// ImageMagick drawing for the numbered copy: a box round each element and its
+// number beside it, so the picture and the list can be matched by eye.
+// A faint grid every 50 points, labelled every 100, lets an agent read off the
+// point for anything the list misses, such as an icon.
+export function markArgs(elements, size) {
+  const out = [];
+  if (size) {
+    const [w, h] = size;
+    out.push('-stroke', 'rgba(0,150,255,0.22)', '-strokewidth', '1');
+    for (let x = 50; x < w; x += 50) out.push('-draw', `line ${x},0 ${x},${h}`);
+    for (let y = 50; y < h; y += 50) out.push('-draw', `line 0,${y} ${w},${y}`);
+    out.push('-stroke', 'none', '-fill', '#0077aa', '-pointsize', '10');
+    for (let x = 100; x < w; x += 100) out.push('-draw', `text ${x + 2},${h - 3} '${x}'`);
+    for (let y = 100; y < h; y += 100) out.push('-draw', `text 2,${y - 2} '${y}'`);
+  }
+  out.push('-fill', 'none', '-stroke', '#ff2d95', '-strokewidth', '2');
+  for (const e of elements) { const [x, y, w, h] = e.rect; out.push('-draw', `rectangle ${x - 2},${y - 2} ${x + w + 2},${y + h + 2}`); }
+  out.push('-stroke', 'none', '-fill', '#ff2d95');
+  for (const e of elements) { const [lx, ly] = labelAt(e.rect); out.push('-draw', `rectangle ${lx},${ly} ${lx + 8 + 8 * String(e.n).length},${ly + 14}`); }
+  out.push('-fill', 'white', '-pointsize', '12');
+  for (const e of elements) { const [lx, ly] = labelAt(e.rect); out.push('-draw', `text ${lx + 3},${ly + 11} '${e.n}'`); }
+  return out;
+}
+// App text is small, so read it at twice the size, as scattered labels rather
+// than a page, then scale the boxes back to window points.
+// Apps mix dark and light panels, so it reads the picture twice, once as is and
+// once inverted, and keeps each label once.
+async function readUi(file, work) {
+  const im = await imageCommand(), tess = await command('tesseract'), half = r => r.map(v => v / 2);
+  const passes = [['ui-2x.png', []], ['ui-2x-inverted.png', ['-colorspace', 'Gray', '-negate']]];
+  const found = await Promise.all(passes.map(async ([name, extra]) => {
+    const big = path.join(work, name);
+    await run(im, [file, '-filter', 'Lanczos', '-resize', '200%', ...extra, big]);
+    const { stdout } = await run(tess, [big, 'stdout', '--psm', '11', 'tsv'], { timeout: 45_000, maxBuffer: 16 * 1024 * 1024 });
+    return parseTsv(stdout, { words: true }).map(l => ({ ...l, rect: half(l.rect), words: l.words.map(w => ({ ...w, rect: half(w.rect) })) }));
+  }));
+  return mergeLines(found[0], found[1]);
+}
+// Keep every line from the first pass, plus lines from the second that don't overlap one.
+export function mergeLines(first, second) {
+  const overlaps = (a, b) => { const x = Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]), y = Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]); return x > 0 && y > 0 && x * y > 0.3 * Math.min(a[2] * a[3], b[2] * b[3]); };
+  const out = [...first];
+  for (const l of second) if (!out.some(o => overlaps(o.rect, l.rect))) out.push(l);
+  return out.sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0]);
+}
+const labelAt = ([x, y, , h]) => [Math.max(0, x - 4), y >= 16 ? y - 16 : y + h + 3];
+const lookDir = () => path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'myman', 'demo-look');
+
+export async function look({ script: file, app, window }) {
+  let json = {};
+  if (file) { let raw; try { raw = file.trim().startsWith('{') ? file : await readFile(file, 'utf8'); } catch { bad(`Could not read the steps file ${file}.`); } try { json = JSON.parse(raw); } catch { bad('The steps file is not valid JSON.'); } }
+  const cmd = app !== undefined ? words(app, '--app') : json.app === undefined ? null : words(json.app, '"app"');
+  const title = window ?? json.window;
+  if (!cmd && !title) bad('Pass --app with the app to look at (or --window with part of an open window\'s title).');
+  if (title !== undefined && (typeof title !== 'string' || !title || title.length > 200)) bad('--window must be part of the app window\'s title.');
+  const desktop = await screens();
+  if (desktop.session === 'wayland') unsupported('myman demo --look needs X11 for now, like myman demo.');
+  if (!(await command('xdotool'))) fail('DEPENDENCY_MISSING', 'Install xdotool to run demos.');
+  const before = new Set(await windowIds('.'));
+  let child = null;
+  const work = await mkdtemp(path.join(os.tmpdir(), 'myman-look-'));
+  try {
+    if (cmd) {
+      child = spawn(cmd[0], cmd.slice(1), { detached: true, stdio: 'ignore', env: process.env });
+      const ok = await new Promise(r => { child.once('spawn', () => r(true)); child.once('error', () => r(false)); });
+      if (!ok) fail('NOT_FOUND', `Could not start ${cmd[0]}.`);
+      child.unref();
+    }
+    const target = await findWindow({ window: title ?? null, before });
+    await xdo('windowactivate', '--sync', target.id).catch(() => {});
+    await sleep(1);
+    const rect = (await windowRect(target.id)) ?? target.rect;
+    const shot = await capture({ region: toGlobal(rect, desktop) }, work);
+    const lines = (await command('tesseract')) ? await readUi(shot.file, work) : null;
+    const elements = lines ? lookElements(lines, [shot.width, shot.height]) : [];
+    const dir = lookDir(); await mkdir(dir, { recursive: true, mode: 0o700 });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-'), screenshot = path.join(dir, `${stamp}.png`), numbered = path.join(dir, `${stamp}-numbered.png`);
+    await rename(shot.file, screenshot).catch(async () => { await run(await imageCommand(), [shot.file, screenshot]); });
+    await run(await imageCommand(), [screenshot, ...markArgs(elements, [shot.width, shot.height]), numbered]);
+    const name = (await xdo('getwindowname', target.id).catch(() => ({ stdout: '' }))).stdout.trim();
+    return {
+      ok: true, app: cmd, window: { title: name, size: [rect[2], rect[3]] }, coordinates: 'points from the top-left of the app window, the same as demo steps',
+      screenshot, numbered_screenshot: numbered, elements, element_source: lines ? 'on-screen text (OCR). Icons and some labels on dark or busy backgrounds are not listed; read their points off the grid in the numbered screenshot' : 'none: install tesseract to list clickable text',
+      next: 'Write steps that click the "click" points of the elements you need, check them with myman demo --script steps.json --dry-run, then run myman demo. The app is opened fresh for the demo, in the same state as this picture.',
+    };
+  } finally {
+    await rm(work, { recursive: true, force: true }).catch(() => {});
+    if (child?.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch { try { process.kill(child.pid, 'SIGTERM'); } catch {} } }
   }
 }

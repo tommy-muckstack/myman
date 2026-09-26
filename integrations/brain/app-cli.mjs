@@ -103,6 +103,7 @@ Or wait --job-id UUID / --session-id ID. No action is started or replayed.
 Compare: capture compare --before-id ID --after-id ID [--ignore-rects JSON]
 Video: record export --id ID --edits JSON (caption/step/title/zoom/redact).
 Demo: record start --hide-cursor; record polish --id ID --auto-zoom --cursor big --background dusk [--music upbeat|calm|cinematic|FILE] [--title TEXT] [--end TEXT] [--recipe FILE|JSON] [--dry-run]
+Look before a demo: demo --look --app Spotify (a picture of the app's window, a numbered copy with a grid, and each button, field and label with the point to click)
 Demo an app: demo --app Spotify --script steps.json [--dry-run] (hides other apps, records the app's window, runs click/type/key/scroll steps, then polishes; needs recording + control access and macOS Accessibility)
 Media: record start --window-id ID --max-duration 30; record result --session-id ID
 record frames --id ID --times 0,2,5; record export --id ID --start 1 --end 10 --max-bytes 20000000
