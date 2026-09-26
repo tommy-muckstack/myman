@@ -75,6 +75,17 @@ export async function musicFile(track, { cache = path.join(os.homedir(), 'Librar
   await rename(temp, file);
   return file;
 }
+// A demo polishes with the upbeat track unless its script says otherwise.
+export async function withDemoMusic(args, options) {
+  const script = args.script;
+  if (!script || typeof script !== 'object' || Array.isArray(script) || script.polish === false || args.dry_run === true) return args;
+  const polish = script.polish && typeof script.polish === 'object' && !Array.isArray(script.polish) ? script.polish : {};
+  if (script.polish !== undefined && polish !== script.polish) return args; // the app reports the bad recipe
+  const music = polish.music === undefined ? 'upbeat' : polish.music;
+  const next = await withMusic({ recipe: { music } }, options);
+  if (!next.music_track) return args;
+  return { ...args, music_track: next.music_track, script: { ...script, polish: { ...polish, music: next.recipe.music } } };
+}
 export async function withMusic(args, options) {
   const raw = musicTrack(args); if (raw === null) return args;
   const track = String(raw).toLowerCase();
@@ -88,6 +99,7 @@ export async function invoke(action, args = {}, { id = randomUUID(), wait = true
   const live = await discover(action,{transport});
   if (!live.live) throw new BrainError(live.unavailable?.code??'APP_NOT_RUNNING',live.unavailable?.message??'Open MyMan to verify this action.');
   if (action === 'recording.polish') args = await withMusic(args);
+  if (action === 'demo.run') args = await withDemoMusic(args);
   const first = await transport({ method: 'invoke', id, action, arguments: args });
   if (!wait) return first;
   const deadline = Date.now() + waitMs;

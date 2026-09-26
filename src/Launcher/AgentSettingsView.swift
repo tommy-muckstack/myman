@@ -7,6 +7,7 @@ struct AgentSettingsView: View {
     @AppStorage("agentRecordingEnabled") private var recording = false
     @AppStorage("agentLibraryEnabled") private var library = false
     @AppStorage("agentSharingEnabled") private var sharing = false
+    @AppStorage("agentControlEnabled") private var control = false
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("Your tools, on your terms.").font(MM.Fonts.title)
@@ -19,6 +20,7 @@ struct AgentSettingsView: View {
                 Toggle("Control meetings, dictation and screen recordings", isOn: $recording).clickable()
                 Toggle("Create and change notes, tasks and library items", isOn: $library).clickable()
                 Toggle("Publish explicitly selected captures to shared links", isOn: $sharing).clickable()
+                Toggle("Move the mouse and type to record app demos", isOn: $control).clickable()
             }.disabled(!enabled)
             Text("These permissions start off. Delete commands also require explicit confirmation. You can always stop an active recording, even after turning access off.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)

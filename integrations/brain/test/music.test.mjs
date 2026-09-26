@@ -30,3 +30,20 @@ test('a built-in track is composed once, cached, and handed to the app as a file
     assert.equal(await withMusic(own, { cache }), own);
   } finally { await rm(cache, { recursive: true, force: true }); }
 });
+
+test('a demo gets the upbeat track unless its script chooses otherwise', async () => {
+  const { withDemoMusic } = await import('../actions.mjs');
+  const cache = await mkdtemp(path.join(os.tmpdir(), 'myman-music-'));
+  try {
+    const script = { app: 'Spotify', steps: [{ click: [10, 10] }] };
+    const upbeat = await withDemoMusic({ script }, { cache });
+    assert.equal(upbeat.music_track, 'upbeat');
+    assert.deepEqual(upbeat.script.polish.music, { file: path.join(cache, 'upbeat-v1.wav') });
+    assert.equal(upbeat.script.steps, script.steps);
+    const calm = await withDemoMusic({ script: { ...script, polish: { music: 'calm', background: 'ocean' } } }, { cache });
+    assert.equal(calm.music_track, 'calm'); assert.equal(calm.script.polish.background, 'ocean');
+    for (const args of [{ script: { ...script, polish: false } }, { script: { ...script, polish: { music: 'none' } } }, { script, dry_run: true }]) {
+      assert.equal(await withDemoMusic(args, { cache }), args);
+    }
+  } finally { await rm(cache, { recursive: true, force: true }); }
+});
