@@ -206,8 +206,21 @@ export function musicChain(mu, { duration, musicIn, voice }) {
 }
 async function hasAudio(file) {
   const { ffprobe } = await dependencies();
-  const { stdout } = await run(ffprobe, ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', file]);
+  const { stdout } = await run(ffprobe, ['-v', 'error', '-protocol_whitelist', 'file', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', file]);
   return stdout.trim().length > 0;
+}
+// Custom music must be a plain audio file. Playlist and script formats (HLS,
+// concat, ffconcat, image2 sequences...) can make ffmpeg read other files, so
+// only these demuxers are accepted, and ffmpeg may only read local files.
+export const MUSIC_FORMATS = ['mp3', 'wav', 'flac', 'ogg', 'aac', 'aiff', 'mov', 'mp4', 'm4a', 'matroska', 'webm', 'w64'];
+export function musicFormatAllowed(formatName) {
+  const names = String(formatName || '').trim().split(',').filter(Boolean);
+  return names.length > 0 && names.every(n => MUSIC_FORMATS.includes(n) || ['3gp', '3g2', 'mj2'].includes(n));
+}
+async function musicFormat(file) {
+  const { ffprobe } = await dependencies();
+  const { stdout } = await run(ffprobe, ['-v', 'error', '-protocol_whitelist', 'file', '-show_entries', 'format=format_name', '-of', 'csv=p=0', file]).catch(() => ({ stdout: '' }));
+  return stdout.trim();
 }
 export const SIZES = { normal: 1.5, big: 2, huge: 2.6 };
 export const YELLOW = '#FFD60A';
@@ -514,10 +527,10 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
     let audio = ['-an'];
     if (mu) {
       let src = mu.file;
-      if (src) { const copy = path.join(work, 'music-source'); await writeFile(copy, await readSafe(src, 512 * 1024 * 1024), { mode: 0o600 }); if (!(await hasAudio(copy))) fail('INVALID_ARGUMENTS', 'recipe.music.file has no audio stream.'); src = copy; }
+      if (src) { const copy = path.join(work, 'music-source'); await writeFile(copy, await readSafe(src, 512 * 1024 * 1024), { mode: 0o600 }); if (!musicFormatAllowed(await musicFormat(copy))) fail('INVALID_ARGUMENTS', 'recipe.music.file must be a plain audio file (MP3, WAV, FLAC, Ogg, AAC, AIFF, M4A/MP4, MKV/WebM).'); if (!(await hasAudio(copy))) fail('INVALID_ARGUMENTS', 'recipe.music.file has no audio stream.'); src = copy; }
       else src = await trackFile(mu.track);
       const musicIn = inputs.filter(a => a === '-i').length;
-      inputs.push('-stream_loop', '-1', '-i', src);
+      inputs.push('-stream_loop', '-1', '-protocol_whitelist', 'file', '-i', src);
       if (voice && T) graph += `;[0:a]adelay=${Math.round(T * 1000)}:all=1[vd]`;
       graph += `;${musicChain(mu, { duration: total, musicIn, voice: voice ? (T ? '[vd]' : '[0:a]') : null })}`;
       audio = ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k'];
