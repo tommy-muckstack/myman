@@ -282,3 +282,20 @@ The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this dem
 Workflows and Recovery brings connection checks, selected context handoff, source-backed meeting decisions, dictation delivery history and safe continuation into My Man. Scrolling capture and floating references join keyboard/VoiceOver capture controls and scalable interface text. [Workflow guide](https://github.com/tommy-muckstack/myman/blob/main/docs/human-agent-workflows.md).
 
 Sharing is optional and explicit: selected content can be published through a configured private sharing service with server-enforced expiration/revocation. Agent publishing has a separate disabled-by-default permission. This does not upload or host the Brain. Recipient copies cannot be recalled. [Personal sharing setup](https://github.com/tommy-muckstack/myman/tree/main/integrations/share-service).
+
+## Linux (agents)
+
+A local Node 22+ companion for Ubuntu/X11 and Omarchy/Hyprland: screenshots, annotations, notes, Brain search, and permission-controlled MCP. The Swift Mac app is unchanged.
+
+Download `myman-linux-x64.tar.gz` and its `.sha256` file from the same release, then:
+
+```sh
+sha256sum -c myman-linux-x64.tar.gz.sha256
+tar -xzf myman-linux-x64.tar.gz
+bash myman-linux-x64/scripts/install-linux.sh
+export PATH="$HOME/.local/bin:$PATH"
+# As the owner, enable local commands and capture in ~/.config/myman/agents.json (all grants start off).
+myman screenshot --display main --json
+```
+
+The installer lists optional Ubuntu and Arch packages and never runs sudo. [Linux setup, permissions, annotations, Omarchy, Xvfb and MCP](docs/linux-agents.md).

@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "myman-brain",
-  "version": "0.12.0",
-  "description": "Search local MyMan captures with source citations and invoke permission-controlled Mac app tools through MCP or CLI.",
+  "version": "0.13.0",
+  "description": "Search local MyMan captures with source citations and invoke permission-controlled macOS app or Linux capture/library tools through MCP or CLI.",
   "author": {
     "name": "MuckStack, LLC"
   },
@@ -18,6 +18,7 @@
     "memory",
     "screenshots",
     "transcripts",
-    "dictation"
+    "dictation",
+    "linux"
   ]
 }
