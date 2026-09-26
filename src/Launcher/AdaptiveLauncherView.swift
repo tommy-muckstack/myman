@@ -209,7 +209,7 @@ struct AdaptiveLauncherView: View {
                 Text("This action isn’t available on this Mac.").font(MM.Fonts.body).padding(MM.Layout.padding)
             }
         case .tasks: TasksPanelView(inline: true)
-        case .calendar: CalendarPanelView(inline: true)
+        case .calendar: CalendarPanelView(inline: true, request: LauncherCalendarRequest.parse(query) ?? .today)
         case .commands:
             AdaptiveResultScroll {
                 VStack(alignment: .leading, spacing: MM.Layout.spacing) {

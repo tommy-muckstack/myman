@@ -89,7 +89,8 @@ enum BackdropStyle: String, CaseIterable, Identifiable {
 final class EditorModel: ObservableObject {
     @Published var image: NSImage
     @Published var annotationColors: [UUID: NSColor] = [:]
-    var annotationFontSizes: [UUID: CGFloat] = [:]
+    @Published var annotationFontSizes: [UUID: CGFloat] = [:]
+    @Published private var preferredTextSize: CGFloat?
     @Published var annotations: [Annotation] = []
     @Published var backdrop: BackdropStyle = .none
     @Published var customBackdropColor: NSColor {
@@ -165,16 +166,29 @@ final class EditorModel: ObservableObject {
 
     // MARK: Annotations
 
-    /// One font size for text annotations, in image points — the preview and
-    /// the export both derive from this so they can never disagree.
+    /// Automatic starting size, in image points. Each text keeps its own size.
     var annotationFontSize: CGFloat { max(14, imageSize.width / 40) }
 
-    private var annotationFont: NSFont {
-        NSFont(name: "Gellix-SemiBold", size: annotationFontSize)
-            ?? NSFont.boldSystemFont(ofSize: annotationFontSize)
+    static let textSizes: [CGFloat] = [12, 14, 18, 24, 32, 48, 64, 96, 128]
+
+    func textSize(for id: UUID? = nil) -> CGFloat {
+        if let id { return annotationFontSizes[id] ?? annotationFontSize }
+        return preferredTextSize ?? annotationFontSize
+    }
+
+    func setTextSize(_ size: CGFloat, selected id: UUID?) {
+        guard size.isFinite else { return }
+        let size = min(256, max(8, size))
+        preferredTextSize = size
+        guard let annotation = annotations.first(where: { $0.id == id }),
+              case .text = annotation else { return }
+        annotationFontSizes[annotation.id] = size
     }
 
     func add(_ annotation: Annotation) {
+        if case .text = annotation, annotationFontSizes[annotation.id] == nil {
+            annotationFontSizes[annotation.id] = textSize()
+        }
         if annotation.supportsColor, annotationColors[annotation.id] == nil {
             annotationColors[annotation.id] = color(for: annotation)
         }
@@ -331,16 +345,18 @@ final class EditorModel: ObservableObject {
             var r = CGRect(origin: first, size: .zero)
             for p in points { r = r.union(CGRect(origin: p, size: .zero)) }
             return r
-        case .text(_, let string, let origin):
+        case .text(let id, let string, let origin):
             // Measured with AppKit metrics but DRAWN by SwiftUI — the two can
             // disagree, so the grab box is padded generously: full line height
             // plus width headroom. A text you can see is a text you can grab.
-            let measured = (string as NSString).size(withAttributes: [.font: annotationFont])
+            let size = textSize(for: id)
+            let font = MM.Fonts.native(size, .semiBold)
+            let measured = (string as NSString).size(withAttributes: [.font: font])
             return CGRect(
                 x: origin.x - 4,
                 y: origin.y - 4,
-                width: max(measured.width * 1.25, annotationFontSize * 2) + 8,
-                height: max(measured.height, annotationFontSize * 1.4) + 8
+                width: max(measured.width * 1.25, size * 2) + 8,
+                height: max(measured.height, size * 1.4) + 8
             )
         }
     }
@@ -653,7 +669,7 @@ final class EditorModel: ObservableObject {
 
         for annotation in annotations {
             let color = color(for: annotation)
-            let fontSize = annotationFontSizes[annotation.id] ?? annotationFontSize
+            let fontSize = textSize(for: annotation.id)
             switch annotation {
             case .pixelate(let id, let rect):
                 pixelatePreviews[id]?.draw(in: flip(rect))

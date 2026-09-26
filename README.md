@@ -38,6 +38,10 @@ tool. Ambiguous text offers **Search existing** and **Create new**, and either
 choice can override the suggested route. Screenshots and recordings start only
 from a labeled action.
 Hover Quick Tools to browse tools inline, or type `/` for the action list, tasks and calendar.
+Schedule phrases work directly: `meetings today`, `what's on tomorrow`,
+`meetings on Friday`, `this week's meetings`, `upcoming meetings`, and `what's next`.
+The calendar shows evenly spaced dates and a day or week agenda, including all-day events.
+`My open tasks` and `to-do list` open tasks. Explicit `find…` requests still search saved captures.
 
 Type `calculator` for calculations, or `reminder in 10m for taking pizza out`
 for a timed message. Timers and reminders share a small countdown widget that

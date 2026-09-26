@@ -4,6 +4,51 @@ import XCTest
 @testable import MyMan
 
 final class DictationDeliveryTests: XCTestCase {
+    @MainActor func testNativePasteDoesNotSendShortcutAfterSuccessOrTimeout() {
+        for (error, expected) in [(AXError.success, DictationDelivery.PasteResult.sent),
+                                  (.cannotComplete, .uncertain), (.failure, .uncertain),
+                                  (.invalidUIElement, .failed)] {
+            var shortcuts = 0
+            let result = DictationDelivery.sendPasteCommand(menuAction: { error }) {
+                shortcuts += 1
+                return true
+            }
+            XCTAssertEqual(result, expected)
+            XCTAssertEqual(shortcuts, 0, "An uncertain native action must never insert twice")
+        }
+    }
+
+    @MainActor func testUnsupportedNativePasteFallsBackToOneShortcut() {
+        for error in [AXError.actionUnsupported, .notImplemented] {
+            var shortcuts = 0
+            let result = DictationDelivery.sendPasteCommand(menuAction: { error }) {
+                shortcuts += 1
+                return true
+            }
+            XCTAssertEqual(result, .sent)
+            XCTAssertEqual(shortcuts, 1)
+        }
+        XCTAssertEqual(DictationDelivery.sendPasteCommand(menuAction: nil, shortcut: { false }), .failed)
+    }
+
+    @MainActor func testZedAlwaysUsesPasteEvenWhenItExposesATextField() {
+        for bundle in ["dev.zed.Zed", "dev.zed.Zed-Preview", "dev.zed.Zed-Nightly"] {
+            XCTAssertTrue(DictationDelivery.prefersPaste(bundleID: bundle, bundleURL: nil))
+        }
+    }
+
+    @MainActor func testNativePasteTimeoutPreservesRecoveryWithoutRetry() async {
+        let editor = Editor()
+        var target = editor.target(paste: true)
+        target.paste = { editor.pastes += 1; return .uncertain }
+        let outcome = await DictationDelivery.deliver("new", to: target, copy: editor.copy, pause: editor.pause)
+        XCTAssertEqual(outcome.state, "uncertain")
+        XCTAssertEqual(editor.clipboard, "new")
+        XCTAssertEqual(editor.pastes, 1)
+        XCTAssertEqual(editor.chunks, 0)
+        XCTAssertEqual(editor.axWrites, 0)
+    }
+
     @MainActor func testOptInZedDelivery() async throws {
         guard let path = ProcessInfo.processInfo.environment["MYMAN_VERIFY_ZED_FILE"],
               path.hasPrefix("/private/tmp/myman-zed-delivery/"),
@@ -153,9 +198,9 @@ final class DictationDeliveryTests: XCTestCase {
                       return true
                   }, paste: {
                       self.pastes += 1
-                      if self.pasteFails { return false }
+                      if self.pasteFails { return .failed }
                       if !self.ignoreWrites { self.insert(self.clipboard) }
-                      return true
+                      return .sent
                   })
         }
         func insert(_ text: String) {
@@ -322,13 +367,13 @@ final class DictationDeliveryTests: XCTestCase {
             controller.deliveryOutcome = .init(state: state,
                 reason: state == "sent" ? "Paste sent. This app doesn’t expose its text for confirmation." : "Insertion could not be confirmed. Your text is copied; check the field before pressing ⌘V to avoid duplicates.",
                 milliseconds: 420, clipboardAvailable: state != "verified")
-            controller.phase = .done("Testing the copying part of this feature.")
+            controller.phase = .done(state == "unverified" ? String(repeating: "A longer dictation stays compact and can still be copied in full. ", count: 5) : "Okay, that sounds good.")
             controller.pillPresented = true
             XCTAssertEqual(controller.resultLingerSeconds, ["verified", "sent"].contains(state) ? 3 : 12)
             let host = NSHostingView(rootView: VoicePillView(controller: controller).preferredColorScheme(.dark))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 456, height: 320), styleMask: [.borderless], backing: .buffered, defer: false)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 160), styleMask: [.borderless], backing: .buffered, defer: false)
             window.contentView = host
-            host.frame = NSRect(x: 0, y: 0, width: 456, height: 320)
+            host.frame = NSRect(x: 0, y: 0, width: 320, height: 160)
             host.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(250))
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))

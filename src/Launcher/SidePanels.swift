@@ -172,6 +172,7 @@ private struct TaskRow: View {
 
 struct CalendarPanelView: View {
     var inline = false
+    var request: LauncherCalendarRequest = .today
     struct DayEvents: Identifiable {
         let id: String
         let date: Date
@@ -191,6 +192,8 @@ struct CalendarPanelView: View {
         var meetingID: String?
         /// Direct link to THIS event on calendar.google.com, when derivable.
         var googleURL: URL?
+        var isAllDay = false
+        var location: String? = nil
     }
 
     /// Google's web UI addresses events as base64url("<eventID> <accountEmail>").
@@ -225,9 +228,10 @@ struct CalendarPanelView: View {
         Group {
             if inline {
                 InlineCalendarView(days: days, needsAccessRequest: needsAccessRequest, accessDenied: accessDenied,
-                                   onAccess: requestAccess, eventContent: { eventCard($0) })
+                                   onAccess: requestAccess, request: request, eventContent: { eventCard($0) })
             } else { companion }
         }.onAppear(perform: load)
+            .onChange(of: request) { _, _ in load() }
     }
 
     private var companion: some View {
@@ -413,7 +417,7 @@ struct CalendarPanelView: View {
         // Fresh store per read — cached stores serve stale events.
         let store = EKEventStore()
         let calendar = Calendar.current
-        let startOfToday = calendar.startOfDay(for: Date())
+        let rangeStart = request.startDate(calendar: calendar)
 
         // Recorded meetings, for matching events to their My Man notes.
         let recordings: [(id: String, start: Date, end: Date)] =
@@ -425,13 +429,15 @@ struct CalendarPanelView: View {
 
         var collected: [DayEvents] = []
         for offset in 0..<7 {
-            guard let dayStart = calendar.date(byAdding: .day, value: offset, to: startOfToday),
+            guard let dayStart = calendar.date(byAdding: .day, value: offset, to: rangeStart),
                   let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { continue }
             // Today includes what already happened — that's where the notes are.
             let predicate = store.predicateForEvents(withStart: dayStart, end: dayEnd, calendars: nil)
             let events = store.events(matching: predicate)
-                .filter { !$0.isAllDay }
-                .sorted { $0.startDate < $1.startDate }
+                .sorted { left, right in
+                    if left.isAllDay != right.isAllDay { return left.isAllDay }
+                    return left.startDate < right.startDate
+                }
                 .map { event -> EventLite in
                     // A recording overlapping the event window (±10 min slack).
                     let matched = recordings.first { rec in
@@ -448,7 +454,9 @@ struct CalendarPanelView: View {
                             .compactMap(\.name),
                         joinURL: CalendarWatcher.meetingURL(in: event),
                         meetingID: matched?.id,
-                        googleURL: Self.googleEventURL(for: event)
+                        googleURL: Self.googleEventURL(for: event),
+                        isAllDay: event.isAllDay,
+                        location: event.location
                     )
                 }
             collected.append(DayEvents(id: "day-\(offset)", date: dayStart, events: Array(events)))
@@ -457,51 +465,167 @@ struct CalendarPanelView: View {
     }
 }
 
+/// The same projection drives day, week and next-event requests and day clicks.
+struct InlineCalendarAgenda {
+    let days: [CalendarPanelView.DayEvents]
+    var request: LauncherCalendarRequest = .today
+    var selectedDay: Int? = nil
+    var now = Date()
+    var calendar = Calendar.current
+
+    var nextEvent: CalendarPanelView.EventLite? {
+        days.flatMap(\.events).filter { !$0.isAllDay && $0.start >= now }
+            .min { $0.start < $1.start }
+    }
+
+    var activeDay: Int? {
+        if let selectedDay, days.indices.contains(selectedDay) { return selectedDay }
+        if request == .week || request == .upcoming { return nil }
+        let date = request == .next ? nextEvent?.start : request.selectedDate(now: now, calendar: calendar)
+        return date.flatMap { date in days.firstIndex { calendar.isDate($0.date, inSameDayAs: date) } }
+    }
+
+    var sections: [CalendarPanelView.DayEvents] {
+        if selectedDay == nil, request == .next {
+            guard let event = nextEvent, let index = activeDay else { return [] }
+            return [.init(id: days[index].id, date: days[index].date, events: [event])]
+        }
+        if let index = activeDay { return [days[index]] }
+        if request == .week { return days.filter { !$0.events.isEmpty } }
+        if request == .upcoming {
+            return days.compactMap { day in
+                let events = day.events.filter { $0.end > now }
+                return events.isEmpty ? nil : .init(id: day.id, date: day.date, events: events)
+            }
+        }
+        return []
+    }
+
+    var isOverview: Bool { selectedDay == nil && (request == .week || request == .upcoming) }
+}
+
 struct InlineCalendarView<EventContent: View>: View {
     let days: [CalendarPanelView.DayEvents]
     let needsAccessRequest: Bool
     let accessDenied: Bool
     var onAccess: () -> Void
+    var request: LauncherCalendarRequest = .today
     @ViewBuilder var eventContent: (CalendarPanelView.EventLite) -> EventContent
-    @State private var selectedDay = 0
+    @State private var selectedDay: Int?
+
+    private var agenda: InlineCalendarAgenda { .init(days: days, request: request, selectedDay: selectedDay) }
+    private var monthDate: Date { agenda.activeDay.map { days[$0].date } ?? days.first?.date ?? .now }
+    private var heading: String {
+        if selectedDay == nil {
+            if request == .week { return "This week" }
+            if request == .upcoming { return "Coming up" }
+            if request == .next { return "Next event" }
+        }
+        guard let index = agenda.activeDay else { return "Your schedule" }
+        return dayTitle(days[index].date)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if needsAccessRequest || accessDenied {
-                HStack {
-                    Text("See your schedule here").font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
-                    Spacer()
-                    Button(action: onAccess) {
-                        Text(needsAccessRequest ? "Connect calendar" : "Allow calendar access")
-                            .font(MM.Fonts.secondary).clickable()
-                    }.buttonStyle(.plain)
-                }.padding(MM.Layout.padding)
+                CalendarEmptyState(needsAccessRequest: needsAccessRequest, accessDenied: accessDenied, compact: true, action: onAccess)
+                    .padding(MM.Layout.padding)
             } else {
-                HStack(spacing: MM.Layout.spacing) {
-                    ForEach(Array(days.enumerated()), id: \.element.id) { index, day in
-                        Button { selectedDay = index } label: {
-                            Text(Calendar.current.isDateInToday(day.date) ? "Today" : day.date.formatted(.dateTime.weekday(.abbreviated)))
-                                .font(MM.Fonts.secondary)
-                                .foregroundStyle(selectedDay == index ? MM.Colors.textPrimary : MM.Colors.textTertiary)
-                                .padding(.horizontal, MM.Layout.spacing / 2).padding(.vertical, MM.Layout.spacing / 2)
-                                .background(selectedDay == index ? MM.Colors.surface : .clear,
-                                            in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall)).clickable()
-                        }.buttonStyle(.plain)
-                    }
-                    Spacer(minLength: 0)
-                }.padding(MM.Layout.padding)
-                if days.indices.contains(selectedDay), !days[selectedDay].events.isEmpty {
-                    AdaptiveResultScroll {
-                        VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
-                            ForEach(days[selectedDay].events) { eventContent($0) }
-                        }.padding(.horizontal, MM.Layout.spacing / 2).padding(.bottom, MM.Layout.spacing)
-                    }
-                } else {
-                    Text("No events this day").font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textTertiary)
-                        .padding(.horizontal, MM.Layout.padding).padding(.bottom, MM.Layout.padding)
+                monthHeader
+                dayStrip
+                agendaContent
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: request) { _, _ in selectedDay = nil }
+    }
+
+    private var monthHeader: some View {
+        HStack {
+            Text(monthDate.formatted(.dateTime.month(.wide).year()))
+                .font(MM.Fonts.bodyInput).foregroundStyle(MM.Colors.textPrimary)
+            Spacer()
+            Button {
+                selectedDay = days.firstIndex { Calendar.current.isDateInToday($0.date) }
+            } label: {
+                Text("Today").font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                    .padding(.horizontal, MM.Layout.spacing)
+                    .background(MM.Colors.surface, in: Capsule()).clickable()
+            }.buttonStyle(.plain).accessibilityLabel("Show today's events")
+        }.padding(.horizontal, MM.Layout.paddingLarge).padding(.top, MM.Layout.padding)
+    }
+
+    private var dayStrip: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(days.enumerated()), id: \.element.id) { index, day in
+                dayButton(day, index: index)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, MM.Layout.padding)
+        .padding(.vertical, MM.Layout.spacing)
+    }
+
+    private func dayButton(_ day: CalendarPanelView.DayEvents, index: Int) -> some View {
+        let selected = agenda.activeDay == index && !agenda.isOverview
+        let today = Calendar.current.isDateInToday(day.date)
+        return Button { selectedDay = index } label: {
+            VStack(spacing: MM.Layout.spacing / 2) {
+                Text(day.date.formatted(.dateTime.weekday(.abbreviated)))
+                    .font(MM.Fonts.metadata)
+                    .foregroundStyle(today ? MM.Colors.accent : MM.Colors.textSecondary)
+                Text(day.date.formatted(.dateTime.day()))
+                    .font(MM.Fonts.bodyInput).monospacedDigit()
+                    .foregroundStyle(selected ? MM.Colors.onAccent : MM.Colors.textPrimary)
+                    .frame(width: MM.Layout.padding * 2, height: MM.Layout.padding * 2)
+                    .background(selected ? MM.Colors.accent : .clear, in: Circle())
+                    .overlay(Circle().strokeBorder(today && !selected ? MM.Colors.accent : .clear))
+                Circle().fill(day.events.isEmpty ? .clear : MM.Colors.textTertiary)
+                    .frame(width: MM.Layout.spacing / 3, height: MM.Layout.spacing / 3)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle()).clickable()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(day.date.formatted(date: .complete, time: .omitted))
+        .accessibilityValue("\(day.events.count) events")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var agendaContent: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+            HStack {
+                Text(heading).font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+                Spacer()
+                let count = agenda.sections.reduce(0) { $0 + $1.events.count }
+                if count > 0 {
+                    Text("\(count) \(count == 1 ? "event" : "events")")
+                        .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                }
+            }.padding(.horizontal, MM.Layout.paddingLarge)
+            if agenda.sections.allSatisfy({ $0.events.isEmpty }) {
+                Text(request == .next && selectedDay == nil ? "No upcoming events in the next 7 days" : "No events scheduled")
+                    .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textTertiary)
+                    .padding(.horizontal, MM.Layout.paddingLarge).padding(.bottom, MM.Layout.padding)
+            } else {
+                AdaptiveResultScroll {
+                    VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+                        ForEach(agenda.sections) { day in
+                            if agenda.isOverview {
+                                Text(dayTitle(day.date)).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                                    .padding(.horizontal, MM.Layout.spacing).padding(.top, MM.Layout.spacing)
+                            }
+                            ForEach(day.events) { eventContent($0) }
+                        }
+                    }.padding(.horizontal, MM.Layout.spacing).padding(.bottom, MM.Layout.spacing)
                 }
             }
-        }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func dayTitle(_ date: Date) -> String {
+        let day = Calendar.current.isDateInToday(date) ? "Today" : Calendar.current.isDateInTomorrow(date) ? "Tomorrow" : date.formatted(.dateTime.weekday(.wide))
+        return day + ", " + date.formatted(.dateTime.month(.abbreviated).day())
     }
 }
 
@@ -509,6 +633,7 @@ struct InlineCalendarView<EventContent: View>: View {
 struct CalendarEmptyState: View {
     let needsAccessRequest: Bool
     let accessDenied: Bool
+    var compact = false
     var action: () -> Void = {}
     private var needsConnection: Bool { needsAccessRequest || accessDenied }
     var body: some View {
@@ -516,6 +641,6 @@ struct CalendarEmptyState: View {
                           title: needsConnection ? "Your day, at a glance" : "A little breathing room",
                           message: needsConnection ? "Bring your calendar along." : "No events coming up.",
                           actionTitle: needsAccessRequest ? "Connect calendar" : accessDenied ? "Allow calendar access" : "Add a calendar",
-                          action: action)
+                          compact: compact, action: action)
     }
 }

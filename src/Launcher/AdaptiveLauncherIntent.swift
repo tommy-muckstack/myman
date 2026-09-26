@@ -23,6 +23,9 @@ enum AdaptiveLauncherIntent: Equatable {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             .replacingOccurrences(of: #"[.!?]+$"#, with: "", options: .regularExpression)
         if text == "/" { return .commands }
+        if LauncherCalendarRequest.parse(text) != nil { return .calendar }
+        if ["open tasks", "my open tasks", "to do", "todo", "to-do", "my to-do list", "to-do list",
+            "what do i need to do", "what's on my to-do list", "show me my tasks"].contains(text) { return .tasks }
         // Retrieval wins even when the rest contains a creation or capture verb.
         if ["find ", "search ", "look for ", "look up ", "where is ", "where's ", "where did ", "show me "].contains(where: text.hasPrefix) { return .search }
         if ["new ", "create ", "make ", "note: ", "write a note "].contains(where: text.hasPrefix) { return .create }
