@@ -34,6 +34,8 @@ Uncolored markup follows the Omarchy theme; MYMAN_MARKUP_THEME=none|FILE.
 Human permissions: ~/.config/myman/agents.json (or XDG_CONFIG_HOME).
 All grants start off. CLI and MCP cannot grant access.
 myman capture ocr --id SHOT-ID --json (line text + pixel boxes)
+myman capture targets --id SHOT-ID [--query TEXT] [--granularity line|word] --json (stable region IDs)
+myman capture compare --before-id ID --after-id ID [--ignore-rects JSON] [--threshold 20] --json (library grant)
 myman windows list --json (X11, Hyprland, Sway; pass id to --window-id)
 myman clipboard read --format text|image --json; myman clipboard write --text T --json
 myman record start [--display main] [--region x,y,w,h] [--max-duration 30] --json
