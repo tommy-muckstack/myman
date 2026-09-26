@@ -96,6 +96,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Dictation history | `dictation connect` (person only) saves each Voxtype dictation; read with `library search --kind dictations` | Dictation start/stop and paste are Voxtype's (F9) | Same `dictations/` export format as the Mac |
 | Meetings | `meeting start [--title] [--no-system-audio] [--keep-audio]`, `meeting stop`, `meeting cancel`, `meeting status`; read with `library search --kind meetings` | Live notes, the meeting assistant and auto-detection are Mac-only | Same `meetings/` export format as the Mac; agents need the recording and microphone grants |
 | Recording cursor track | `record cursor --id REC-ID [--full]` (pointer, clicks, typing moments, activity spans) | Hyprland: movement only; Sway: unavailable | Saved beside each recording; keys are never identified |
+| Polished demo: smooth auto-zoom | `record polish --id REC-ID --auto-zoom [level] [--recipe JSON] [--dry-run]` | Linux only; Mac has cut-in `record export` zoom | New recording; eased zoom and pan from the cursor track or hand-written moments |
 
 Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
 

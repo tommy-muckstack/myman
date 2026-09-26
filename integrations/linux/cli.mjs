@@ -12,6 +12,7 @@ import * as dictation from './dictation.mjs';
 import * as meeting from './meeting.mjs';
 import * as recording from './recording.mjs';
 import * as cursor from './cursor.mjs';
+import * as studio from './studio.mjs';
 import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
@@ -55,6 +56,7 @@ myman timer start --seconds N [--sound-enabled false] --json; myman timer status
 myman timer pause|resume|cancel --session-id ID --json; myman timer sound --session-id ID --enabled true|false --json
 myman reminder create --message TEXT --seconds N|--at ISO-WITH-OFFSET --json; myman reminder list|cancel [--id ID] --json
 myman record cursor --id REC-ID [--full] --json (pointer path, clicks, typing moments and where the action is)
+myman record polish --id REC-ID [--auto-zoom [subtle|normal|strong|1.1-4]] [--recipe FILE|JSON] [--dry-run] --json (polished copy with smooth zoom on the action)
 myman record frames --id REC-ID [--times 0,2.5|--count 6] [--width 400] --json (temporary PNGs + contact sheet)
 myman record export --id REC-ID [--start S] [--end S] [--max-bytes N] [--edits JSON] --json (new recording; caption/step/title/zoom/redact)
 myman agent whoami|list --json; myman machine current --json (named agents: set MYMAN_AGENT_TOKEN)
@@ -111,6 +113,16 @@ export async function main(argv) {
   if (argv[0]==='record' && argv[1]==='cursor') {
     await authorize(['library']); identity.validate(await identity.authenticate(),['library']);
     const k=argv.indexOf('--id'); return cursor.read(k>=0?argv[k+1]:undefined,{full:argv.includes('--full')});
+  }
+  if (argv[0]==='record' && argv[1]==='polish') {
+    await authorize(['recording']); identity.validate(await identity.authenticate(),['recording']);
+    const val=f=>{const k=argv.indexOf(f); return k>=0?argv[k+1]:undefined;};
+    let recipe={};
+    const raw=val('--recipe');
+    if (raw!==undefined) { const { readFile }=await import('node:fs/promises'); const text=raw.trim().startsWith('{')?raw:await readFile(raw,'utf8').catch(()=>fail('INVALID_ARGUMENTS','--recipe must be JSON or a path to a JSON file.')); try { recipe=JSON.parse(text); } catch { fail('INVALID_ARGUMENTS','--recipe is not valid JSON.'); } }
+    const k=argv.indexOf('--auto-zoom');
+    if (k>=0) { const v=argv[k+1]; recipe={...recipe,zoom:{...(recipe.zoom||{}),auto:true,...(v&&!v.startsWith('--')?{level:v}:{})}}; }
+    return studio.polish({id:val('--id'),recipe,dryRun:argv.includes('--dry-run')});
   }
   if (argv[0]==='meeting') {
     const val=f=>{const k=argv.indexOf(f); return k>=0?argv[k+1]:undefined;}, has=f=>argv.includes(f);
