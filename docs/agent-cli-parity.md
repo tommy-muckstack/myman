@@ -26,8 +26,8 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Interactive screenshot picker | bare `screenshot` | No picker; bare screenshot captures desktop | Human selects region |
 | Display / region screenshot | `screenshot --mode agent` | Supported (X11, Hyprland/Omarchy, Sway; scale 1) | JSON completion; global or display-local geometry |
 | Window screenshot | `windows list`, `screenshot --window-id` | `windows list` and `screenshot --window-id` on X11, Hyprland/Omarchy and Sway (app, title, PID, workspace, frame, ready `region`) | Real ScreenCaptureKit ID; app/title supplied in discovery |
-| Arrow / box / highlight / text / pixelate / crop / image overlay | `annotate --ops-file` | All except image overlay; explicit pixel geometry | Source preserved, new ID, OCR refresh, validation-only dry run |
-| One-command capture and markup | `capture-markup` | Unsupported; capture then annotate | Saves only final rendered capture |
+| Arrow / box / highlight / text / pixelate / crop / image overlay | `annotate --ops-file` | All except image overlay; explicit pixel geometry, or `target_text`/`target_region` resolved by tesseract with the Mac rules (exact word first, then line; 6px padding; ambiguity returns candidates) | Source preserved, new ID, OCR refresh, validation-only dry run |
+| One-command capture and markup | `capture-markup` | Supported; capture + markup grants, saves only the marked-up image | Saves only final rendered capture |
 | Backdrops / custom colors / rounding | `annotate --background/--background-color/--corner-radius` | Per-operation colors only | Existing renderer; custom color uses user's existing preference |
 | Background removal | `capture remove-background` | Unsupported | No-foreground is an explicit failure |
 | OCR / regions / copy text | `capture ocr`, `capture copy --text-only` | Tesseract at save; `capture ocr` returns line text with pixel and normalized boxes; no Live Text copy | Individual OCR boxes returned; caller selects text |
@@ -74,6 +74,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | --- | --- | --- | --- |
 | OCR targets | `capture targets --query` | Supported (tesseract; line and word granularity, stable IDs) | Stable line IDs, pixel rectangles, explicit ambiguity |
 | Screenshot comparison | `capture compare --before-id --after-id` | Supported (ImageMagick + tesseract; same fields, 32px regions, one-hour side-by-side PNG) | Changed pixels and ratio, regions, added/removed OCR text |
+| Import an image | `capture import --path` | Supported; PNG, JPEG, WebP or GIF detected by content (64 MB cap), normalized to PNG | New capture item with OCR |
 | Rendered markup preview | `annotate --preview` | Supported; one-hour local preview | Temporary PNG; no library/clipboard/preference changes |
 | Theme-matched markup colors | App accent/markup colors | Supported on Omarchy (active theme colors.toml; `MYMAN_MARKUP_THEME=none|FILE`) | Explicit op colors always win |
 | Circles and numbered callouts | `annotate --ops` | Unsupported | Text/region targets or explicit geometry; existing editor renderer |
