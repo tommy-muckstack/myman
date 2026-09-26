@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Brain, folders } from '../brain/brain.mjs';
 import { atomic, command, directory, fail, imageCommand, pngSize, readSafe, rootPath, run } from './system.mjs';
 import { ocr } from './images.mjs';
+import { summary as cursorSummary } from './cursor.mjs';
 
 export async function initBrain() {
   const root = await directory(rootPath());
@@ -212,9 +213,13 @@ export async function saveRecording(rec) {
     let thumb=false;
     if (ffmpeg) { try { await run(ffmpeg,['-nostdin','-loglevel','error','-ss',String(Math.min(1,rec.duration/2)),'-i',video_path,'-frames:v','1','-vf','scale=400:-2','-y',thumbnail_path]); thumb=true; } catch {} }
     const title=`Recording ${created_at}`, duration=+rec.duration.toFixed(2), size=(await stat(video_path)).size;
+    // The cursor log is small JSON, so unlike the video it is kept in Git.
+    const cursorRelative=rec.cursor?`assets/recording-cursor/${id}.json`:null, cursor_path=cursorRelative?path.join(root,cursorRelative):null;
+    if (cursorRelative) await atomic(cursor_path, JSON.stringify(rec.cursor)+'\n');
+    const cursorLine=rec.cursor?`\n\nCursor track: ${cursorSummary(rec.cursor)}. Saved at \`${cursorRelative}\`; read it with \`myman record cursor --id rec-${id} --json\`.`:'';
     const alt_text=`Screen recording, ${duration} seconds, ${rec.width}x${rec.height} pixels, video only (no audio)`;
-    await atomic(path.join(root,brain_path),`---\nid: ${id}\nkind: recording\ncreated: ${created_at}\nrecorded: ${rec.started_at}\nduration: ${duration}\nwidth: ${rec.width}\nheight: ${rec.height}\naudio: false\n${rec.source_id?`source_id: ${rec.source_id}\n`:''}file: ${video_path}\nalt: ${yaml(alt_text)}\n---\n\n# ${title}\n\n${thumb?`![First frame: ${alt_text}](../${thumbnailRelative})\n\n`:''}${alt_text}, ${rec.source_id?`exported from ${rec.source_id}`:`captured with ${rec.backend}`}. The video file is kept locally at \`${video_path}\` and is not stored in Git.\n`);
-    catalog.exports.push({ item_id:`rec-${id}`, revision:1, path:brain_path, kind:'recordings', title, timestamp:created_at, video_path, ...(thumb?{thumbnail_path}:{}), duration, width:rec.width, height:rec.height, captured_local:rec.started_at, timezone, themes:[], tags:[], meetings:[], pinned:false, alt_text, ...(rec.source_id?{source_id:rec.source_id}:{}) });
+    await atomic(path.join(root,brain_path),`---\nid: ${id}\nkind: recording\ncreated: ${created_at}\nrecorded: ${rec.started_at}\nduration: ${duration}\nwidth: ${rec.width}\nheight: ${rec.height}\naudio: false\n${rec.source_id?`source_id: ${rec.source_id}\n`:''}file: ${video_path}\nalt: ${yaml(alt_text)}\n---\n\n# ${title}\n\n${thumb?`![First frame: ${alt_text}](../${thumbnailRelative})\n\n`:''}${alt_text}, ${rec.source_id?`exported from ${rec.source_id}`:`captured with ${rec.backend}`}. The video file is kept locally at \`${video_path}\` and is not stored in Git.${cursorLine}\n`);
+    catalog.exports.push({ item_id:`rec-${id}`, revision:1, path:brain_path, kind:'recordings', title, timestamp:created_at, video_path, ...(thumb?{thumbnail_path}:{}), duration, width:rec.width, height:rec.height, captured_local:rec.started_at, timezone, themes:[], tags:[], meetings:[], pinned:false, alt_text, ...(rec.source_id?{source_id:rec.source_id}:{}), ...(cursor_path?{cursor_path}:{}) });
     catalog.generated_at=created_at;
     await atomic(path.join(root,'catalog.json'),JSON.stringify(catalog,null,2)+'\n');
     // Videos stay on disk but out of Git history so the Brain repo never bloats.
@@ -222,7 +227,7 @@ export async function saveRecording(rec) {
     try { rules=(await readSafe(ignore,1024*1024)).toString(); } catch (error) { if (error.code!=='ENOENT') throw error; }
     const ignoreChanged=!rules.split('\n').includes('assets/recordings/');
     if (ignoreChanged) await atomic(ignore,rules+(rules&&!rules.endsWith('\n')?'\n':'')+'# MyMan: large media is kept locally, not in Git\nassets/recordings/\n');
-    const git=await gitSave(root,[brain_path,...(thumb?[thumbnailRelative]:[]),'catalog.json',...(ignoreChanged?['.gitignore']:[])]);
-    return { id:`rec-${id}`, kind:'recording', title, alt_text, path:video_path, video_path, brain_path, width:rec.width, height:rec.height, duration, created_at, timezone, backend:rec.backend, ...(rec.source_id?{source_id:rec.source_id}:{}), attachment:{path:video_path,mime_type:'video/mp4',width:rec.width,height:rec.height,duration,file_size:size,preview_path:thumb?thumbnail_path:null}, git };
+    const git=await gitSave(root,[brain_path,...(thumb?[thumbnailRelative]:[]),...(cursorRelative?[cursorRelative]:[]),'catalog.json',...(ignoreChanged?['.gitignore']:[])]);
+    return { id:`rec-${id}`, kind:'recording', title, alt_text, path:video_path, video_path, brain_path, width:rec.width, height:rec.height, duration, created_at, timezone, backend:rec.backend, ...(rec.source_id?{source_id:rec.source_id}:{}), attachment:{path:video_path,mime_type:'video/mp4',width:rec.width,height:rec.height,duration,file_size:size,preview_path:thumb?thumbnail_path:null}, ...(rec.cursor?{cursor:{path:cursor_path,pointer:rec.cursor.pointer,clicks_tracked:rec.cursor.clicks_tracked,clicks:rec.cursor.clicks.length,activity:rec.cursor.activity.length,summary:cursorSummary(rec.cursor)}}:{}), git };
   });
 }

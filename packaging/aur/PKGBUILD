@@ -20,6 +20,8 @@ optdepends=(
   'libnotify: desktop notifications for timers and myman show'
   'wf-recorder: screen recording on Wayland'
   'ffmpeg: screen recording on X11 and recording export'
+  'xdotool: cursor tracking in recordings on X11'
+  'xorg-xinput: clicks and typing moments in recording cursor tracks on X11'
   'voxtype-bin: local dictation saved to the Brain (myman dictation connect)'
   'whisper.cpp: meeting transcripts on this computer (voxtype also works)'
   'pipewire-pulse: microphone and computer audio for meetings'

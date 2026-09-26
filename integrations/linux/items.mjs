@@ -51,7 +51,7 @@ function noteBody(rest) {
 const updatedAt = (entry, fields) => entry.updated_at || fields.updated || entry.timestamp;
 function publicItem(entry, root, extra = {}) {
   const { item_id, kind, title, path: brain_path, timestamp, pinned, themes, tags, meetings, revision, ...rest } = entry;
-  const keep = ['alt_text', 'app', 'window_title', 'image_path', 'thumbnail_path', 'video_path', 'duration', 'width', 'height', 'ocr_status', 'text_found', 'source_id', 'timezone', 'done', 'due'];
+  const keep = ['alt_text', 'app', 'window_title', 'image_path', 'thumbnail_path', 'video_path', 'cursor_path', 'duration', 'width', 'height', 'ocr_status', 'text_found', 'source_id', 'timezone', 'done', 'due'];
   return { id: item_id, kind: singular[kind] || kind, title, revision: revisionOf(entry), pinned: pinned === true, hidden: false,
     created_at: timestamp, updated_at: entry.updated_at || timestamp, brain_path, path: path.join(root, brain_path),
     ...Object.fromEntries(keep.filter(k => rest[k] !== undefined).map(k => [k, rest[k]])), ...extra };
@@ -210,7 +210,7 @@ export function remove(args) {
     // media files inside assets/, never a folder named by the catalog.
     const inside = file => typeof file === 'string' && path.isAbsolute(file) && path.normalize(file) === file && file.startsWith(root + path.sep + 'assets' + path.sep);
     if (!itemFile(entry.path)) fail('UNSAFE_PATH', 'This catalog entry does not point at a library Markdown file, so nothing was deleted.');
-    const owned = [entry.image_path, entry.thumbnail_path, entry.video_path].filter(inside);
+    const owned = [entry.image_path, entry.thumbnail_path, entry.video_path, entry.cursor_path].filter(inside);
     const files = [entry.path, ...owned.map(f => path.relative(root, f))];
     for (const f of files) await rm(path.join(root, f), { force: true });
     const noteId = entry.item_id.replace(/^note-/, '');

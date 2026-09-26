@@ -95,6 +95,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Person shows agents a region | `show --note` (person only), Omarchy `SUPER+SHIFT+PRINT` via `omarchy install` | Unsupported | Saved as a `shown` library capture with the note; agents cannot trigger it |
 | Dictation history | `dictation connect` (person only) saves each Voxtype dictation; read with `library search --kind dictations` | Dictation start/stop and paste are Voxtype's (F9) | Same `dictations/` export format as the Mac |
 | Meetings | `meeting start [--title] [--no-system-audio] [--keep-audio]`, `meeting stop`, `meeting cancel`, `meeting status`; read with `library search --kind meetings` | Live notes, the meeting assistant and auto-detection are Mac-only | Same `meetings/` export format as the Mac; agents need the recording and microphone grants |
+| Recording cursor track | `record cursor --id REC-ID [--full]` (pointer, clicks, typing moments, activity spans) | Hyprland: movement only; Sway: unavailable | Saved beside each recording; keys are never identified |
 
 Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
 

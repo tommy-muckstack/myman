@@ -1,8 +1,10 @@
 import { readdir, rm, stat } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { captureRect, screens } from './images.mjs';
+import * as cursor from './cursor.mjs';
 import { saveRecording } from './library.mjs';
 import { processIdentity } from './process-identity.mjs';
 import { atomic, command, dependencies, directory, fail, readSafe, run, statePath, unsupported } from './system.mjs';
@@ -42,7 +44,7 @@ const elapsed = session => {
   return session.recorded + (session.state === 'recording' && session.run_started_at ? Math.max(0, (until - Date.parse(session.run_started_at)) / 1000) : 0);
 };
 function publicSession(session, live) {
-  const { pid, process_identity, file, segments, run_started_at, recorded, ...rest } = session;
+  const { pid, process_identity, file, segments, run_started_at, recorded, tracker, ...rest } = session;
   const state = session.state === 'recording' && !live ? 'finished' : session.state;
   return { ...rest, state, elapsed: +elapsed(session).toFixed(2), remaining: ['recording', 'paused'].includes(state) ? +Math.max(0, session.max_duration - elapsed(session)).toFixed(2) : 0 };
 }
@@ -100,10 +102,38 @@ async function launch(session) {
     Object.assign(session, { state: 'paused', file: null, run_started_at: null }); await save(session);
     fail('BACKEND_FAILED', 'The recorder could not restart; the recording is still paused and earlier footage is kept.');
   }
+  await startTracker(session);
 }
+// Cursor tracking runs beside the recorder (MYMAN_CURSOR_TRACK=0 turns it off).
+const cursorLog = async session => path.join(await sessionsDir(), `${session.session_id.slice(12)}.cursor.jsonl`);
+async function startTracker(session) {
+  if (process.env.MYMAN_CURSOR_TRACK === '0') return;
+  const child = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cli.mjs'), 'record', 'track', session.session_id], { detached: true, stdio: 'ignore', env: { ...process.env, MYMAN_AGENT_TOKEN: '' } });
+  const spawned = await new Promise(resolve => { child.once('spawn', () => resolve(true)); child.once('error', () => resolve(false)); });
+  if (!spawned) return;
+  child.unref();
+  session.tracker = { pid: child.pid, process_identity: await processIdentity(child.pid) };
+  await save(session);
+}
+async function stopTracker(session) {
+  const t = session.tracker;
+  if (!t) return;
+  const up = async () => { const now = await processIdentity(t.pid); return now !== null && JSON.stringify(now) === JSON.stringify(t.process_identity); };
+  if (await up()) { try { process.kill(t.pid, 'SIGTERM'); } catch {} for (let i = 0; i < 30 && await up(); i++) await new Promise(r => setTimeout(r, 100)); if (await up()) try { process.kill(t.pid, 'SIGKILL'); } catch {} }
+  session.tracker = null;
+}
+// The detached tracker (spawned above) for the live segment of one session.
+export async function trackSession(session_id) {
+  const session = await load(session_id);
+  if (session.state !== 'recording') return { ok: true, tracking: false };
+  await cursor.track(session, await cursorLog(session), async () => { try { const now = await load(session_id); return now.state === 'recording' && now.run_started_at === session.run_started_at && await recorderAlive(now); } catch { return false; } });
+  return { ok: true };
+}
+export async function cursorTrack(session, duration) { return cursor.build(await cursorLog(session), { width: session.width, height: session.height, duration }); }
 // Finish the live segment and fold its duration into `recorded`.
 async function closeSegment(session) {
   if (!session.file) return;
+  await stopTracker(session);
   const forced = await halt(session);
   const info = await stat(session.file).catch(() => null);
   if (forced) session.forced = true;
@@ -173,17 +203,21 @@ export async function stop({ session_id }) {
   if (session.segments.length > 1 && !(await dependencies()).ffmpeg) fail('DEPENDENCY_MISSING', 'Install ffmpeg to join paused recording segments.');
   const file = await join(session);
   const duration = await probe(file) ?? elapsed(session);
-  const saved = await saveRecording({ file, width: session.width, height: session.height, duration, started_at: session.started_at, backend: session.backend });
+  const track = process.env.MYMAN_CURSOR_TRACK === '0' ? null : await cursorTrack(session, duration);
+  const saved = await saveRecording({ file, width: session.width, height: session.height, duration, started_at: session.started_at, backend: session.backend, cursor: track });
   const result = session.forced ? { ...saved, warnings: ['The recorder was force-stopped after 15 seconds; the saved video probed as readable but may end early.'] } : saved;
   for (const f of new Set([file, ...session.segments])) await rm(f, { force: true });
+  await cursor.cleanup(await cursorLog(session));
   Object.assign(session, { state: 'saved', result, segments: [] }); await save(session);
   return result;
 }
 export async function cancel({ session_id }) {
   const session = await load(session_id);
   if (!['recording', 'paused'].includes(session.state)) fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
+  await stopTracker(session);
   if (await recorderAlive(session)) killGroup(session.pid);
   for (const f of [session.file, ...(session.segments ?? [])]) if (f) await rm(f, { force: true });
+  await cursor.cleanup(await cursorLog(session));
   session.segments = [];
   Object.assign(session, { state: 'canceled', ended_at: new Date().toISOString() }); await save(session);
   return publicSession(session, false);
