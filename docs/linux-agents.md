@@ -246,4 +246,32 @@ myman reminder list --json; myman reminder cancel --id ID --json
 
 When a timer finishes or a reminder is due, a desktop notice appears (it stays until dismissed) and a sound plays unless `sound_enabled` is false. There is no on-screen countdown widget; `timer status` and the result's `remaining_seconds` report time left. `at` must include a time-zone offset or `Z`.
 
-Each deadline is armed as a transient systemd user timer when a user manager is running, so it fires even if no MyMan process is open. Otherwise a small detached process waits for it (`scheduler: "process"`, `survives_logout: false`). Either way, anything that came due while nothing was waiting (after a reboot, say) is delivered the next time any timer or reminder command runs. Pausing or canceling bumps a generation number, so an old schedule never fires. Only the agent that created a timer or reminder can change it; agents are told apart by `MYMAN_AGENT_ID` (default `agent`). State lives in `${XDG_STATE_HOME:-~/.local/state}/myman/quick-tools.json`, mode 600.
+Each deadline is armed as a transient systemd user timer when a user manager is running, so it fires even if no MyMan process is open. Otherwise a small detached process waits for it (`scheduler: "process"`, `survives_logout: false`). Either way, anything that came due while nothing was waiting (after a reboot, say) is delivered the next time any timer or reminder command runs. Pausing or canceling bumps a generation number, so an old schedule never fires. Only the agent that created a timer or reminder can change it; agents are told apart by their named credential, or by `MYMAN_AGENT_ID` (default `agent`) when they have none. State lives in `${XDG_STATE_HOME:-~/.local/state}/myman/quick-tools.json`, mode 600.
+
+## Several agents on one computer
+
+A person gives each agent its own credential. This is never an agent action: `myman agents` refuses to change anything unless it runs at an interactive terminal without `MYMAN_AGENT_TOKEN`, and it asks the person to type a confirmation.
+
+```sh
+myman agents add "Research bot" --scopes capture,markup,library   # prints the token once
+myman agents list                                                 # names, scopes, never tokens
+myman agents revoke ID
+myman agents require off   # let agents without a credential work again
+```
+
+Scopes are `capture`, `markup`, `recording` and `library`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
+
+The agent puts its token in `MYMAN_AGENT_TOKEN` in its host environment (never in a prompt). Then:
+
+```sh
+myman agent whoami --json          # id, name, scopes, machine
+myman agent list --json            # other agents' IDs and names
+myman bundle create --title "Login bug" --item-ids SHOT-1,SHOT-2 --members OTHER-ID --json
+myman handoff create --bundle-id B --recipient OTHER-ID --instruction "Check these for the error" --json
+myman handoff update --id H --expected-revision 1 --state accepted --json   # recipient; then completed/failed
+myman collaboration events --after-cursor 0 --json
+myman lease acquire --resource clipboard --seconds 60 --json   # pass --lease-id on the write, then release
+myman session transfer --session-id S --recipient OTHER-ID --json
+```
+
+Bundles hold item references and revisions, not copies; reading one marks items that changed or disappeared. A handoff only records an offer. It never launches or messages the other agent, and its instruction is data, not a command. A live lease on the clipboard or an item blocks every other agent's write to it. A recording belongs to the agent that started it until that agent transfers it to another with the `recording` scope. `--machine ID` (or `MYMAN_MACHINE_ID`) makes a command fail with `WRONG_MACHINE` on any other computer. Coordination state is `${XDG_STATE_HOME:-~/.local/state}/myman/collaboration.json`, capped at 8 MB with the Mac's limits (100 bundles, 200 handoffs, 1000 events).
