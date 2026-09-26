@@ -58,9 +58,21 @@ export async function status() {
   return { ok: true, active: active ? view(active) : null, recent: all.filter(s => s !== active).slice(0, 5).map(view) };
 }
 
+// A terminal alone does not prove a person is there: an agent can run inside
+// a pseudo-terminal. Recording the microphone without the grants therefore
+// needs the person to type a confirmation, like myman agents add.
+async function confirmPerson() {
+  const readline = await import('node:readline/promises');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = await rl.question('Record your microphone (and computer audio) now? Agents cannot start this without the microphone grant. Type record to start: ');
+    if (answer.trim().toLowerCase() !== 'record') fail('CANCELLED', 'Nothing was recorded.');
+  } finally { rl.close(); }
+}
 export async function start({ title, systemAudio = true, keepAudio = false, maxMinutes = MAX_MINUTES } = {}) {
   const who = await access();
   if ((await status()).active) fail('MEETING_ACTIVE', 'A meeting is already recording. Stop it first with myman meeting stop.');
+  if (who === 'person') await confirmPerson();
   if (!(await command('ffmpeg'))) fail('DEPENDENCY_MISSING', 'Meetings need ffmpeg (Arch/Omarchy: sudo pacman -S ffmpeg).');
   const minutes = Number(maxMinutes);
   if (!Number.isFinite(minutes) || minutes <= 0 || minutes > MAX_MINUTES) fail('INVALID_ARGUMENTS', `--max-minutes must be between 1 and ${MAX_MINUTES}.`);
