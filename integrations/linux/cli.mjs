@@ -10,7 +10,14 @@ myman doctor --json
 myman screenshot [--display main|INDEX|id:INDEX] [--region x,y,w,h] [--window-id ID] --json
 myman annotate --id SHOT-ID --ops-file ops.json [--dry-run|--preview] --json
 myman note create --body TEXT|--body-file FILE|- [--title TITLE] --json
-myman search --query TEXT [--kind screenshots|notes] [--root PATH] --json
+myman library search --query TEXT [--kind notes|screenshots|recordings] [--after DATE] [--before DATE] [--pinned-only] [--lexical-only] --json
+myman library read --id ID --json (body, revision, updated_at, alt text)
+myman search --query TEXT [--kind screenshots|notes] [--root PATH] --json (plain Brain keywords, any Brain folder)
+myman note update --id NOTE-ID --body TEXT|--body-file FILE --expected-updated-at ISO --json
+myman note append --id NOTE-ID --body TEXT [--expected-updated-at ISO] --json
+myman note attach --id NOTE-ID --source-id SHOT-ID|--path /abs/image.png --alt TEXT --json
+myman library rename|pin|unpin|hide|unhide --id ID [--title T] [--expected-revision N] --json
+myman library delete --id ID --confirm --json (library grant; removes owned media)
 myman actions [ACTION] [--offline] --json
 myman screens list --json; myman capture image --id SHOT-ID --json
 myman job UUID --json; myman jobs --json
@@ -34,9 +41,6 @@ export async function main(argv) {
   if (argv.includes('--mode=interactive') || argv.some((v,i)=>v==='--mode'&&argv[i+1]==='interactive')) unsupported('The Linux companion has no interactive UI.');
   if (argv[0]==='screenshot' && !argv.some(v=>v==='--mode'||v.startsWith('--mode='))) argv=[...argv,'--mode','agent'];
   if (['meeting','dictation','live-text','livetext','cancel-meeting'].includes(argv[0])) unsupported(`${argv[0]} is not supported on Linux.`);
-  // library search is a documented keyword query on Linux, using the unchanged
-  // Brain reader. Never silently advertise the Mac's semantic search.
-  if(argv[0]==='library'&&argv[1]==='search'&&!argv.includes('--offline')) argv=[...argv,'--offline'];
   const task=await plan(argv);
   switch(task.type) {
     case 'help': return {help};
