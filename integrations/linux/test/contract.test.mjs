@@ -169,7 +169,8 @@ test('first Linux write preserves legacy documents and catalog entries',async t=
 test('maximum-size UTF-8 note input remains readable from its durable receipt',async t=>{
  const f=await fixture(t);await f.grants({enabled:true,library:true});
  const body='界'.repeat(349500), file=path.join(f.base,'large-note.md');await writeFile(file,body);
- const note=await ok(entries[1],['note','create','--body-file',file],f.env);assert.equal(note.body,body);
+ const request=randomUUID(),args=['note','create','--body-file',file,'--request-id',request];
+ const [note,retry]=await Promise.all([ok(entries[1],args,f.env),ok(entries[1],args,f.env)]);assert.equal(note.id,retry.id);assert.equal(note.body,body);
  const receipt=await ok(entries[1],['job',note.job_id],f.env);assert.equal(receipt.job.state,'succeeded');assert.equal(receipt.job.result.id,note.id);
  const bad=await cli(entries[1],['note','create','--body','relative root'],{...f.env,MYMAN_BRAIN_ROOT:'relative'});assert.equal(bad.data.error.code,'INVALID_ROOT');
 });

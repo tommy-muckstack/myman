@@ -64,12 +64,25 @@ export async function dispatch(name,args) {
 }
 const receiptPath=id=>{ if(!uuid.test(id || ''))fail('INVALID_ARGUMENTS','Job/request IDs must be UUIDs.');return path.join(statePath(),'jobs',`${id.toLowerCase()}.json`); };
 const alive=pid=>{ try { process.kill(pid,0); return true; } catch(error) { return error.code==='EPERM'; } };
+async function readReceipt(file) {
+  // Another process can see an exclusively claimed file before its initial
+  // write finishes. Wait for that publication; never claim or replay it again.
+  for (let attempt=0;attempt<20;attempt++) {
+    try { return JSON.parse((await readSafe(file,2*1024*1024,true)).toString()); }
+    catch(error) {
+      if (!(error instanceof SyntaxError) && error.code!=='EXPORT_CHANGED') throw error;
+      if (attempt===19) fail('INVALID_RECEIPT','The claimed receipt is incomplete. Inspect it before starting new work; this request cannot replay.');
+      await new Promise(resolve=>setTimeout(resolve,25));
+    }
+  }
+}
+
 export async function job(id) {
   const file=receiptPath(id);
-  let receipt; try { receipt=JSON.parse((await readSafe(file,2*1024*1024,true)).toString()); }
+  let receipt; try { receipt=await readReceipt(file); }
   catch(error) { if(error.code==='ENOENT')fail('UNKNOWN_JOB','No receipt exists for that request ID.');throw error; }
   if (receipt.state==='running' && ((receipt.pid && !alive(receipt.pid)) || (!receipt.pid && Date.now()-Date.parse(receipt.created_at)>30_000))) {
-    receipt=JSON.parse((await readSafe(file,2*1024*1024,true)).toString());
+    receipt=await readReceipt(file);
     if (receipt.state !== 'running') { const {arguments:args,fingerprint,pid,...publicJob}=receipt; return {ok:true,job:publicJob,launch_id:receipt.launch_id,recovered:true}; }
     receipt={...receipt,state:'interrupted',error:{code:'JOB_INTERRUPTED',message:'Worker stopped. Inspect the Brain and receipt before starting new work; this request will never replay.'}};
     await atomic(file,JSON.stringify(receipt));
@@ -101,7 +114,7 @@ export async function invoke(name,args={},control={}) {
   try { handle=await open(file,'wx',0o600); }
   catch(error) {
     if(error.code!=='EEXIST')throw error;
-    const previous=JSON.parse((await readSafe(file,2*1024*1024,true)).toString());
+    const previous=await readReceipt(file);
     if(previous.fingerprint!==fingerprint)fail('ID_CONFLICT','This request ID belongs to different arguments.');
   }
   if(handle) {
@@ -115,7 +128,7 @@ export async function invoke(name,args={},control={}) {
   do { reply=await job(id); if(reply.job.state!=='running'||control.wait===false||Date.now()>=deadline)return reply;await new Promise(r=>setTimeout(r,100)); } while(true);
 }
 export async function work(id) {
-  const file=receiptPath(id), receipt=JSON.parse((await readSafe(file,2*1024*1024,true)).toString());
+  const file=receiptPath(id), receipt=await readReceipt(file);
   if(receipt.state!=='running'||receipt.pid)return;
   // Only the parent that exclusively created the receipt starts a worker.
   receipt.pid=process.pid;
