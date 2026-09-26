@@ -70,6 +70,10 @@ final class AnnotationColorTests: XCTestCase {
         model.setAnnotationColor(.systemBlue, selected: line)
         model.setAnnotationColor(.systemGreen, selected: counter)
         model.add(.counter(id: UUID(), center: CGPoint(x: 250, y: 250), number: 2))
+        model.setTextSize(18, selected: nil)
+        model.add(.text(id: UUID(), string: "Small annotation", origin: CGPoint(x: 330, y: 60)))
+        model.setTextSize(32, selected: nil)
+        model.add(.text(id: UUID(), string: "Larger text", origin: CGPoint(x: 330, y: 130)))
         let host = NSHostingView(rootView: EditorView(model: model).frame(width: 1000, height: 650).preferredColorScheme(.dark))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 650), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host

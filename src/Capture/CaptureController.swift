@@ -334,6 +334,7 @@ private struct ThumbnailView: View {
             onHoverChanged(h || contextMenuOpen)
         }
         .onTapGesture { onEdit() }
+        .clickable()
         .accessibilityAction(named: Text("Edit screenshot"), onEdit)
         .draggable(fileURL)
         .contextMenu {
