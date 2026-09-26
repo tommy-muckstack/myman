@@ -36,10 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: npm
           cache-dependency-path: |
             integrations/brain/package-lock.json
@@ -56,11 +56,14 @@ jobs:
           npm run check-bundle --prefix integrations/brain
       - run: npm run check-bundle --prefix integrations/linux
       - name: Run CLI and MCP JSON contract against X11
+        env:
+          MYMAN_TEST_SYSTEM_POLICY: '1'
         run: xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' npm test --prefix integrations/linux
       - run: npm run package --prefix integrations/linux
       - name: Test extracted release installer without node_modules
         run: |
           mkdir -p "$RUNNER_TEMP/myman-extracted"
+          (cd .build/linux && sha256sum -c myman-linux-x64.tar.gz.sha256)
           tar -xzf .build/linux/myman-linux-x64.tar.gz -C "$RUNNER_TEMP/myman-extracted"
           export MYMAN_INSTALL_PREFIX="$RUNNER_TEMP/myman-installed"
           export MYMAN_BRAIN_ROOT="$RUNNER_TEMP/MyManBrain"
@@ -70,10 +73,12 @@ jobs:
           bash "$RUNNER_TEMP/myman-extracted/myman-linux-x64/scripts/install-linux.sh"
           "$MYMAN_INSTALL_PREFIX/bin/myman" doctor --json
           "$MYMAN_INSTALL_PREFIX/bin/myman" actions --json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: myman-linux-x64
-          path: .build/linux/myman-linux-x64.tar.gz
+          path: |
+            .build/linux/myman-linux-x64.tar.gz
+            .build/linux/myman-linux-x64.tar.gz.sha256
           if-no-files-found: error
 
   release:
@@ -83,7 +88,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: myman-linux-x64
       - name: Attach Linux companion to the published release
@@ -91,4 +96,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" myman-linux-x64.tar.gz --clobber
+        run: gh release upload "$RELEASE_TAG" myman-linux-x64.tar.gz myman-linux-x64.tar.gz.sha256 --clobber

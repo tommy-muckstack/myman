@@ -283,9 +283,10 @@ Sharing is optional and explicit: selected content can be published through a co
 
 A local Node 22+ companion for Ubuntu/X11: screenshots, annotations, notes, Brain search, and permission-controlled MCP. The Swift Mac app is unchanged.
 
-Download `myman-linux-x64.tar.gz` from a release that includes it, then:
+Download `myman-linux-x64.tar.gz` and its `.sha256` file from the same release, then:
 
 ```sh
+sha256sum -c myman-linux-x64.tar.gz.sha256
 tar -xzf myman-linux-x64.tar.gz
 bash myman-linux-x64/scripts/install-linux.sh
 export PATH="$HOME/.local/bin:$PATH"

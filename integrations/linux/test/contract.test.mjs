@@ -153,7 +153,9 @@ test('Linux installer is idempotent, preserves grants, and installed bundles run
  const cliPath=path.join(env.MYMAN_INSTALL_PREFIX,'share/myman/cli.mjs');
  const caps=await ok(cliPath,['actions'],env);assert.equal(caps.permissions.library,true);assert.equal(caps.permissions.capture,false);
  const note=await ok(cliPath,['note','create','--body','Installed package works'],env);assert.match(note.id,/^note-/);
- await ok(path.join(f.root,'tools/cli.mjs'),['search','--query','Installed'],env);
+ await ok(path.join(env.MYMAN_INSTALL_PREFIX,'share/myman/brain-cli.mjs'),['search','--query','Installed'],env);
+ await assert.rejects(stat(path.join(f.root,'tools')), {code:'ENOENT'});
+ await assert.rejects(exec('bash',[path.join(repo,'scripts/install-linux.sh')],{env:{...env,MYMAN_INSTALL_PREFIX:path.join(f.root,'unsafe-install')}}),/outside MyManBrain/);
 });
 
 test('first Linux write preserves legacy documents and catalog entries',async t=>{

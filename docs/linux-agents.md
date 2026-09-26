@@ -4,16 +4,17 @@ MyMan's Linux companion runs locally on Ubuntu with Node.js 22+ and an X11 deskt
 
 ## Install
 
-Download `myman-linux-x64.tar.gz` from a release that includes the Linux companion, then:
+Download `myman-linux-x64.tar.gz` and `myman-linux-x64.tar.gz.sha256` from the same release, then:
 
 ```sh
+sha256sum -c myman-linux-x64.tar.gz.sha256
 tar -xzf myman-linux-x64.tar.gz
 bash myman-linux-x64/scripts/install-linux.sh
 export PATH="$HOME/.local/bin:$PATH"
 myman doctor --json
 ```
 
-The idempotent installer needs no sudo or npm install. It preserves existing owner grants and Brain documents, installs self-contained Node bundles into `~/.local/share/myman`, adds `~/.local/bin/myman`, and installs compatible tools under `~/MyManBrain/tools`. Node 22+ must already be available. `MYMAN_INSTALL_PREFIX` changes the default `~/.local` installation prefix. The tarball contains architecture-independent JavaScript; its release target is Linux x64.
+The idempotent installer needs no sudo or npm install. It preserves existing owner grants and Brain documents, installs self-contained Node bundles into `~/.local/share/myman`, adds `~/.local/bin/myman`, and keeps executable tools out of `~/MyManBrain`. Node 22+ must already be available. For an older preview installation, change any MCP commands that point into `MyManBrain/tools` to the installed share directory; the new installer never executes or refreshes those legacy copies. `MYMAN_INSTALL_PREFIX` changes the default `~/.local` installation prefix. The tarball contains architecture-independent JavaScript; its release target is Linux x64.
 
 Install whichever local dependencies you need (the installer only prints these commands):
 
@@ -51,6 +52,19 @@ The installer creates `${XDG_CONFIG_HOME:-~/.config}/myman/agents.json` with all
 
 The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. Recording remains unsupported even if its grant is set. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
 
+### Optional administrator ceiling
+
+An administrator can create **`/etc/myman/agents.json`** with the same version-1 JSON schema. The path is fixed: no environment variable, CLI flag or MCP argument can redirect it. When present, each effective grant (including `enabled`) must be true in **both** the system and user files. Omitted system grants mean false. No system file preserves the user-only model; a malformed, unreadable, linked, non-root-owned or group/world-writable system policy fails closed. `doctor` reports whether the system policy is present and displays the effective grants.
+
+For example, after writing the desired ceiling to `system-agents.json`, the administrator can run:
+
+```sh
+sudo install -d -o root -g root -m 0755 /etc/myman
+sudo install -o root -g root -m 0644 system-agents.json /etc/myman/agents.json
+```
+
+The installer does not run these commands, create the system policy, or enable any grants. The file and its parent directories must be root-owned and not writable by group or others. This prevents an unprivileged agent from increasing grants **through the trusted companion's configuration**. It does not prevent a same-user shell from replacing user-owned executables, editing job receipts, changing its environment, or bypassing MyMan to access X11 directly. Keep runtime code outside Brain and restrict agent tools/accounts if you need an OS-enforced boundary; agents with sudo are outside this protection.
+
 ## CLI contract
 
 The companion reuses the parser, JSON schemas, Brain reader, job unwrapping and exit-code rules from [agent-cli.md](agent-cli.md). Each JSON command writes exactly one object to stdout. Success exits 0; disabled grants 4, invalid arguments 5, unsupported/setup failures 6, timeout 7. Unsupported actions return `{"ok":false,"error":{"code":"unsupported_on_platform","message":"…"}}`.
@@ -73,7 +87,7 @@ Screenshot results include the same ID, PNG/Brain paths, dimensions, scale, time
 
 `search` and `library search` use Brain keywords, not semantic search. All existing read-only export queries (`collect`, `recent`, `read`, `image`, and kind aliases) are available. For MCP search, use `myman-brain`; the Mac's `myman_app_capture_search` action is unsupported. `--root` changes retrieval only; set `MYMAN_BRAIN_ROOT` in the process environment to choose the Linux writer's Brain. Mutations do not alter permissions or change that environment variable.
 
-Use `--request-id UUID` for writes. The receipt is claimed before starting a detached local worker; identical retries return the original result, and different arguments with that ID return `ID_CONFLICT`. `--no-wait` returns a pending `job_id`; `job UUID` polls it, and `jobs` lists the latest 100 receipts. A waiting command that times out does not cancel or replay the worker. Receipts are stored privately in `${XDG_STATE_HOME:-~/.local/state}/myman/jobs`; they remain until the owner removes them. Removing receipts also removes deduplication history. A stopped worker becomes `interrupted`; inspect saved artifacts before issuing a new request.
+Use `--request-id UUID` for writes. The receipt is claimed before starting a detached local worker; identical retries return the original result, and different arguments with that ID return `ID_CONFLICT`. `--no-wait` returns a pending `job_id`; `job UUID` polls it, and `jobs` lists the latest 100 receipts. A waiting command that times out does not cancel or replay the worker. Receipts are stored privately in `${XDG_STATE_HOME:-~/.local/state}/myman/jobs`; they remain until the owner removes them. Removing receipts also removes deduplication history. Worker receipts bind the PID to Linux `/proc/<pid>/stat` field 22 and the boot ID; a reused PID, zombie, previous boot or legacy PID-only receipt cannot keep a job alive. A stopped worker becomes `interrupted`; inspect saved artifacts before issuing a new request.
 
 Brain writes are serialized with `.myman-linux-write.lock`. An interrupted writer can leave this lock behind. Inspect `owner.json` and verify its process is no longer running before manually removing that lock. The companion does not discard locks or replay interrupted work automatically.
 
@@ -85,10 +99,10 @@ Existing retrieval runs unchanged:
 
 ```sh
 node integrations/brain/cli.mjs search '{"query":"review"}'
-node "$HOME/MyManBrain/tools/server.mjs"
+node "$HOME/.local/share/myman/server.mjs"
 ```
 
-Start the Linux app server with `node ~/.local/share/myman/app-server.mjs` (or `~/MyManBrain/tools/app-server.mjs`). It exposes **the same MCP tool names** as the Mac server, including `myman_app_capabilities` and `myman_app_job`; capability discovery marks each action's `supported` status. Unsupported calls are MCP tool errors with the structured platform error. Both servers use local stdio, with no network listener. Captured text/images reach the requesting agent only when requested.
+Start the Linux app server with `node ~/.local/share/myman/app-server.mjs`. It exposes **the same MCP tool names** as the Mac server, including `myman_app_capabilities` and `myman_app_job`; capability discovery marks each action's `supported` status. Unsupported calls are MCP tool errors with the structured platform error. Both installed servers run from `~/.local/share/myman` (or the selected install prefix), never from the agent-writable Brain data tree. The marketplace package keeps its own code in its plugin installation, outside Brain. Both servers use local stdio, with no network listener. Captured text/images reach the requesting agent only when requested.
 
 The root marketplace `mcp.json` dispatches `myman-app` by OS: the unchanged Mac bundle on macOS, the Linux bundle on Linux. `myman-brain` uses the exact same existing bundle on either platform. The separate GrokBot skill-only package remains Mac-specific; it is not changed by this Linux release.
 
@@ -104,4 +118,4 @@ xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' npm test --prefix integrati
 npm run package --prefix integrations/linux
 ```
 
-The `Linux agents` workflow runs the existing Brain suite, verifies both committed bundles, runs the source/bundled CLI and MCP contract under Xvfb, and tests an extracted tarball without npm dependencies. Published releases build and attach `myman-linux-x64.tar.gz` only after those checks pass. Mac hosts can run the portable contract tests, but Linux capture/OCR/text/installer tests require the Ubuntu job and are explicitly skipped elsewhere.
+The `Linux agents` workflow runs the existing Brain suite, verifies both committed bundles, runs the source/bundled CLI and MCP contract under Xvfb, tests the optional root-owned policy on a disposable Ubuntu runner, and tests an extracted tarball without npm dependencies. Published releases build and attach `myman-linux-x64.tar.gz` and its SHA-256 file only after those checks pass. Release actions are pinned to immutable commit SHAs, Node to 22.23.2, and npm installs use committed lockfiles. Ubuntu packages remain distro-managed runtime/test dependencies. The checksum detects corrupt or mismatched downloads; it is not a signature against an attacker who can replace both release assets. Mac hosts can run the portable contract tests, but Linux capture/OCR/text/installer tests require the Ubuntu job and are explicitly skipped elsewhere.

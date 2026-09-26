@@ -6,6 +6,8 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BrainError } from '../brain/brain.mjs';
+import { capGrants, defaultGrants, parseGrants, systemGrants } from './policy.mjs';
+export { defaultGrants } from './policy.mjs';
 
 export const fail = (code, message) => { throw new BrainError(code, message); };
 export const unsupported = message => fail('unsupported_on_platform', message);
@@ -16,11 +18,10 @@ export const rootPath = () => {
 };
 export const configPath = () => path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), '.config'), 'myman', 'agents.json');
 export const statePath = () => path.join(process.env.XDG_STATE_HOME || path.join(homedir(), '.local/state'), 'myman');
-export const defaultGrants = { enabled: false, capture: false, markup: false, recording: false, library: false };
 export async function command(name) {
   for (const dir of (process.env.PATH || '').split(path.delimiter).filter(p => path.isAbsolute(p))) {
     const file = path.join(dir, name);
-    try { await access(file, constants.X_OK); if ((await lstat(file)).isFile() || (await lstat(file)).isSymbolicLink()) return file; } catch {}
+    try { await access(file, constants.X_OK); const info=await lstat(file);if(info.isFile()||info.isSymbolicLink())return file; } catch {}
   }
   return null;
 }
@@ -64,22 +65,22 @@ export async function atomic(file, value) {
   try { await handle.writeFile(value); await handle.sync(); } finally { await handle.close(); }
   try { await rename(temp, file); } finally { await unlink(temp).catch(() => {}); }
 }
-export async function grants() {
+async function userGrants() {
   try {
     await directory(path.dirname(configPath()), false, true);
-    const data = JSON.parse((await readSafe(configPath(), 16_384, true)).toString());
-    if (!data || data.version !== 1 || !data.grants || Object.keys(data.grants).some(k => !Object.hasOwn(defaultGrants, k)) || Object.values(data.grants).some(v => typeof v !== 'boolean')) fail('INVALID_CONFIG', 'Expected version 1 and boolean grants in agents.json.');
-    return { ...defaultGrants, ...data.grants };
+    return parseGrants((await readSafe(configPath(), 16_384, true)).toString());
   } catch (error) {
     if (error.code === 'ENOENT') return { ...defaultGrants };
-    if (error instanceof SyntaxError) fail('INVALID_CONFIG', 'agents.json must be valid JSON.');
     throw error;
   }
 }
+export async function grants() {
+  return capGrants(await userGrants(), await systemGrants());
+}
 export async function authorize(permissions) {
   const settings = await grants();
-  if (!settings.enabled) fail('AGENT_DISABLED', `Local commands are disabled. The owner can edit ${configPath()}.`);
-  for (const permission of permissions) if (!settings[permission]) fail('AGENT_DISABLED', `The owner has not granted ${permission} access in ${configPath()}.`);
+  if (!settings.enabled) fail('AGENT_DISABLED', `Local commands are disabled by the user grants or system policy. User file: ${configPath()}.`);
+  for (const permission of permissions) if (!settings[permission]) fail('AGENT_DISABLED', `The effective policy does not grant ${permission} access. Check ${configPath()} and /etc/myman/agents.json.`);
 }
 export async function dependencies() {
   const names = ['magick', 'convert', 'scrot', 'import', 'ffmpeg', 'grim', 'xdpyinfo', 'xrandr', 'tesseract', 'git'];

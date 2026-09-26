@@ -25,7 +25,8 @@ async function copy(from,to) {
   await copyFile(from,tmp);await chmod(tmp,0o600);await rename(tmp,to);
 }
 const install=path.join(prefix,'share/myman');
-for(const dir of [install,path.join(prefix,'bin'),brain,path.join(brain,'tools')])await safeDirectory(dir);
+if(install===brain||install.startsWith(brain+path.sep))throw new Error('The executable installation must be outside MyManBrain.');
+for(const dir of [install,path.join(prefix,'bin'),brain])await safeDirectory(dir);
 for(const dir of [config,state])await safeDirectory(dir,true);
 const configFile=path.join(config,'agents.json');
 try {
@@ -34,10 +35,7 @@ try {
 } catch(error){if(error.code!=='EEXIST')throw error;const info=await lstat(configFile);if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.uid!==process.getuid()||(info.mode&0o077))throw new Error(`Unsafe config: ${configFile}`);}
 for(const name of ['cli.mjs','app-server.mjs','app-server.mjs.LEGAL.txt','worker.mjs','LICENSES.txt']) {
  await copy(path.join(source,'integrations/linux/bundle',name),path.join(install,name));
- await copy(path.join(source,'integrations/linux/bundle',name),path.join(brain,'tools',name));
 }
-await copy(path.join(source,'src/Resources/BrainCompanion/server.mjs'),path.join(brain,'tools/server.mjs'));
-await copy(path.join(source,'src/Resources/BrainCompanion/LICENSES.txt'),path.join(brain,'tools/BRAIN-LICENSES.txt'));
 await copy(path.join(source,'src/Resources/BrainCompanion/cli.mjs'),path.join(install,'brain-cli.mjs'));
 await copy(path.join(source,'src/Resources/BrainCompanion/server.mjs'),path.join(install,'server.mjs'));
 await copy(path.join(source,'src/Resources/BrainCompanion/LICENSES.txt'),path.join(install,'BRAIN-LICENSES.txt'));

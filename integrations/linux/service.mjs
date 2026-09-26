@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -9,6 +9,8 @@ import { Brain } from '../brain/brain.mjs';
 import { execute } from '../brain/tools.mjs';
 import { annotate, capture, ocr, screens } from './images.mjs';
 import { captureEntry, saveCapture, saveNote } from './library.mjs';
+import { processIdentity, workerAlive } from './process-identity.mjs';
+import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.13.0';
@@ -25,7 +27,7 @@ export async function capabilities(name, offline=false) {
 export async function doctor() {
   const deps=await dependencies();
   let desktop; try { desktop=await screens(); } catch(error) { desktop={ok:false,error:errorData(error)}; }
-  return {platform:'linux',version,permissions:await grants(),config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (deps.scrot||deps.import||deps.ffmpeg) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git},note:'Owner grants are required independently of dependency readiness.'};
+  return {platform:'linux',version,permissions:await grants(),system_policy:{path:systemPolicyPath,present:(await systemGrants())!==null},config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (deps.scrot||deps.import||deps.ffmpeg) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git},note:'Owner grants are required independently of dependency readiness.'};
 }
 function validate(name,args) {
   if (!schemas.has(name)) fail('UNKNOWN_ACTION', 'Use actions to discover supported action names.');
@@ -63,7 +65,7 @@ export async function dispatch(name,args) {
   } finally { await rm(work,{recursive:true,force:true}); }
 }
 const receiptPath=id=>{ if(!uuid.test(id || ''))fail('INVALID_ARGUMENTS','Job/request IDs must be UUIDs.');return path.join(statePath(),'jobs',`${id.toLowerCase()}.json`); };
-const alive=pid=>{ try { process.kill(pid,0); return true; } catch(error) { return error.code==='EPERM'; } };
+const interrupted=async receipt=>receipt.pid ? !(await workerAlive(receipt)) : Date.now()-Date.parse(receipt.created_at)>30_000;
 async function readReceipt(file) {
   // Another process can see an exclusively claimed file before its initial
   // write finishes. Wait for that publication; never claim or replay it again.
@@ -81,13 +83,13 @@ export async function job(id) {
   const file=receiptPath(id);
   let receipt; try { receipt=await readReceipt(file); }
   catch(error) { if(error.code==='ENOENT')fail('UNKNOWN_JOB','No receipt exists for that request ID.');throw error; }
-  if (receipt.state==='running' && ((receipt.pid && !alive(receipt.pid)) || (!receipt.pid && Date.now()-Date.parse(receipt.created_at)>30_000))) {
+  if (receipt.state==='running' && await interrupted(receipt)) {
     receipt=await readReceipt(file);
-    if (receipt.state !== 'running') { const {arguments:args,fingerprint,pid,...publicJob}=receipt; return {ok:true,job:publicJob,launch_id:receipt.launch_id,recovered:true}; }
+    if (receipt.state !== 'running' || !(await interrupted(receipt))) { const {arguments:args,fingerprint,pid,process_identity,...publicJob}=receipt; return {ok:true,job:publicJob,launch_id:receipt.launch_id,recovered:true}; }
     receipt={...receipt,state:'interrupted',error:{code:'JOB_INTERRUPTED',message:'Worker stopped. Inspect the Brain and receipt before starting new work; this request will never replay.'}};
     await atomic(file,JSON.stringify(receipt));
   }
-  const {arguments:args,fingerprint,pid,...publicJob}=receipt;
+  const {arguments:args,fingerprint,pid,process_identity,...publicJob}=receipt;
   return {ok:true,job:publicJob,launch_id:receipt.launch_id,recovered:true};
 }
 export async function jobs() {
@@ -109,7 +111,6 @@ export async function invoke(name,args={},control={}) {
   const receipt={id:id.toLowerCase(),action:name,arguments:args,fingerprint,state:'running',created_at:new Date().toISOString(),launch_id:randomUUID(),pid:null};
   // Exclusive create claims the request before any mutation. Never replay a
   // claimed request, including a receipt left by a terminated worker.
-  const {open}=await import('node:fs/promises');
   let handle;
   try { handle=await open(file,'wx',0o600); }
   catch(error) {
@@ -131,9 +132,13 @@ export async function work(id) {
   const file=receiptPath(id), receipt=await readReceipt(file);
   if(receipt.state!=='running'||receipt.pid)return;
   // Only the parent that exclusively created the receipt starts a worker.
-  receipt.pid=process.pid;
-  await atomic(file,JSON.stringify(receipt));
-  try { receipt.result=await dispatch(receipt.action,receipt.arguments);receipt.state='succeeded'; }
+  try {
+    receipt.process_identity=await processIdentity(process.pid);
+    if (!receipt.process_identity) fail('PROCESS_IDENTITY_UNAVAILABLE','Cannot establish the worker identity.');
+    receipt.pid=process.pid;
+    await atomic(file,JSON.stringify(receipt));
+    receipt.result=await dispatch(receipt.action,receipt.arguments);receipt.state='succeeded';
+  }
   catch(error) { receipt.state='failed';receipt.error=errorData(error); }
   delete receipt.arguments; // Retain the fingerprint, not a second copy of a large note body.
   receipt.finished_at=new Date().toISOString();

@@ -52,7 +52,7 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Font from screenshot / match / specimen / export / reopen | `font match/create/preview/file/open` | Unsupported | Limited bundled-style matching; glyph correction and installation remain human UI |
 | On-image translation | UI-only on macOS 15+ | Unsupported | Current Apple translation session is supplied by SwiftUI and may need a language-download consent sheet; no headless claim |
 | Privacy/search settings | `settings get/set` | Unsupported | Allowlisted automatic_themes, semantic_search, window_metadata, excluded_apps |
-| Agent consent / TCC grants | Human-only Settings | Owner-only config; all grants default off | Cannot be enabled through CLI, URL or MCP |
+| Agent consent / TCC grants | Human-only Settings | Owner-only config plus optional root ceiling; all user grants default off | Cannot be enabled through CLI, URL or MCP |
 | Hotkey rebinding / audio model selection / destination folder / update preferences | Human-only Settings | No UI; Brain and XDG paths via environment | Machine setup; no unrestricted preference editor |
 | Permissions / setup | `doctor` | Supported; passive doctor | Passive, no OS prompts |
 | Calendar agenda | `calendar list --after ISO --before ISO` | Unsupported | Existing Calendar permission; bounded 31-day read |

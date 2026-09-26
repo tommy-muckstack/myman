@@ -3,16 +3,18 @@
   "version": "0.13.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
     "bundle": "node build.mjs",
     "check-bundle": "node build.mjs --check",
     "package": "node package.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
-    "zod": "^4.0.0"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
