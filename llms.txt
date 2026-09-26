@@ -1,0 +1,27 @@
+# My Man
+
+> My Man is an open-source (Apache-2.0) Mac app, with a Linux companion for agents, that gives people and their AI agents local screenshots, annotation, screen recording, meeting transcripts, dictation, notes, and searchable memory. Everything runs on-device and is saved as plain Markdown in `~/MyManBrain`. Agents such as Claude Code, Claude Desktop, Cursor, and Grok Bot use it through two local MCP servers (`myman-brain`, read-only search with citations; `myman-app`, over 120 permission-controlled app actions) or through the `myman` JSON CLI. All agent permissions start off and only the user can turn them on in Settings → Agents.
+
+Key facts:
+- Install: download the Mac app from https://muckstack.com/download/myman, open it once, and install Node.js 22+. Both MCP servers are then at `~/MyManBrain/tools/server.mjs` and `~/MyManBrain/tools/app-server.mjs`.
+- Claude Code: `claude mcp add myman-brain -- node ~/MyManBrain/tools/server.mjs` and `claude mcp add myman-app -- node ~/MyManBrain/tools/app-server.mjs`.
+- CLI: `/Applications/My Man.app/Contents/Resources/myman` (`myman doctor --json`, `myman actions`, `myman screenshot --mode agent --json`). Results are JSON; long work returns a job ID.
+- Check permissions before acting with `myman doctor --json` or the `myman_app_capabilities` MCP tool. Agents cannot grant themselves permissions.
+- No cloud relay, account, or API key. Requires macOS 14.2+ (screen recording needs macOS 15+).
+
+## Docs
+
+- [README, agent section](https://github.com/tommy-muckstack/myman#for-ai-agents-claude-grok-bot-cursor): what agents can do and how to connect
+- [CLI setup, commands, and JSON contract](https://github.com/tommy-muckstack/myman/blob/main/docs/agent-cli.md)
+- [Mac and Linux capability matrix](https://github.com/tommy-muckstack/myman/blob/main/docs/agent-cli-parity.md)
+- [Brain plugin: search, MCP tools, Grok Bot setup](https://github.com/tommy-muckstack/myman/blob/main/integrations/brain/README.md)
+- [Agent skill](https://github.com/tommy-muckstack/myman/blob/main/skills/myman-brain/SKILL.md): retrieval and citation behavior for agents
+- [Linux companion for agents](https://github.com/tommy-muckstack/myman/blob/main/docs/linux-agents.md): screenshots, recording, polished demos, MCP
+- [Agent workflow recipes](https://github.com/tommy-muckstack/myman/blob/main/docs/agent-workflows.md)
+- [Multi-agent workflows](https://github.com/tommy-muckstack/myman/blob/main/docs/multi-agent-workflows.md)
+
+## Optional
+
+- [Using My Man (people)](https://github.com/tommy-muckstack/myman/blob/main/docs/using-myman.md)
+- [Contributing](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) and [AGENTS.md](https://github.com/tommy-muckstack/myman/blob/main/AGENTS.md) for coding agents
+- [Security policy](https://github.com/tommy-muckstack/myman/blob/main/SECURITY.md)
