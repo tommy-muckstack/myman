@@ -13,7 +13,7 @@ import { command, fail, unsupported } from './system.mjs';
 // cards). Recording and polishing run through the ordinary record commands, so
 // the same "recording" permission applies. Every choice is plain JSON.
 const exec = promisify(execFile);
-const SCRIPT_KEYS = ['app', 'window', 'region', 'steps', 'title', 'end', 'polish', 'close', 'max_duration'];
+const SCRIPT_KEYS = ['app', 'window', 'region', 'steps', 'title', 'end', 'polish', 'close', 'focus', 'max_duration'];
 const STEP_KINDS = ['wait', 'move', 'click', 'type', 'key', 'scroll'];
 const STEP_KEYS = { wait: [], move: ['seconds'], click: ['seconds', 'button', 'double'], type: ['cps', 'at'], key: [], scroll: [] };
 export const DEFAULT_POLISH = { zoom: { auto: true }, cursor: { size: 'big' }, background: 'dusk', music: 'upbeat' };
@@ -68,7 +68,9 @@ export function parseScript(script, { app } = {}) {
   const max = script.max_duration === undefined ? Math.min(600, Math.ceil(seconds * 1.5 + 10)) : number(script.max_duration, 5, 600, '"max_duration"');
   if (seconds > max) bad(`The steps take about ${Math.round(seconds)} s, longer than max_duration ${max}.`);
   if (script.close !== undefined && typeof script.close !== 'boolean') bad('"close" must be true or false.');
-  return { app: cmd, window: script.window ?? null, region, steps, polish, close: script.close !== false, estimated_seconds: +seconds.toFixed(1), max_duration: max };
+  if (script.focus !== undefined && typeof script.focus !== 'boolean') bad('"focus" must be true or false.');
+  const focus = script.focus !== false && Boolean(cmd || script.window);
+  return { app: cmd, window: script.window ?? null, region, steps, polish, close: script.close !== false, focus, hides_other_windows: focus, estimated_seconds: +seconds.toFixed(1), max_duration: max };
 }
 
 // record start takes global coordinates with a bottom-left origin (as on the
@@ -83,6 +85,32 @@ export function stepMoments(timed, typing) {
     if (g.focus && keys.length) moments.push({ start: Math.max(0, keys[0].t - 0.3), end: keys[keys.length - 1].t + 0.8, x: g.focus[0], y: g.focus[1] });
   }
   return moments.sort((a, b) => a.start - b.start).slice(0, 40);
+}
+// "focus" keeps the demo on one app: other ordinary windows are minimized while
+// it records, then restored. Panels, docks and the desktop are never touched.
+// _NET_CLIENT_LIST lists the window manager's top-level windows.
+export const clientIds = xprop => (/#\s*(.*)$/m.exec(xprop)?.[1] ?? '').split(',').map(v => v.trim()).filter(v => /^0x[0-9a-f]+$/i.test(v)).map(v => String(parseInt(v, 16)));
+// Hide a window only when it is an ordinary, visible window other than the one being demoed.
+export const hideable = ({ id, type, state }, keep) => !keep.has(id) && (!type || /_NET_WM_WINDOW_TYPE_(NORMAL|DIALOG)\b/.test(type)) && !/_NET_WM_STATE_HIDDEN/.test(state || '');
+async function xprop(args) { try { return (await exec('xprop', args, { timeout: 5000 })).stdout; } catch { return ''; } }
+export async function hideOthers(keepIds) {
+  if (!(await command('xprop'))) return { hidden: [], active: null, warning: 'Install xprop so the demo can hide other windows; they stay visible.' };
+  const ids = clientIds(await xprop(['-root', '_NET_CLIENT_LIST']));
+  if (!ids.length) return { hidden: [], active: null, warning: 'The window manager lists no windows, so other windows stay visible.' };
+  const active = (await xdo('getactivewindow').catch(() => ({ stdout: '' }))).stdout.trim() || null;
+  const keep = new Set(keepIds), hidden = [];
+  for (const id of ids) {
+    const props = await xprop(['-id', id, '_NET_WM_WINDOW_TYPE', '_NET_WM_STATE']);
+    const type = /_NET_WM_WINDOW_TYPE\(ATOM\) = (.*)/.exec(props)?.[1], state = /_NET_WM_STATE\(ATOM\) = (.*)/.exec(props)?.[1];
+    if (!hideable({ id, type, state }, keep)) continue;
+    try { await xdo('windowminimize', id); hidden.push(id); } catch {}
+  }
+  if (hidden.length) await sleep(0.3);
+  return { hidden, active };
+}
+export async function restoreOthers({ hidden = [], active = null } = {}) {
+  for (const id of hidden) await xdo('windowmap', id).catch(() => {});
+  if (active) await xdo('windowactivate', active).catch(() => {});
 }
 const cliPath = () => path.join(path.dirname(fileURLToPath(import.meta.url)), 'cli.mjs');
 async function myman(args) {
@@ -142,7 +170,7 @@ export async function demo({ script: file, app, dryRun = false }) {
   if (desktop.session === 'wayland') unsupported('myman demo drives the app with xdotool, which needs X11 for now. On Wayland (Omarchy, Sway) record with myman record start and polish with myman record polish.');
   if (!(await command('xdotool'))) fail('DEPENDENCY_MISSING', 'Install xdotool to run demo steps.');
   const before = new Set(await windowIds('.'));
-  let child = null, session = null, target = null;
+  let child = null, session = null, target = null, shown = null;
   try {
     if (plan.app) {
       child = spawn(plan.app[0], plan.app.slice(1), { detached: true, stdio: 'ignore', env: process.env });
@@ -151,7 +179,11 @@ export async function demo({ script: file, app, dryRun = false }) {
       child.unref();
     }
     let rect;
-    if (plan.region === 'window') { target = await findWindow({ window: plan.window, before }); await xdo('windowactivate', '--sync', target.id).catch(() => {}); await sleep(0.4); rect = target.rect; }
+    if (plan.region === 'window') target = await findWindow({ window: plan.window, before });
+    else if (plan.focus) target = await findWindow({ window: plan.window, before }).catch(() => null);
+    if (plan.focus && target) shown = await hideOthers([target.id]);
+    if (target) { await xdo('windowactivate', '--sync', target.id).catch(() => {}); await sleep(0.4); }
+    if (plan.region === 'window') rect = target.rect;
     else if (Array.isArray(plan.region)) rect = plan.region;
     const [ox, oy] = rect ? rect : [0, 0];
     await xdo('mousemove', ox + Math.round((rect?.[2] ?? 200) / 2), oy + Math.round((rect?.[3] ?? 200) / 2));
@@ -181,7 +213,9 @@ export async function demo({ script: file, app, dryRun = false }) {
     const timed = await noteEvents(session, events);
     await sleep(LEAD_OUT);
     const recorded = await myman(['record', 'stop', '--session-id', session]); session = null;
-    const result = { ok: true, recording_id: recorded.id, steps_run: plan.steps.length, clicks: events.filter(e => e.e === 'click').length, region: rect ?? 'display' };
+    const hid = shown?.hidden.length ?? 0, warning = plan.focus && !target ? 'The app window was not found, so other windows stayed visible.' : shown?.warning;
+    await restoreOthers(shown); shown = null;
+    const result = { ok: true, recording_id: recorded.id, steps_run: plan.steps.length, clicks: events.filter(e => e.e === 'click').length, region: rect ?? 'display', hidden_windows: hid, ...(warning ? { warning } : {}) };
     if (!plan.polish) return { ...result, id: recorded.id, video_path: recorded.video_path, note: `Polish it with myman record polish --id ${recorded.id} --json.` };
     const recipe = { ...plan.polish };
     if (recipe.zoom === 'steps') recipe.zoom = { moments: stepMoments(timed, typing) };
@@ -192,6 +226,7 @@ export async function demo({ script: file, app, dryRun = false }) {
     if (session) await myman(['record', 'cancel', '--session-id', session]).catch(() => {});
     throw error;
   } finally {
+    if (shown) await restoreOthers(shown);
     if (plan.close && child?.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch { try { process.kill(child.pid, 'SIGTERM'); } catch {} } }
   }
 }

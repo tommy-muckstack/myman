@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_POLISH, parseScript, stepMoments, toGlobal } from '../demo.mjs';
+import { DEFAULT_POLISH, clientIds, hideable, parseScript, stepMoments, toGlobal } from '../demo.mjs';
 import { BACKDROPS, drawCard, literalText, parseCard, parseRecipe } from '../studio.mjs';
 
 const has = cmd => { try { execFileSync(cmd, ['-version'], { stdio: 'ignore' }); return true; } catch { return false; } };
@@ -26,8 +26,23 @@ test('demo scripts: steps are strict, defaults are filled, polish defaults to th
 });
 
 test('demo scripts reject anything unclear instead of guessing', () => {
-  for (const s of [null, [], {}, { steps: [] }, { steps: [{}] }, { steps: [{ click: [1, 2], key: 'a' }] }, { steps: [{ click: [1] }] }, { steps: [{ wait: 99 }] }, { steps: [{ key: 'ctrl+s; rm -rf' }] }, { steps: [{ type: '' }] }, { steps: [{ scroll: 0 }] }, { steps: [{ wait: 1, speed: 2 }] }, { steps: [{ wait: 1 }], extra: 1 }, { steps: [{ wait: 1 }], region: 'window' }, { steps: [{ wait: 1 }], region: [0, 0, 5] }, { steps: [{ wait: 1 }], polish: 'yes' }, { steps: [{ wait: 20 }, { wait: 20 }], max_duration: 10 }, { app: '', steps: [{ wait: 1 }] }])
+  for (const s of [null, [], {}, { steps: [] }, { steps: [{}] }, { steps: [{ click: [1, 2], key: 'a' }] }, { steps: [{ click: [1] }] }, { steps: [{ wait: 99 }] }, { steps: [{ key: 'ctrl+s; rm -rf' }] }, { steps: [{ type: '' }] }, { steps: [{ scroll: 0 }] }, { steps: [{ wait: 1, speed: 2 }] }, { steps: [{ wait: 1 }], extra: 1 }, { steps: [{ wait: 1 }], region: 'window' }, { steps: [{ wait: 1 }], region: [0, 0, 5] }, { steps: [{ wait: 1 }], polish: 'yes' }, { steps: [{ wait: 20 }, { wait: 20 }], max_duration: 10 }, { app: '', steps: [{ wait: 1 }] }, { app: 'xterm', focus: 'yes', steps: [{ wait: 1 }] }])
     assert.throws(() => parseScript(s), invalid, JSON.stringify(s));
+});
+
+test('demo an app: other windows are hidden while it records, unless focus is false or there is no app', () => {
+  assert.equal(parseScript({ app: 'xterm', steps: [{ wait: 1 }] }).focus, true);
+  assert.equal(parseScript({ app: 'xterm', steps: [{ wait: 1 }] }).hides_other_windows, true);
+  assert.equal(parseScript({ app: 'xterm', focus: false, steps: [{ wait: 1 }] }).focus, false);
+  assert.equal(parseScript({ steps: [{ wait: 1 }] }).focus, false);
+  assert.deepEqual(clientIds('_NET_CLIENT_LIST(WINDOW): window id # 0x1a00003, 0x2200007\n'), [String(0x1a00003), String(0x2200007)]);
+  assert.deepEqual(clientIds(''), []);
+  const keep = new Set(['7']);
+  assert.equal(hideable({ id: '7', type: '_NET_WM_WINDOW_TYPE_NORMAL' }, keep), false);
+  assert.equal(hideable({ id: '8', type: '_NET_WM_WINDOW_TYPE_NORMAL' }, keep), true);
+  assert.equal(hideable({ id: '9' }, keep), true);
+  for (const type of ['_NET_WM_WINDOW_TYPE_DOCK', '_NET_WM_WINDOW_TYPE_DESKTOP', '_NET_WM_WINDOW_TYPE_NOTIFICATION']) assert.equal(hideable({ id: '8', type }, keep), false, type);
+  assert.equal(hideable({ id: '8', type: '_NET_WM_WINDOW_TYPE_NORMAL', state: '_NET_WM_STATE_HIDDEN' }, keep), false);
 });
 
 test('region coordinates convert from the top-left window origin to record start\'s bottom-left global origin', () => {
