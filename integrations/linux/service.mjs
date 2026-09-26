@@ -10,19 +10,20 @@ import { execute } from '../brain/tools.mjs';
 import { annotate, capture, ocr, screens } from './images.mjs';
 import { captureEntry, saveCapture, saveNote } from './library.mjs';
 import * as recording from './recording.mjs';
+import { clipboardRead, clipboardWrite, ocrRegions, windowsList } from './desktop.mjs';
 import { processIdentity, workerAlive } from './process-identity.mjs';
 import { systemGrants, systemPolicyPath } from './policy.mjs';
-import { atomic, authorize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
+import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.13.0';
-export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status']);
+export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function errorData(error) { return {code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
 export async function capabilities(name, offline=false) {
   if (name && !schemas.has(name)) fail('UNKNOWN_ACTION','Unknown action name.');
   const actions=catalog.actions.filter(a=>!name || a.name===name).map(a=>({...a,supported:supported.has(a.name),platforms:supported.has(a.name)?['darwin','linux']:['darwin']}));
-  const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,config_path:configPath(),limitations:['X11 capture only','Explicit pixel geometry; no Live Text targeting','Video-only recording (no microphone, system audio, webcam or window capture)','No native UI, meetings, dictation or clipboard']};
+  const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,config_path:configPath(),limitations:['X11 capture (Wayland via grim)','Explicit pixel geometry; no Live Text targeting','Video-only recording (no microphone, system audio, webcam or window capture)','Window list and clipboard need X11 (xprop/xwininfo, xclip) or wl-clipboard','No native UI, meetings or dictation']};
   return name ? {...actions[0],...metadata,grants:await grants()} : {...metadata,permissions:await grants(),actions};
 }
 export async function doctor() {
@@ -49,6 +50,10 @@ export async function dispatch(name,args) {
   if (name==='recording.stop') return recording.stop(args);
   if (name==='recording.cancel') return recording.cancel(args);
   if (name==='recording.status') return recording.status(args);
+  if (name==='windows.list') return windowsList();
+  if (name==='clipboard.read') return clipboardRead(args);
+  if (name==='clipboard.write') return clipboardWrite(args,captureEntry);
+  if (name==='screenshot.ocr') { const entry=await captureEntry(args.id), {width,height}=pngSize(await readSafe(entry.image_path,128*1024*1024)); return {id:args.id,width,height,...await ocrRegions(entry.image_path,width,height)}; }
   const dir=await directory(path.join(statePath(),'work'),true,true);
   const work=await mkdtemp(path.join(dir,'capture-'));
   try {

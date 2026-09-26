@@ -55,10 +55,10 @@ for(const entry of entries) {
   assert.equal(caps.actions.find(a=>a.name==='screenshot.capture').supported,true);
   assert.equal((await ok(entry,['actions','--offline'],f.env)).live,false);
   const action=await ok(entry,['actions','screenshot.capture'],f.env);assert.equal(action.name,'screenshot.capture');assert.ok(action.inputSchema);assert.deepEqual(action.permissions,['capture']);
-  for(const args of [['screenshot'],['note','create','--body','private'],['annotate','--id','shot-x','--ops','[]'],['record','start']]) {
+  for(const args of [['screenshot'],['note','create','--body','private'],['annotate','--id','shot-x','--ops','[]'],['record','start'],['capture','ocr','--id','shot-x'],['windows','list'],['clipboard','read','--format','text']]) {
    const r=await cli(entry,args,f.env);assert.equal(r.code,4);assert.equal(r.data.error.code,'AGENT_DISABLED');
   }
-  for(const args of [['meeting','start'],['dictation','start'],['live-text'],['capture','ocr','--id','shot-x'],['open']]) {
+  for(const args of [['meeting','start'],['dictation','start'],['live-text'],['open']]) {
    const r=await cli(entry,args,f.env);assert.equal(r.code,6);assert.equal(r.data.error.code,'unsupported_on_platform');
   }
   const invalid=await cli(entry,['annotate','--id','a','--ops','not-json'],f.env);assert.equal(invalid.code,5);assert.equal(invalid.data.error.code,'INVALID_ARGUMENTS');
@@ -117,6 +117,8 @@ for(const entry of entries) {
   const text=await ok(entry,['annotate','--id',region.id,'--ops',JSON.stringify([{op:'text',at:[20,20],text:'LINUX NEEDLE',font_size:42,color:'#000000'}])],f.env);
   assert.equal(text.ocr_status,'ready');assert.match((await readFile(path.join(f.root,text.brain_path),'utf8')),/LINUX NEEDLE/);
   assert.match(JSON.stringify(await ok(entry,['search','--query','NEEDLE'],f.env)),/screenshots/);
+  const read=await ok(entry,['capture','ocr','--id',text.id],f.env);assert.match(read.text,/LINUX NEEDLE/);assert.equal(read.coordinates,'image-pixels-top-left');
+  const line=read.regions.find(r=>/NEEDLE/.test(r.text));assert.ok(line&&line.rect[0]>=0&&line.rect[2]>0&&line.rect[0]+line.rect[2]<=read.width);
   // XML must remain literal annotation text, never an SVG external resource.
   await ok(entry,['annotate','--id',region.id,'--ops',JSON.stringify([{op:'text',at:[5,5],text:'<image href="file:///etc/passwd"/> & %[@secret]',font_size:16}]),'--preview'],f.env);
  });
