@@ -64,6 +64,27 @@ export async function saveNote(args) {
     return { id:`note-${id}`, kind:'note', title, body:args.body, path:path.join(root,brain_path), brain_path, created_at, updated_at:created_at, git };
   });
 }
+// Dictations use the Mac export shape: dictations/DAY-ID8.md with created,
+// captured_local and tz fields and the dictated text as the body.
+export async function saveDictation({ text, source = 'voxtype' }) {
+  const body = String(text).replace(/\r\n?/g, '\n').trim();
+  if (!body) fail('INVALID_ARGUMENTS', 'There is no dictated text to save.');
+  return lockedWrite(async root => {
+    const id = randomUUID(), now = new Date(), created_at = now.toISOString();
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const words = body.split(/\s+/), title = titleLine(words.slice(0, 8).join(' ') + (words.length > 8 ? '…' : ''));
+    const offset = -now.getTimezoneOffset(), sign = offset < 0 ? '-' : '+', pad = n => String(Math.floor(Math.abs(n))).padStart(2, '0');
+    const local = new Date(now.getTime() + offset * 60000).toISOString().slice(0, 23) + `${sign}${pad(offset / 60)}:${pad(offset % 60)}`;
+    const brain_path = `dictations/${local.slice(0, 10)}-${id.slice(0, 8)}.md`;
+    const catalog = await catalogForWrite(root);
+    await atomic(path.join(root, brain_path), `---\nid: ${id}\ncreated: ${created_at}\nsource: ${yaml(source)}\ncaptured_local: ${local}\ntz: ${yaml(timezone)}\ntimezone_source: capture\nupdated: ${created_at}\n---\n\n# ${title}\n\n${body}\n`);
+    catalog.exports.push({ item_id: `dictation-${id}`, revision: 1, path: brain_path, kind: 'dictations', title, timestamp: created_at, captured_local: local, timezone, timezone_source: 'capture', themes: [], tags: [], pinned: false });
+    catalog.generated_at = created_at;
+    await atomic(path.join(root, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n');
+    const git = await gitSave(root, [brain_path, 'catalog.json'], 'MyMan Linux: save dictation');
+    return { id: `dictation-${id}`, kind: 'dictation', title, path: path.join(root, brain_path), brain_path, created_at, git };
+  });
+}
 // Readable by people and agents: every capture note says what it shows in
 // plain words (also used as image alt text), embeds the image, and states
 // the text-recognition outcome instead of leaving an empty section.

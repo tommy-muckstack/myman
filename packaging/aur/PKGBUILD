@@ -20,6 +20,7 @@ optdepends=(
   'libnotify: desktop notifications for timers and myman show'
   'wf-recorder: screen recording on Wayland'
   'ffmpeg: screen recording on X11 and recording export'
+  'voxtype-bin: local dictation saved to the Brain (myman dictation connect)'
   'hyprland: Omarchy key binding and menu (myman omarchy install)'
 )
 provides=('myman')

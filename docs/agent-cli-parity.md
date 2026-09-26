@@ -41,7 +41,7 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Meeting start / title / stop / discard | `meeting start/status/rename/stop/cancel` | Unsupported | Records an existing call on this Mac, never auto-joins |
 | Meeting transcript / notes / related captures | `meetings`, `read`, `meeting notes`, `library related`, `screenshots --meeting` | Existing exports readable; meeting operations unsupported | Summary generation uses existing service; processing can be pending |
 | Meeting auto-detection preference | `meeting config get/set` | Unsupported | Exposes existing auto_record_meetings; no new scheduling behavior |
-| Dictation hold / toggle / cancel | `dictation start/status/stop/cancel` | Unsupported | Existing paste/clipboard behavior; result text and saved ID |
+| Dictation hold / toggle / cancel | `dictation start/status/stop/cancel` | Unsupported (Linux: Voxtype, F9; history via `dictation connect`) | Existing paste/clipboard behavior; result text and saved ID |
 | Notes create / append / replace / open | `note create/append/update/open` | Create, append and replace (revision guard); open unsupported | Markdown, title, stdin/file input; replacement revision guard |
 | Note bold/lists/tables/link content | Markdown supplied to note create/update | Markdown body preserved | Native visual selection menus are UI chrome |
 | Drop images into notes / full-screen image viewing | `note attach --source-id/--path` | Supported; owned PNG copy with alt text (warns when missing) | Document-owned copy and Markdown; full-screen viewing remains the native UI |
@@ -93,6 +93,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Trim/MP4/size cap | `record export --start/--end/--max-bytes` | Unsupported | New library item, source preserved; no truncation to meet size |
 | Attachment metadata | Capture/edit/record/export results | Supported for capture/edit/preview | Path, MIME, dimensions, duration, bytes and preview |
 | Person shows agents a region | `show --note` (person only), Omarchy `SUPER+SHIFT+PRINT` via `omarchy install` | Unsupported | Saved as a `shown` library capture with the note; agents cannot trigger it |
+| Dictation history | `dictation connect` (person only) saves each Voxtype dictation; read with `library search --kind dictations` | Dictation start/stop and paste are Voxtype's (F9) | Same `dictations/` export format as the Mac |
 
 Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
 

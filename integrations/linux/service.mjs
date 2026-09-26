@@ -32,7 +32,7 @@ export function errorData(error) { return {...(error.alternative?{alternative:er
 export async function capabilities(name, offline=false) {
   if (name && !schemas.has(name)) fail('UNKNOWN_ACTION','Unknown action name.');
   const actions=catalog.actions.filter(a=>!name || a.name===name).map(a=>({...a,supported:supported.has(a.name),platforms:supported.has(a.name)?['darwin','linux']:['darwin']}));
-  const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,config_path:configPath(),limitations:['X11 capture (Wayland via grim)','Explicit pixel geometry; no Live Text targeting','Video-only recording (no microphone, system audio, webcam or window capture)','Windows: X11, Hyprland (Omarchy) or Sway; clipboard: xclip or wl-clipboard','No native UI, meetings or dictation']};
+  const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,config_path:configPath(),limitations:['X11 capture (Wayland via grim)','Explicit pixel geometry; no Live Text targeting','Video-only recording (no microphone, system audio, webcam or window capture)','Windows: X11, Hyprland (Omarchy) or Sway; clipboard: xclip or wl-clipboard','No native UI or meetings; dictation is saved from Voxtype after myman dictation connect']};
   return name ? {...actions[0],...metadata,grants:await grants()} : {...metadata,permissions:await grants(),actions};
 }
 async function markupThemeInfo(){const t=await markupTheme();return {source:t.source,name:t.name,colors:t.colors};}
