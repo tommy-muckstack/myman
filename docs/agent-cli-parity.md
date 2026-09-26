@@ -25,7 +25,7 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Launcher / notes / settings panels | bare `open`, `note`, `settings`; `invoke app.open` | Unsupported | Interactive dispatch, no completed-capture claim |
 | Interactive screenshot picker | bare `screenshot` | No picker; bare screenshot captures desktop | Human selects region |
 | Display / region screenshot | `screenshot --mode agent` | Supported (X11, Hyprland/Omarchy, Sway; scale 1) | JSON completion; global or display-local geometry |
-| Window screenshot | `windows list`, `screenshot --window-id` | `windows list` on X11 (app, title, PID, frame, and a ready `region` for `screenshot --region`); no `--window-id` | Real ScreenCaptureKit ID; app/title supplied in discovery |
+| Window screenshot | `windows list`, `screenshot --window-id` | `windows list` and `screenshot --window-id` on X11, Hyprland/Omarchy and Sway (app, title, PID, workspace, frame, ready `region`) | Real ScreenCaptureKit ID; app/title supplied in discovery |
 | Arrow / box / highlight / text / pixelate / crop / image overlay | `annotate --ops-file` | All except image overlay; explicit pixel geometry | Source preserved, new ID, OCR refresh, validation-only dry run |
 | One-command capture and markup | `capture-markup` | Unsupported; capture then annotate | Saves only final rendered capture |
 | Backdrops / custom colors / rounding | `annotate --background/--background-color/--corner-radius` | Per-operation colors only | Existing renderer; custom color uses user's existing preference |
@@ -74,6 +74,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | --- | --- | --- | --- |
 | OCR targets | `capture targets --query` | Unsupported | Stable line IDs, pixel rectangles, explicit ambiguity |
 | Rendered markup preview | `annotate --preview` | Supported; one-hour local preview | Temporary PNG; no library/clipboard/preference changes |
+| Theme-matched markup colors | App accent/markup colors | Supported on Omarchy (active theme colors.toml; `MYMAN_MARKUP_THEME=none|FILE`) | Explicit op colors always win |
 | Circles and numbered callouts | `annotate --ops` | Unsupported | Text/region targets or explicit geometry; existing editor renderer |
 | Window video | `record start --window-id` | Unsupported | Selected window only; region/webcam conflicts rejected |
 | Bounded video | `record start --max-duration` | Unsupported | App-owned deadline survives client disconnect; default 300 seconds |

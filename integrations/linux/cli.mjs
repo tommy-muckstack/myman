@@ -5,9 +5,9 @@ import { execute } from '../brain/tools.mjs';
 import { capabilities, doctor, errorData, invoke, job, jobs } from './service.mjs';
 import { unsupported, fail } from './system.mjs';
 
-const help=`MyMan Linux (agents), Node 22+, local X11 desktop
+const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
 myman doctor --json
-myman screenshot [--display main|INDEX|id:INDEX] [--region x,y,w,h] --json
+myman screenshot [--display main|INDEX|id:INDEX] [--region x,y,w,h] [--window-id ID] --json
 myman annotate --id SHOT-ID --ops-file ops.json [--dry-run|--preview] --json
 myman note create --body TEXT|--body-file FILE|- [--title TITLE] --json
 myman search --query TEXT [--kind screenshots|notes] [--root PATH] --json
@@ -17,10 +17,11 @@ myman job UUID --json; myman jobs --json
 --request-id UUID deduplicates writes; --no-wait returns a durable job ID.
 Regions: global bottom-left, or display-local top-left with --display.
 Annotations: arrow, box, highlight, text, pixelate; crop applies last.
+Uncolored markup follows the Omarchy theme; MYMAN_MARKUP_THEME=none|FILE.
 Human permissions: ~/.config/myman/agents.json (or XDG_CONFIG_HOME).
 All grants start off. CLI and MCP cannot grant access.
 myman capture ocr --id SHOT-ID --json (line text + pixel boxes)
-myman windows list --json (X11; region is ready for --region)
+myman windows list --json (X11, Hyprland, Sway; pass id to --window-id)
 myman clipboard read --format text|image --json; myman clipboard write --text T --json
 myman record start [--display main] [--region x,y,w,h] [--max-duration 30] --json
 myman record stop|cancel|status --session-id ID --json (video only; needs recording grant)

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
+import { markupTheme } from './theme.mjs';
 import { dependencies, fail, imageCommand, pngSize, readSafe, run, unsupported } from './system.mjs';
 
 export function rect(value, width, height) {
@@ -131,10 +132,11 @@ export async function annotate(source, args, work) {
   const dimensions = validateMarkup(args, width, height);
   if (args.dry_run) return { dry_run: true, valid: true, ...dimensions };
   const im = await imageCommand();
+  const theme = await markupTheme();
   let current = source;
   for (const [index,op] of (args.annotations ?? []).entries()) {
     const output = path.join(work, `markup-${index}.png`);
-    const color = op.color || args.color || '#FF375F';
+    const color = op.color || args.color || theme.colors[op.type] || '#FF375F';
     if (op.type === 'pixelate') {
       const [x,y,w,h] = op.rect;
       await run(im, [current,'(',current,'-crop',`${w}x${h}+${x}+${y}`,'+repage','-scale',`${Math.max(1,Math.ceil(w/12))}x${Math.max(1,Math.ceil(h/12))}!`,'-scale',`${w}x${h}!`,')','-geometry',`+${x}+${y}`,'-composite',`PNG32:${output}`]);
@@ -165,7 +167,7 @@ export async function annotate(source, args, work) {
   const output = path.join(work, 'annotated.png');
   const crop = args.crop ? ['-crop',`${args.crop[2]}x${args.crop[3]}+${args.crop[0]}+${args.crop[1]}`,'+repage'] : [];
   await run(im, [current,...crop,'-strip',output]);
-  return { file: output, ...dimensions, scale: 1 };
+  return { file: output, ...dimensions, scale: 1, ...(theme.source==='omarchy'?{theme:{name:theme.name,source:'omarchy'}}:{}) };
 }
 export async function ocr(file) {
   const tool = (await dependencies()).tesseract;
