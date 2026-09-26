@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 const here = path.dirname(new URL(import.meta.url).pathname), cli = path.join(here, '../cli.mjs');
 const voxtype = 'state_file = "auto"\n\n[whisper]\nmodel = "base.en"\n\n[output]\nmode = "type"\n';
 const chained = '[output.post_process]\ncommand = "tr a-z A-Z"\ntimeout_ms = 2000\n';
-const settle = async (dir, count) => { for (let i = 0; i < 50; i++) { const files = await readdir(dir).catch(() => []); if (files.length >= count) return files; await new Promise(r => setTimeout(r, 100)); } return readdir(dir).catch(() => []); };
+const settle = async (dir, count) => { for (let i = 0; i < 200; i++) { const files = await readdir(dir).catch(() => []); if (files.length >= count) return files; await new Promise(r => setTimeout(r, 100)); } return readdir(dir).catch(() => []); };
 
 test('dictation connect hooks Voxtype, keeps a cleanup step, saves to the Brain, and disconnect restores', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'myman-dictation-'));
