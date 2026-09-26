@@ -58,6 +58,11 @@ enum MM {
                 else { continue }
                 CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
             }
+            // Demo captions use Outfit (SIL OFL), so the same file can ship with Linux.
+            if let url = Bundle.module.url(forResource: "Fonts/Outfit-SemiBold", withExtension: "ttf")
+                ?? Bundle.module.url(forResource: "Outfit-SemiBold", withExtension: "ttf") {
+                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+            }
         }
 
         static func gellix(_ size: CGFloat, _ weight: GellixWeight = .regular) -> Font {

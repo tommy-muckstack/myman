@@ -185,12 +185,12 @@ enum DemoFinish {
 
     // MARK: Captions
 
-    /// Captions use Gellix SemiBold (bundled with the app), like Linux.
+    /// Captions use Outfit SemiBold (bundled, SIL OFL), like Linux.
     private static func captionFont(_ size: CGFloat) -> NSFont {
-        NSFont(name: "Gellix-SemiBold", size: size) ?? .systemFont(ofSize: size, weight: .semibold)
+        NSFont(name: "Outfit-SemiBold", size: size) ?? .systemFont(ofSize: size, weight: .semibold)
     }
 
-    /// The caption's still: white Gellix on a soft, translucent, fully rounded
+    /// The caption's still: white Outfit on a soft, translucent, fully rounded
     /// pill with a gentle shadow (the same look as Linux).
     static func captionImage(_ caption: Caption, videoSize: CGSize) -> CGImage? {
         let lines = caption.text.components(separatedBy: "\n")

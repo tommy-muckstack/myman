@@ -285,5 +285,7 @@ extension RecordingPolishTests {
         let frame = RecordingPolish.frame(for: CGSize(width: 640, height: 420), options: options)
         XCTAssertEqual(frame.output.height, 420 + frame.padding * 2 + 46); XCTAssertEqual(frame.band, 46)
         XCTAssertNotNil(DemoFinish.captionImage(.init(text: "Search for a song", start: 0, end: 1), videoSize: CGSize(width: 640, height: 420)))
+        MM.Fonts.registerFonts()
+        XCTAssertNotNil(NSFont(name: "Outfit-SemiBold", size: 20), "captions use the bundled Outfit (OFL), the same file Linux ships")
     }
 }

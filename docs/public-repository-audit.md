@@ -46,6 +46,9 @@ The ignore rules also exclude MyManBrain directories and SQLite files.
   redistribution permission was not established by this audit. The files were
   left unchanged at the maintainer's request. See the foundry's
   [license terms](https://displaay.net/help/licenses).
+  Linux packages (tarball, AUR, source install) ship no Gellix: demo captions
+  use Outfit SemiBold (SIL Open Font License 1.1, license text in
+  `src/Resources/Fonts/Outfit-OFL.txt`) on both platforms.
 
 ## Verification and limits
 

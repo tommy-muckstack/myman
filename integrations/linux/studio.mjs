@@ -141,16 +141,17 @@ export async function drawCard(dir, name, card, { width: W, height: H, colors })
   await run(await imageCommand(), [...args, '-alpha', 'off', `PNG24:${file}`]);
   return file;
 }
-// Captions use Gellix SemiBold, the font the Mac app ships (installed next to
-// the CLI, or read from the source tree), with DejaVu Sans Bold as a fallback.
+// Captions use Outfit SemiBold (SIL Open Font License, the same file the Mac
+// app uses; installed next to the CLI, or read from the source tree), with
+// DejaVu Sans Bold as a fallback.
 export async function captionFont() {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  for (const f of [path.join(here, 'Gellix-SemiBold.ttf'), path.join(here, '../../src/Resources/Fonts/Gellix-SemiBold.ttf'), path.join(here, '../../../src/Resources/Fonts/Gellix-SemiBold.ttf')]) {
+  for (const f of [path.join(here, 'Outfit-SemiBold.ttf'), path.join(here, '../../src/Resources/Fonts/Outfit-SemiBold.ttf'), path.join(here, '../../../src/Resources/Fonts/Outfit-SemiBold.ttf')]) {
     if ((await stat(f).catch(() => null))?.isFile()) return f;
   }
   return 'DejaVu-Sans-Bold';
 }
-// A caption's still: white Gellix on a soft, translucent, fully rounded pill
+// A caption's still: white Outfit on a soft, translucent, fully rounded pill
 // with a gentle shadow (the same look as the Mac).
 export async function drawCaption(dir, name, caption, { width: W, height: H }) {
   const lines = caption.text.split('\n'), pt = Math.max(12, Math.min(captionPoints(H), Math.floor((W * 0.86) / (Math.max(...lines.map(l => l.length)) * 0.55))));
