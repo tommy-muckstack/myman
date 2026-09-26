@@ -290,7 +290,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     filter = SCContentFilter(desktopIndependentWindow: window)
                 } else {
                     guard let display else { throw AgentError("NOT_FOUND", "Display is no longer available.") }
-                    filter = SCContentFilter(display: display, excludingWindows: [])
+                    // On resume the Stop/Restart pill is already up; keep it out of the video.
+                    filter = SCContentFilter(display: display, excludingWindows: Self.ownChrome(content, pill: self.pill))
                 }
                 let config = SCStreamConfiguration()
                 let scale = CGFloat(filter.pointPixelScale)
@@ -409,6 +410,12 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 Analytics.track("screen_recording_started",
                                 ["cursor_effects": SettingsStore.shared.cursorEffects])
                 self.showPill()
+                // The pill appears once capture is running, so take it back out of the frame.
+                if windowID == nil, let display,
+                   let fresh = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+                    let chrome = Self.ownChrome(fresh, pill: self.pill)
+                    if !chrome.isEmpty { try? await stream.updateContentFilter(SCContentFilter(display: display, excludingWindows: chrome)) }
+                }
                 // The bubble comes on with the recording (prompting for
                 // camera the first time); the pill toggle remembers your
                 // last choice for next time.
@@ -707,6 +714,12 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     // MARK: Pill — same top-right recording indicator contract as meetings
+
+    /// My Man's own recording controls (the Stop/Restart pill), which never belong in the video.
+    private static func ownChrome(_ content: SCShareableContent, pill: NSPanel?) -> [SCWindow] {
+        guard let number = pill?.windowNumber, number > 0 else { return [] }
+        return content.windows.filter { $0.windowID == CGWindowID(number) }
+    }
 
     private func showPill() {
         guard pill == nil else { return }

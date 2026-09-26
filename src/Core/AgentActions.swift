@@ -455,6 +455,10 @@ final class AgentActions {
             do {
                 try await AgentVideo.export(URL(fileURLWithPath: source.sourcePath), to: url, start: args["start"] as? Double ?? 0, end: args["end"] as? Double, maxBytes: (args["max_bytes"] as? Double).map(Int.init), edits: args["edits"] as? [[String: Any]] ?? [])
                 guard CaptureIndex.item(source.id) != nil else { throw AgentError("CONTENT_CHANGED", "Source was deleted during export.") }
+                // Zoom edits reframe the picture, so the cursor would no longer line up.
+                if !((args["edits"] as? [[String: Any]] ?? []).contains { $0["type"] as? String == "zoom" }) {
+                    RecordingSidecars.copyTrimmed(from: URL(fileURLWithPath: source.sourcePath), to: url, start: args["start"] as? Double ?? 0, end: args["end"] as? Double ?? .infinity)
+                }
                 let attachment = try await AgentVideo.attachment(url)
                 guard CaptureIndex.item(source.id)?.excluded == source.excluded else { throw AgentError("CONTENT_CHANGED", "Source was deleted or hidden during export.") }
                 let record = ScreenRecording(id: UUID().uuidString, path: url.path, duration: Int(ceil(attachment["duration"] as? Double ?? 0)), createdAt: Date())
@@ -754,6 +758,9 @@ enum AgentSchema {
         func fail() throws -> Never { throw AgentError("INVALID_ARGUMENTS", "Invalid \(path); inspect the action schema.") }
         switch schema["type"] as? String {
         case "object":
+            // An object schema without properties (a polish recipe, a demo script)
+            // is free-form here; its action checks every key itself.
+            if schema["properties"] == nil { guard value is [String: Any] else { try fail() }; return }
             guard let object = value as? [String: Any], let properties = schema["properties"] as? [String: [String: Any]], Set(object.keys).isSubset(of: Set(properties.keys)), (schema["required"] as? [String] ?? []).allSatisfy({ object[$0] != nil }) else { try fail() }
             for (key, child) in object { try validate(child, schema: properties[key]!, path: path + "." + key) }
         case "array":
