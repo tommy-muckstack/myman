@@ -38,6 +38,10 @@ export async function announce(action, result) {
       notify('An agent is recording your screen', `Video only, up to ${clock(result?.max_duration ?? 300)}. Stop it: myman record stop --session-id ${result?.session_id}`, { urgency: 'critical', icon: 'media-record', timeout: 0, tag: 'myman-recording' });
     } else if (action === 'recording.stop') {
       notify('Screen recording stopped', `Saved to your MyMan Brain${result?.duration ? ` (${clock(result.duration)})` : ''}.`, { icon: 'media-playback-stop', tag: 'myman-recording' });
+    } else if (action === 'recording.pause') {
+      notify('Screen recording paused', `Nothing is being recorded. Resume: myman record resume --session-id ${result?.session_id}`, { icon: 'media-playback-pause', tag: 'myman-recording' });
+    } else if (action === 'recording.resume') {
+      notify('An agent is recording your screen again', `Video only, ${clock(result?.remaining ?? 0)} left. Stop it: myman record stop --session-id ${result?.session_id}`, { urgency: 'critical', icon: 'media-record', timeout: 0, tag: 'myman-recording' });
     } else if (action === 'recording.cancel') {
       notify('Screen recording canceled', 'Nothing was saved.', { icon: 'media-playback-stop', tag: 'myman-recording' });
     } else return;
@@ -50,6 +54,11 @@ export async function indicator() {
   const now = Date.now();
   let active = null;
   try { active = (await recording.status()).active; } catch {}
+  if (active?.state === 'paused') return {
+    ok: true, text: `❚❚ REC ${clock(active.elapsed)}`, alt: 'paused', class: 'paused', active: true,
+    tooltip: `An agent paused a screen recording (${clock(active.remaining)} left).\nResume: myman record resume --session-id ${active.session_id}\nStop: myman record stop --session-id ${active.session_id}`,
+    session_id: active.session_id, elapsed: active.elapsed, remaining: active.remaining,
+  };
   if (active) return {
     ok: true, text: `● REC ${clock(active.elapsed)}`, alt: 'recording', class: 'recording', active: true,
     tooltip: `An agent is recording your screen (${clock(active.remaining)} left).\nStop: myman record stop --session-id ${active.session_id}`,
