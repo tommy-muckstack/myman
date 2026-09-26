@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-26: root plugin and Linux companion **0.13.0** add local Ubuntu/X11 capture, annotations, notes, portable Brain retrieval and permission-gated MCP. The unchanged Mac companion and GrokBot skill-only package remain **0.12.0**. Prepared, not submitted or marketplace-host-verified; the original Cursor application remains pending.
+
 > Candidate update, 2026-09-23: root/Grok/companion **0.12.0** adds owned timer/reminder sound controls and sound state. Prepared, not submitted or host-verified. The original Cursor application remains pending; notify Cursor instead of filing another application.
 
 > Candidate update, 2026-09-23: root/Grok/companion **0.11.0** adds local tool evaluation, timer/reminder controls, and calendar reads. Prepared; not submitted or host-verified. The prior publisher application remains awaiting review. Notify Cursor of the new candidate rather than filing a duplicate application.
@@ -6,7 +8,7 @@
 
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.12.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.13.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -28,9 +30,9 @@ MyMan is **Apache-2.0 open source**. Humans and agents, including GrokBot, are w
 
 Find evidence by people, time periods, keywords and saved Themes. Read meeting transcripts with source paths and line numbers. Find screenshots from a meeting and explicitly retrieve thumbnails or originals when the task is about what something looked like.
 
-The plugin includes a read-only retrieval MCP server, a separate app-action MCP server, and an agent skill. The app server and CLI share the same action catalog and permission checks for requested screenshot capture, comparison, markup, video editing, font workflows and notes. Those actions require the running app, explicit Settings → Agents grants and applicable macOS permissions; installing the plugin does not enable capture.
+The plugin includes a read-only retrieval MCP server, a separate app-action MCP server, and an agent skill. The app server and CLI share the same action catalog and permission checks for requested screenshot capture, comparison, markup, video editing, font workflows and notes. The full macOS actions require the running app, explicit Settings → Agents grants and applicable macOS permissions; Linux exposes the documented capture/library subset through an owner-only grants file; installing the plugin does not enable capture.
 
-Requires MyMan on macOS and Node.js 22+ on that Mac. New text-targeted markup, window recording, pause/resume and video export commands require MyMan 1.1.61; discover available actions on the installed app before use. Open MyMan to generate the local Brain export and catalog. The plugin's committed MCP bundle needs no npm install. Existing exports remain readable while MyMan is closed.
+Requires Node.js 22+ on the computer containing the Brain. macOS app actions require MyMan; the [Linux companion](linux-agents.md) supports X11 screenshot capture, pixel annotations and notes with owner-controlled config grants. Mac-only actions return structured platform errors on Linux. The root MCP entrypoint selects the matching platform bundle. On macOS, New text-targeted markup, window recording, pause/resume and video export commands require MyMan 1.1.61; discover available actions on the installed app before use. Open MyMan to generate the local Brain export and catalog. The plugin's committed MCP bundle needs no npm install. Existing exports remain readable while MyMan is closed.
 
 The Brain MCP makes no network requests and never modifies MyMan's database. Brain sync is one-way from the app. Your agent/model provider can receive the excerpts and images it retrieves for your request. There is no hosted Brain, automatic upload, silent capture or cloud sync supplied by this plugin.
 
@@ -45,9 +47,11 @@ For Grok Bot, local-computer execution must target the Mac containing MyMan and 
 5. Run `npm test --prefix integrations/brain` and `npm run check-bundle --prefix integrations/brain`. Tests use synthetic temporary data, never the reviewer's personal Brain.
 6. In Cursor, invoke the `myman-brain` skill with “Find my three most recent meetings and cite the source paths.” Verify the ten `myman_brain_*` retrieval tools are available. Do not treat local fixture tests as evidence that this host check passed.
 
-Keywords: myman, meetings, notes, macos, local, memory, transcripts, screenshots, dictation.
+Keywords: myman, meetings, notes, macos, linux, local, memory, transcripts, screenshots, dictation.
 
 ## Submission status
+
+**September 26, 2026 — root/Linux 0.13.0 prepared, not submitted.** Source/bundled Linux CLI and MCP use synthetic contract fixtures; Ubuntu/Xvfb CI covers capture, OCR and installation. This is not marketplace host activation evidence. Mac companion/Grok skill stay at 0.12.0, with Mac runtime bundles unchanged. The next step is an authorized update email to Cursor with org `@muckstack`, repository and version `0.13.0`. No email or form was sent.
 
 **September 23, 2026 — 0.11.0 prepared, not submitted.** New timer/reminder, tool evaluation, and calendar actions require My Man 1.1.95. Native fixtures and CLI/MCP tests verify behavior; these new actions have not been verified through a live GrokBot host.
 

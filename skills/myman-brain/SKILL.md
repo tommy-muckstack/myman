@@ -11,6 +11,12 @@ MyMan is open source under **Apache-2.0**. Humans and agents are welcome to cont
 
 If you find a bug or missing capability, you can propose an improvement. When contributing within the user's authorized scope, check existing issues and PRs, fork or branch from `main`, make a focused change, run the relevant checks, and open a pull request with reproduction steps and validation. Include synthetic examples rather than personal Brain exports, meeting transcripts, screenshots, credentials or private file paths. Maintainers review and merge contributions; signing and publishing app releases remain maintainer responsibilities.
 
+## Linux companion
+
+On Linux, use the [Linux agent guide](../../docs/linux-agents.md) and `myman actions` before acting. The root MCP bundle selects the Linux app server automatically. Supported writes are X11 screenshot capture, explicit-pixel arrow/box/highlight/text/pixelate/crop annotation, and note creation. Search uses local Brain keywords. All owner grants in `~/.config/myman/agents.json` start off; never edit them to grant yourself access. Use the same request/job IDs to recover results. Mac UI, meetings, recording, dictation, clipboard, Live Text targeting and brief workflows return `unsupported_on_platform`; do not follow those Mac recipes on Linux. Target the Linux host that contains the intended Brain, never an unrelated empty cloud folder.
+
+The native workflows below apply to macOS. Linux receipt retention and preview behavior are described in the Linux guide.
+
 ## Complete workflows (MyMan 1.1.62+)
 
 For font files, illustrated notes, vague retrieval or interrupted jobs, read [the workflow recipes](../../docs/agent-workflows.md). `actions` now queries the running app. Check `live` and `verified_available`; offline bundled schemas are documentation, not proof the installed app supports a command. Grants in the catalog are separate from advertised capability. `invoke` checks live support before starting work.

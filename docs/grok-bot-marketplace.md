@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-26: root plugin and Linux companion **0.13.0** add local Ubuntu/X11 capture, annotations, notes, portable Brain retrieval and permission-gated MCP. The unchanged Mac companion and GrokBot skill-only package remain **0.12.0**. Prepared, not submitted or marketplace-host-verified; the original Cursor application remains pending.
+
 > Candidate update, 2026-09-23: root/Grok/companion **0.12.0** adds owned timer/reminder sound controls and sound state. Prepared, not submitted or host-verified. The original Cursor application remains pending; notify Cursor instead of filing another application.
 
 > Candidate update, 2026-09-23: root/Grok/companion **0.11.0** adds local tool evaluation, timer/reminder controls, and calendar reads. Prepared; not submitted or host-verified. The prior publisher application remains awaiting review. Notify Cursor of the new candidate rather than filing a duplicate application.
@@ -13,7 +15,7 @@ For each agent-package update, follow the [Cursor marketplace release policy](cu
 
 ## Two packages, distinct execution locations
 
-- Repository root `plugin.json`, `mcp.json`, `skills/myman-brain/`: portable Agent Plugin for a client running on the Mac. MCP includes separate read-only retrieval and permission-controlled app-action servers in committed standalone bundles, so installation needs Node.js 22+ but no npm install.
+- Repository root `plugin.json`, `mcp.json`, `skills/myman-brain/`: portable Agent Plugin for a client running on the Mac or Linux host containing the Brain. Root 0.13.0 dispatches to the matching app MCP; Linux has the documented capture/library subset with all grants initially off. MCP includes separate read-only retrieval and permission-controlled app-action servers in committed standalone bundles, so installation needs Node.js 22+ but no npm install.
 - `integrations/grok-bot/`: a skill-only Agent Plugin for GrokBot. It deliberately has no MCP server to start on the cloud computer. Its skill runs the installed MyMan CLI through approved local-computer execution on the registered Mac.
 
 Cursor explicitly accepts the portable root Agent Plugins manifest, so `.cursor-plugin/plugin.json` is unnecessary for this single-plugin submission. Keeping one manifest avoids divergent metadata and MCP variable conventions. [Cursor supported formats and submission checklist](https://cursor.com/docs/reference/plugins).

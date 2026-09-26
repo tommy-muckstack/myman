@@ -1,0 +1,94 @@
+name: Linux agents
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/brain/**'
+      - 'integrations/linux/**'
+      - 'integrations/app-server.mjs'
+      - 'src/Resources/BrainCompanion/**'
+      - 'scripts/install-linux.sh'
+      - '.github/workflows/linux-agents.yml'
+      - 'mcp.json'
+      - 'plugin.json'
+      - 'docs/linux-agents.md'
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/brain/**'
+      - 'integrations/linux/**'
+      - 'integrations/app-server.mjs'
+      - 'src/Resources/BrainCompanion/**'
+      - 'scripts/install-linux.sh'
+      - '.github/workflows/linux-agents.yml'
+      - 'mcp.json'
+      - 'plugin.json'
+      - 'docs/linux-agents.md'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            integrations/brain/package-lock.json
+            integrations/linux/package-lock.json
+      - name: Install desktop test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth imagemagick scrot x11-utils x11-xserver-utils tesseract-ocr fonts-dejavu-core git
+      - run: npm ci --ignore-scripts --prefix integrations/brain
+      - run: npm ci --ignore-scripts --prefix integrations/linux
+      - name: Verify existing Brain and committed macOS bundles
+        run: |
+          npm test --prefix integrations/brain
+          npm run check-bundle --prefix integrations/brain
+      - run: npm run check-bundle --prefix integrations/linux
+      - name: Run CLI and MCP JSON contract against X11
+        run: xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' npm test --prefix integrations/linux
+      - run: npm run package --prefix integrations/linux
+      - name: Test extracted release installer without node_modules
+        run: |
+          mkdir -p "$RUNNER_TEMP/myman-extracted"
+          tar -xzf .build/linux/myman-linux-x64.tar.gz -C "$RUNNER_TEMP/myman-extracted"
+          export MYMAN_INSTALL_PREFIX="$RUNNER_TEMP/myman-installed"
+          export MYMAN_BRAIN_ROOT="$RUNNER_TEMP/MyManBrain"
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/myman-config"
+          export XDG_STATE_HOME="$RUNNER_TEMP/myman-state"
+          bash "$RUNNER_TEMP/myman-extracted/myman-linux-x64/scripts/install-linux.sh"
+          bash "$RUNNER_TEMP/myman-extracted/myman-linux-x64/scripts/install-linux.sh"
+          "$MYMAN_INSTALL_PREFIX/bin/myman" doctor --json
+          "$MYMAN_INSTALL_PREFIX/bin/myman" actions --json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: myman-linux-x64
+          path: .build/linux/myman-linux-x64.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'release'
+    needs: contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: myman-linux-x64
+      - name: Attach Linux companion to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" myman-linux-x64.tar.gz --clobber
