@@ -14,8 +14,42 @@ export function parseMonitors(text, rootHeight) {
     return [{ id: index, selector: `id:${index}`, name, is_main: flags.includes('*'), width: +w, height: +h, x: +x, y: +y, scale: 1, frame: [+x, rootHeight - (+y + +h), +w, +h] }];
   });
 }
+// Normalize compositor layout coordinates to a desktop image at scale 1.
+// Keep the native origin for grim, including monitors left/above the primary.
+export function waylandDesktop(outputs, compositor) {
+  if (!Array.isArray(outputs)) fail('DISPLAY_UNAVAILABLE', 'Invalid compositor monitor response.');
+  const monitors = outputs.filter(o => compositor === 'hyprland' ? !o.disabled : o.active).map((o, index) => {
+    const rotated = Number(o.transform ?? 0) % 2 === 1;
+    const scale = o.scale ?? 1;
+    const r = compositor === 'sway' ? o.rect : {x:o.x,y:o.y,width:Math.round((rotated?o.height:o.width)/scale),height:Math.round((rotated?o.width:o.height)/scale)};
+    if (!r || ![r.x,r.y,r.width,r.height].every(Number.isSafeInteger) || r.width <= 0 || r.height <= 0 || !Number.isFinite(scale) || scale <= 0 || typeof o.name !== 'string') fail('DISPLAY_UNAVAILABLE', 'Invalid compositor monitor geometry.');
+    const id=String(o.id ?? index);
+    return {id,selector:`id:${id}`,name:o.name,is_main:!!o.focused,x:r.x,y:r.y,width:r.width,height:r.height,scale:1,native_scale:scale};
+  });
+  if (!monitors.length) fail('DISPLAY_UNAVAILABLE', 'No active Wayland outputs.');
+  const origin=[Math.min(...monitors.map(d=>d.x)),Math.min(...monitors.map(d=>d.y))];
+  const width=Math.max(...monitors.map(d=>d.x+d.width))-origin[0],height=Math.max(...monitors.map(d=>d.y+d.height))-origin[1];
+  if (!Number.isSafeInteger(width*height) || width*height>100_000_000) fail('IMAGE_TOO_LARGE', 'Desktop exceeds 100 million pixels.');
+  const displays=monitors.map(d=>({...d,x:d.x-origin[0],y:d.y-origin[1],frame:[d.x-origin[0],height-(d.y-origin[1]+d.height),d.width,d.height]}));
+  if (!displays.some(d=>d.is_main)) displays[0].is_main=true;
+  return {displays,width,height,origin,session:'wayland',compositor,coordinates:'global bottom-left; display-local top-left (logical pixels, normalized desktop origin)',scale:1};
+}
+async function waylandScreens(deps) {
+  let compositor, response;
+  if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+    if (!deps.hyprctl) fail('DEPENDENCY_MISSING','Hyprland capture needs hyprctl (included with Hyprland).');
+    compositor='hyprland';response=await run(deps.hyprctl,['-j','monitors']);
+  } else if (process.env.SWAYSOCK) {
+    if (!deps.swaymsg) fail('DEPENDENCY_MISSING','Sway capture needs swaymsg.');
+    compositor='sway';response=await run(deps.swaymsg,['-r','-t','get_outputs']);
+  } else unsupported('Wayland capture supports Hyprland (including Omarchy) and Sway. Run from that desktop session with its compositor environment.');
+  let outputs;try {outputs=JSON.parse(response.stdout);}catch{fail('DISPLAY_UNAVAILABLE','Cannot read Wayland monitor geometry.');}
+  return waylandDesktop(outputs,compositor);
+}
 export async function screens() {
   const deps = await dependencies();
+  // Prefer the real Wayland desktop over its Xwayland compatibility display.
+  if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland') return waylandScreens(deps);
   if (!process.env.DISPLAY) fail('DISPLAY_UNAVAILABLE', 'Set DISPLAY (and XAUTHORITY when required) to the X11 desktop or Xvfb server.');
   if (!deps.xdpyinfo) fail('DEPENDENCY_MISSING', 'Install x11-utils (xdpyinfo) for X11 display geometry.');
   const { stdout } = await run(deps.xdpyinfo, ['-display', process.env.DISPLAY]);
@@ -29,7 +63,7 @@ export async function screens() {
   }
   if (!displays.length) displays = [{ id: '0', selector: 'id:0', name: 'X11 desktop', is_main: true, width, height, x: 0, y: 0, frame: [0,0,width,height], scale: 1 }];
   if (!displays.some(d => d.is_main)) displays[0].is_main = true;
-  return { displays, width, height, coordinates: 'global bottom-left; display-local top-left', scale: 1 };
+  return { displays, width, height, session: 'x11', coordinates: 'global bottom-left; display-local top-left', scale: 1 };
 }
 export function captureRect(args, desktop) {
   let display;
@@ -56,11 +90,17 @@ export async function capture(args, work) {
   const desktop = await screens();
   const region = captureRect(args, desktop);
   const deps = await dependencies(), im = await imageCommand();
-  // Prefer X11-native tools on the requested X11 desktop; grim is for a
-  // Wayland-only environment and is intentionally not used against DISPLAY.
-  const backend = deps.scrot ? 'scrot' : deps.import ? 'import' : deps.ffmpeg ? 'ffmpeg' : null;
-  if (!backend) fail('DEPENDENCY_MISSING', 'Install scrot, ImageMagick import, or ffmpeg for X11 screenshots.');
+  const backend = desktop.session === 'wayland' ? (deps.grim ? 'grim' : null) : deps.scrot ? 'scrot' : deps.import ? 'import' : deps.ffmpeg ? 'ffmpeg' : null;
+  if (!backend) fail('DEPENDENCY_MISSING', desktop.session === 'wayland' ? 'Install grim for Hyprland/Omarchy or Sway screenshots.' : 'Install scrot, ImageMagick import, or ffmpeg for X11 screenshots.');
   const source = path.join(work, 'desktop.png'), output = path.join(work, 'capture.png');
+  if (backend === 'grim') {
+    const [x,y,w,h]=region;
+    await run(deps.grim,['-s','1','-g',`${x+desktop.origin[0]},${y+desktop.origin[1]} ${w}x${h}`,source]);
+    const size=pngSize(await readSafe(source,128*1024*1024));
+    if(size.width!==w||size.height!==h) fail('DISPLAY_CHANGED','Wayland geometry changed during capture; no item was saved.');
+    await run(im,[source,'-strip',output]);
+    return {file:output,width:w,height:h,backend,scale:1};
+  }
   if (backend === 'scrot') await run(deps.scrot, ['--overwrite', source]);
   if (backend === 'import') await run(deps.import, ['-window', 'root', source]);
   if (backend === 'ffmpeg') await run(deps.ffmpeg, ['-nostdin','-loglevel','error','-f','x11grab','-video_size',`${desktop.width}x${desktop.height}`,'-i',process.env.DISPLAY,'-frames:v','1','-y',source]);

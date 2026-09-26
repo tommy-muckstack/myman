@@ -27,7 +27,7 @@ export async function capabilities(name, offline=false) {
 export async function doctor() {
   const deps=await dependencies();
   let desktop; try { desktop=await screens(); } catch(error) { desktop={ok:false,error:errorData(error)}; }
-  return {platform:'linux',version,permissions:await grants(),system_policy:{path:systemPolicyPath,present:(await systemGrants())!==null},config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (deps.scrot||deps.import||deps.ffmpeg) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git},note:'Owner grants are required independently of dependency readiness.'};
+  return {platform:'linux',version,permissions:await grants(),system_policy:{path:systemPolicyPath,present:(await systemGrants())!==null},config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (desktop.session==='wayland'?deps.grim:(deps.scrot||deps.import||deps.ffmpeg)) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git},note:'Owner grants are required independently of dependency readiness.'};
 }
 function validate(name,args) {
   if (!schemas.has(name)) fail('UNKNOWN_ACTION', 'Use actions to discover supported action names.');

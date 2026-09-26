@@ -14,7 +14,7 @@ The working matrix and verification evidence are completed alongside implementat
 
 ## Linux companion
 
-Linux 0.13.0 is a separate Node 22+/X11 capture and library companion; the Swift app is unchanged. See [installation and contract](linux-agents.md). “Unsupported” below means a structured `unsupported_on_platform` error, including when the corresponding MCP tool is called. Existing Brain export retrieval is portable. `actions` marks platform support independently of owner grants.
+Linux 0.13.0 is a separate Node 22+/X11/Wayland capture and library companion; the Swift app is unchanged. See [installation and contract](linux-agents.md). “Unsupported” below means a structured `unsupported_on_platform` error, including when the corresponding MCP tool is called. Existing Brain export retrieval is portable. `actions` marks platform support independently of owner grants.
 
 ## Capability matrix
 
@@ -24,7 +24,7 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | --- | --- | --- | --- |
 | Launcher / notes / settings panels | bare `open`, `note`, `settings`; `invoke app.open` | Unsupported | Interactive dispatch, no completed-capture claim |
 | Interactive screenshot picker | bare `screenshot` | No picker; bare screenshot captures desktop | Human selects region |
-| Display / region screenshot | `screenshot --mode agent` | Supported (X11; scale 1) | JSON completion; global or display-local geometry |
+| Display / region screenshot | `screenshot --mode agent` | Supported (X11, Hyprland/Omarchy, Sway; scale 1) | JSON completion; global or display-local geometry |
 | Window screenshot | `windows list`, `screenshot --window-id` | Unsupported | Real ScreenCaptureKit ID; app/title supplied in discovery |
 | Arrow / box / highlight / text / pixelate / crop / image overlay | `annotate --ops-file` | All except image overlay; explicit pixel geometry | Source preserved, new ID, OCR refresh, validation-only dry run |
 | One-command capture and markup | `capture-markup` | Unsupported; capture then annotate | Saves only final rendered capture |

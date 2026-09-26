@@ -281,7 +281,7 @@ Sharing is optional and explicit: selected content can be published through a co
 
 ## Linux (agents)
 
-A local Node 22+ companion for Ubuntu/X11: screenshots, annotations, notes, Brain search, and permission-controlled MCP. The Swift Mac app is unchanged.
+A local Node 22+ companion for Ubuntu/X11 and Omarchy/Hyprland: screenshots, annotations, notes, Brain search, and permission-controlled MCP. The Swift Mac app is unchanged.
 
 Download `myman-linux-x64.tar.gz` and its `.sha256` file from the same release, then:
 
@@ -294,4 +294,4 @@ export PATH="$HOME/.local/bin:$PATH"
 myman screenshot --display main --json
 ```
 
-The installer lists optional Ubuntu packages and never runs sudo. [Linux setup, permissions, annotations, Xvfb and MCP](docs/linux-agents.md).
+The installer lists optional Ubuntu and Arch packages and never runs sudo. [Linux setup, permissions, annotations, Omarchy, Xvfb and MCP](docs/linux-agents.md).

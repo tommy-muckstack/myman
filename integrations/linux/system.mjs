@@ -83,7 +83,7 @@ export async function authorize(permissions) {
   for (const permission of permissions) if (!settings[permission]) fail('AGENT_DISABLED', `The effective policy does not grant ${permission} access. Check ${configPath()} and /etc/myman/agents.json.`);
 }
 export async function dependencies() {
-  const names = ['magick', 'convert', 'scrot', 'import', 'ffmpeg', 'grim', 'xdpyinfo', 'xrandr', 'tesseract', 'git'];
+  const names = ['magick', 'convert', 'scrot', 'import', 'ffmpeg', 'grim', 'hyprctl', 'swaymsg', 'xdpyinfo', 'xrandr', 'tesseract', 'git'];
   return Object.fromEntries(await Promise.all(names.map(async name => [name, await command(name)])));
 }
 export async function imageCommand() {
