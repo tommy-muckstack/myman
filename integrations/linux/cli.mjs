@@ -59,7 +59,7 @@ myman reminder create --message TEXT --seconds N|--at ISO-WITH-OFFSET --json; my
 myman record cursor --id REC-ID [--full] --json (pointer path, clicks, typing moments and where the action is)
 myman record polish --id REC-ID [--auto-zoom [subtle|normal|strong|1.1-4]] [--cursor [normal|big|huge|1-3]] [--background dusk|ocean|meadow|slate|none] [--background-color '#RRGGBB'] [--corner-radius N] [--music upbeat|calm|cinematic|/path/audio] [--music-volume 0-1] [--title TEXT] [--end TEXT] [--recipe FILE|JSON] [--dry-run] --json (polished copy: smooth zoom, cursor highlight, click ripples, backdrop like the image editor, music ducked under narration)
 myman demo --look --app 'gnome-calculator' --json (before writing steps: a picture of the app window, a numbered copy, and each piece of clickable text with the point to click)
-myman demo --script steps.json [--app 'gnome-calculator'] [--dry-run] --json (one command: open the app, record, run the steps, then polish with zoom, cursor, backdrop, music and title/end cards; X11; needs the recording and control grants)
+myman demo --script steps.json [--app 'gnome-calculator'] [--dry-run] --json (one command: open the app, record, run the steps (points, or labels such as {"click": "Play"} found on screen), then polish with zoom, cursor, backdrop, music and title/end cards; X11; needs the recording and control grants)
 myman record frames --id REC-ID [--times 0,2.5|--count 6] [--width 400] --json (temporary PNGs + contact sheet)
 myman record export --id REC-ID [--start S] [--end S] [--max-bytes N] [--edits JSON] --json (new recording; caption/step/title/zoom/redact)
 myman agent whoami|list --json; myman machine current --json (named agents: set MYMAN_AGENT_TOKEN)

@@ -174,7 +174,7 @@ myman demo --app Spotify --script steps.json --json
 ```
 
 ```json
-{"title": "Spotify in 20 seconds", "steps": [{"click": [320, 60]}, {"type": "lofi beats"}, {"key": "Return"}, {"wait": 1.5}, {"scroll": 3}]}
+{"title": "Spotify in 20 seconds", "steps": [{"click": "Search"}, {"type": "lofi beats"}, {"key": "Return"}, {"wait": 1.5}, {"click": "Play", "nth": 1}]}
 ```
 
 ### Describe the demo, let your agent make it
@@ -187,7 +187,9 @@ You don't write coordinates. Tell your agent what the demo should show ("search 
 
 `--look` needs the same grants as a demo because it opens the app. Its pictures are temporary. Pass `--window` with part of a title when the app has several windows.
 
-The steps file uses the same keys as the Linux companion: `click`, `move`, `type`, `key`, `scroll` and `wait`. Points are measured from the top-left of the recorded area, which is the app's window by default. Keys use Mac names such as `cmd+s`, `Return` and `Escape`. Other script keys are `app`, `window` (part of a window title), `region`, `title`, `end`, `polish` (a `record polish` recipe, or `false`), `close`, `focus` and `max_duration`. Set `"focus": false` to leave other apps visible. The app is quit afterwards only if the demo opened it. The demo needs the recording and control grants, plus Accessibility access for MyMan in System Settings. A demo records no system audio.
+The steps file uses the same keys as the Linux companion: `click`, `move`, `type`, `key`, `scroll` and `wait`. Points are measured from the top-left of the recorded area, which is the app's window by default.
+
+A `click` or `move` (and a `type` step's `at`) can name the thing instead of giving a point: `{"click": "Search"}`. Right before that step, MyMan looks for it, first through Accessibility and then by reading the window, and waits up to 8 seconds for it to appear. While it reads the screen or waits, the recording pauses, so the video has no dead air. The name must match the whole label, ignoring case and punctuation, so "Search" never lands on a "Search songs" field. When several things share a label, `"nth": 2` picks the second in reading order. If nothing matches, the demo stops, the recording is cancelled, and the error lists close matches. The result's `found` shows where each name was clicked. Names keep working when the window opens in a different place or a list reorders; use points for icons with no label. Keys use Mac names such as `cmd+s`, `Return` and `Escape`. Other script keys are `app`, `window` (part of a window title), `region`, `title`, `end`, `polish` (a `record polish` recipe, or `false`), `close`, `focus` and `max_duration`. Set `"focus": false` to leave other apps visible. The app is quit afterwards only if the demo opened it. The demo needs the recording and control grants, plus Accessibility access for MyMan in System Settings. A demo records no system audio.
 
 ## Notes, library, tasks, themes, and fonts
 

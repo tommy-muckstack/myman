@@ -11,15 +11,26 @@ import Foundation
 enum DemoScript {
     static let scriptKeys = ["app", "window", "region", "steps", "title", "end", "polish", "close", "focus", "max_duration"]
     static let stepKinds = ["wait", "move", "click", "type", "key", "scroll"]
-    static let stepKeys: [String: [String]] = ["wait": [], "move": ["seconds"], "click": ["seconds", "button", "double"], "type": ["cps", "at"], "key": [], "scroll": []]
+    static let stepKeys: [String: [String]] = ["wait": [], "move": ["seconds", "nth"], "click": ["seconds", "button", "double", "nth"], "type": ["cps", "at", "nth"], "key": [], "scroll": []]
+    /// How long a named target may take to appear (the app can still be loading after the last step).
+    static let findSeconds = 8.0
     static let defaultPolish: [String: Any] = ["zoom": ["auto": true], "cursor": ["size": "big"], "background": "dusk", "music": "upbeat"]
     static let leadIn = 0.8, leadOut = 1.2
 
+    /// Where to act: a point in the recorded area, or the words on the thing to
+    /// click ("Search"), found on screen right before the step. `nth` picks
+    /// among several matches in reading order.
+    enum Target: Equatable {
+        case point(CGPoint)
+        case named(String, nth: Int)
+        var isNamed: Bool { if case .named = self { return true }; return false }
+    }
+
     enum Step: Equatable {
         case wait(Double)
-        case move(CGPoint, seconds: Double)
-        case click(CGPoint, seconds: Double, button: Int, double: Bool)
-        case type(String, cps: Double, at: CGPoint?)
+        case move(Target, seconds: Double)
+        case click(Target, seconds: Double, button: Int, double: Bool)
+        case type(String, cps: Double, at: Target?)
         case key(String)
         case scroll(Int)
     }
@@ -37,6 +48,15 @@ enum DemoScript {
         var focus: Bool
         var estimatedSeconds: Double
         var maxDuration: Double
+        var namedTargets: Int {
+            steps.filter { step in
+                switch step {
+                case .move(let t, _), .click(let t, _, _, _): return t.isNamed
+                case .type(_, _, let t): return t?.isNamed ?? false
+                default: return false
+                }
+            }.count
+        }
 
         var json: [String: Any] {
             var out: [String: Any] = ["app": app.map { $0 as Any } ?? NSNull(), "window": window.map { $0 as Any } ?? NSNull(),
@@ -44,6 +64,7 @@ enum DemoScript {
                                       "steps": steps.count, "polish": polish.map { $0 as Any } ?? false, "close": close, "focus": focus,
                                       "estimated_seconds": estimatedSeconds, "max_duration": maxDuration]
             out["hides_other_apps"] = focus
+            out["named_targets"] = namedTargets
             return out
         }
     }
@@ -65,6 +86,14 @@ enum DemoScript {
         guard let n = value as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() else { throw fail("\(name) must be true or false.") }
         return n.boolValue
     }
+    private static func target(_ value: Any?, _ name: String, nth: Any?, at: String) throws -> Target {
+        guard let words = value as? String else { return .point(try point(value, name)) }
+        let text = words.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (1...120).contains(text.count), text.rangeOfCharacter(from: .alphanumerics) != nil else {
+            throw fail("\(name) must be [x, y] or the words on the thing to click, such as \"Search\".")
+        }
+        return .named(text, nth: Int(try nth.map { try number($0, 1, 20, "\(at).nth") } ?? 1))
+    }
     static let keyPattern = try! NSRegularExpression(pattern: "^[A-Za-z0-9_]+(\\+[A-Za-z0-9_]+)*$")
 
     /// Validate a steps file and fill defaults. Unknown keys are errors, never ignored.
@@ -83,15 +112,17 @@ enum DemoScript {
                 throw fail("\(at) has unknown key \(other). A \(kind) step allows: \(([kind] + (stepKeys[kind] ?? [])).joined(separator: ", ")).")
             }
             let v = s[kind]
+            let namedSpot = kind == "type" ? s["at"] is String : v is String
+            if s["nth"] != nil, !namedSpot { throw fail("\(at).nth only goes with a named \(kind), such as {\"\(kind)\": \"Play\", \"nth\": 2}.") }
             switch kind {
             case "wait": return .wait(try number(v, 0, 30, "\(at).wait"))
-            case "move": return .move(try point(v, "\(at).move"), seconds: try s["seconds"].map { try number($0, 0, 5, "\(at).seconds") } ?? 0.6)
+            case "move": return .move(try target(v, "\(at).move", nth: s["nth"], at: at), seconds: try s["seconds"].map { try number($0, 0, 5, "\(at).seconds") } ?? 0.6)
             case "click":
-                return .click(try point(v, "\(at).click"), seconds: try s["seconds"].map { try number($0, 0, 5, "\(at).seconds") } ?? 0.6,
+                return .click(try target(v, "\(at).click", nth: s["nth"], at: at), seconds: try s["seconds"].map { try number($0, 0, 5, "\(at).seconds") } ?? 0.6,
                               button: Int(try s["button"].map { try number($0, 1, 3, "\(at).button") } ?? 1), double: try flag(s["double"], "\(at).double") ?? false)
             case "type":
                 guard let text = v as? String, (1...2000).contains(text.count) else { throw fail("\(at).type must be text of 1 to 2000 characters.") }
-                return .type(text, cps: try s["cps"].map { try number($0, 2, 60, "\(at).cps") } ?? 14, at: try s["at"].map { try point($0, "\(at).at") })
+                return .type(text, cps: try s["cps"].map { try number($0, 2, 60, "\(at).cps") } ?? 14, at: try s["at"].map { try target($0, "\(at).at", nth: s["nth"], at: at) })
             case "key":
                 guard let key = v as? String, keyPattern.firstMatch(in: key, range: NSRange(key.startIndex..., in: key)) != nil, (try? DemoInput.chord(key)) != nil else {
                     throw fail("\(at).key must be a key or combination such as \"Return\" or \"cmd+s\".")
@@ -352,7 +383,7 @@ extension AgentActions {
         }
         if args["dry_run"] as? Bool == true {
             return plan.json.merging(["dry_run": true, "warnings": warnings, "accessibility_trusted": AXIsProcessTrusted(),
-                                      "note": "Coordinates are points from the top-left of the recorded area (the app window by default)."]) { a, _ in a }
+                                      "note": "Coordinates are points from the top-left of the recorded area (the app window by default)." + (plan.namedTargets > 0 ? " Named targets are found on screen when the demo runs; check the names against myman demo --look." : "")]) { a, _ in a }
         }
         guard AXIsProcessTrusted() else {
             AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
@@ -391,22 +422,69 @@ extension AgentActions {
                                                                 "max_duration": plan.maxDuration, "system_audio": false, "microphone": false]) as? [String: Any]
             session = started?["session_id"] as? String
             let clock = Date()
-            func now() -> Double { Date().timeIntervalSince(clock) }
+            var pausedFor = 0.0, found: [[String: Any]] = []
+            // Times into the video: time spent paused while finding a target isn't in it.
+            func now() -> Double { Date().timeIntervalSince(clock) - pausedFor }
+            // A named target is looked up right before its step. Accessibility is
+            // quick; if it has to read the screen or wait for the app, the
+            // recording pauses so the video has no dead air.
+            func spot(_ t: DemoScript.Target, step: Int) async throws -> CGPoint {
+                guard case .named(let text, let nth) = t else { if case .point(let p) = t { return p }; return .zero }
+                let deadline = Date().addingTimeInterval(DemoScript.findSeconds)
+                var pausedAt: Date?, seen: [DemoLook.Element] = []
+                defer { if let pausedAt { pausedFor += Date().timeIntervalSince(pausedAt) } }
+                func resume() async throws {
+                    guard pausedAt != nil, let session else { return }
+                    _ = try await execute("recording.resume", ["session_id": session])
+                    pausedFor += Date().timeIntervalSince(pausedAt!); pausedAt = nil
+                    try await Task.sleep(for: .milliseconds(150))
+                }
+                while true {
+                    let controls = target.map { DemoLook.controls(pid: $0.processIdentifier, in: area) } ?? []
+                    if let hit = DemoLook.pick(controls, text: text, nth: nth) {
+                        try await resume()
+                        found.append(["step": step, "text": text, "nth": nth, "matched": hit.label, "click": [Int(hit.rect.midX.rounded()), Int(hit.rect.midY.rounded())]])
+                        return CGPoint(x: hit.rect.midX, y: hit.rect.midY)
+                    }
+                    if pausedAt == nil, let session { _ = try await execute("recording.pause", ["session_id": session]); pausedAt = Date() }
+                    let (image, scale) = try await capture.imageForAgent(region: DemoStage.global(area))
+                    let s = CGFloat(max(scale, 0.5))
+                    let text2 = AgentMarkup.regions(await ImageAnalysis.textObservations(image), size: AgentImages.size(image)).map {
+                        DemoLook.Element(kind: "text", label: $0.text, rect: CGRect(x: $0.rect.minX / s, y: $0.rect.minY / s, width: $0.rect.width / s, height: $0.rect.height / s))
+                    }
+                    seen = DemoLook.merge(controls, text2)
+                    if let hit = DemoLook.pick(seen, text: text, nth: nth) {
+                        try await resume()
+                        found.append(["step": step, "text": text, "nth": nth, "matched": hit.label, "click": [Int(hit.rect.midX.rounded()), Int(hit.rect.midY.rounded())]])
+                        return CGPoint(x: hit.rect.midX, y: hit.rect.midY)
+                    }
+                    if Date() > deadline {
+                        try? await resume()
+                        throw AgentError("NOT_FOUND", DemoLook.miss(seen, text: text, nth: nth, seconds: DemoScript.findSeconds))
+                    }
+                    try await Task.sleep(for: .milliseconds(400))
+                }
+            }
             var acted: [DemoScript.Acted] = [], last: CGPoint?, clicks = 0
             try await Task.sleep(for: .milliseconds(Int(DemoScript.leadIn * 1000)))
-            for step in plan.steps {
+            for (i, step) in plan.steps.enumerated() {
                 switch step {
                 case .wait(let s): try await Task.sleep(for: .milliseconds(Int(s * 1000)))
-                case .move(let p, let s): try await DemoInput.glide(to: global(p), seconds: s)
-                case .click(let p, let s, let button, let double):
+                case .move(let t, let s):
+                    let p = try await spot(t, step: i)
+                    try await DemoInput.glide(to: global(p), seconds: s)
+                case .click(let t, let s, let button, let double):
+                    let p = try await spot(t, step: i)
                     try await DemoInput.glide(to: global(p), seconds: s)
                     acted.append(.init(click: (now(), p))); last = p; clicks += 1
                     try await DemoInput.click(at: global(p), button: button, double: double)
                     try await Task.sleep(for: .milliseconds(150))
                 case .type(let text, let cps, let at):
+                    var focus = last
+                    if let at { focus = try await spot(at, step: i) }
                     let from = now()
                     try await DemoInput.type(text, cps: cps)
-                    acted.append(.init(typing: (from, now(), at ?? last)))
+                    acted.append(.init(typing: (from, now(), focus)))
                 case .key(let k): try DemoInput.key(k); try await Task.sleep(for: .milliseconds(200))
                 case .scroll(let n): try await DemoInput.scroll(n); try await Task.sleep(for: .milliseconds(200))
                 }
@@ -420,6 +498,7 @@ extension AgentActions {
             var result: [String: Any] = ["recording_id": recordingID, "steps_run": plan.steps.count, "clicks": clicks,
                                          "region": [Double(area.minX), Double(area.minY), Double(area.width), Double(area.height)], "app": target?.localizedName.map { $0 as Any } ?? NSNull(),
                                          "hid_other_apps": plan.focus, "warnings": warnings]
+            if !found.isEmpty { result["found"] = found }
             guard var polish = recipe, !recordingID.isEmpty else {
                 return result.merging(["id": recordingID, "note": "Polish it with myman record polish --id \(recordingID) --json."]) { a, _ in a }
             }
@@ -482,6 +561,32 @@ enum DemoLook {
         var out = controls
         for t in text where t.label.rangeOfCharacter(from: .alphanumerics) != nil && !out.contains(where: { overlaps($0.rect, t.rect) }) { out.append(t) }
         return Array(out.sorted { a, b in a.rect.minY != b.rect.minY ? a.rect.minY < b.rect.minY : a.rect.minX < b.rect.minX }.prefix(200))
+    }
+
+    /// Named targets match whole labels, ignoring case, spacing and punctuation,
+    /// so "Search" never lands on a "Search songs" field by accident.
+    static func normalized(_ text: String) -> String {
+        text.precomposedStringWithCompatibilityMapping.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+    /// The `nth` match in reading order.
+    static func pick(_ elements: [Element], text: String, nth: Int) -> Element? {
+        let want = normalized(text)
+        let hits = elements.filter { normalized($0.label) == want }
+            .sorted { a, b in a.rect.minY != b.rect.minY ? a.rect.minY < b.rect.minY : a.rect.minX < b.rect.minX }
+        return nth >= 1 && nth <= hits.count ? hits[nth - 1] : nil
+    }
+    static func miss(_ elements: [Element], text: String, nth: Int, seconds: Double) -> String {
+        let want = normalized(text), labels = elements.map(\.label)
+        let near = labels.filter { let n = normalized($0); return n.contains(want) || (n.count >= 3 && want.contains(n)) }
+        let count = elements.filter { normalized($0.label) == want }.count
+        let head = count > 0 && nth > count ? "Found only \(count) \"\(text)\", not \(nth)." : "Could not find \"\(text)\" in the recorded area within \(Int(seconds)) s."
+        let quoted: (ArraySlice<String>) -> String = { $0.map { "\"\($0)\"" }.joined(separator: ", ") }
+        let tail: String
+        if !near.isEmpty { tail = " Close matches: " + quoted(near.prefix(5)) + "." }
+        else if !labels.isEmpty { tail = " Visible labels: " + quoted(labels.prefix(12)) + "." }
+        else { tail = " No text could be read there." }
+        return head + tail + " Use the exact label from myman demo --look, or a point [x, y] for icons."
     }
 
     private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {

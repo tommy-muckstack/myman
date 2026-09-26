@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_POLISH, clientIds, hideable, lookElements, markArgs, mergeLines, parseScript, splitLine, stepMoments, toGlobal } from '../demo.mjs';
+import { DEFAULT_POLISH, clientIds, hideable, lookElements, markArgs, mergeLines, parseScript, splitLine, stepMoments, toGlobal , pickTarget, missMessage} from '../demo.mjs';
 import { BACKDROPS, drawCard, literalText, parseCard, parseRecipe } from '../studio.mjs';
 
 const has = cmd => { try { execFileSync(cmd, ['-version'], { stdio: 'ignore' }); return true; } catch { return false; } };
@@ -106,4 +106,28 @@ test('a demo needs the control grant as well as recording; a dry run needs only 
   const denied = run([]);
   assert.equal(denied.error.code, 'AGENT_DISABLED'); assert.match(denied.error.message, /control/);
   assert.equal(run(['--dry-run']).dry_run, true);
+});
+
+test('steps can name what to click instead of a point', () => {
+  const plan = parseScript({ app: 'x', steps: [{ click: 'Search' }, { type: 'lofi', at: 'Search songs' }, { click: ' Play ', nth: 2 }, { move: [5, 5] }] });
+  assert.deepEqual(plan.steps[0].click, { text: 'Search', nth: 1 });
+  assert.deepEqual(plan.steps[1].at, { text: 'Search songs', nth: 1 });
+  assert.deepEqual(plan.steps[2].click, { text: 'Play', nth: 2 });
+  assert.deepEqual(plan.steps[3].move, [5, 5]);
+  assert.equal(plan.named_targets, 3);
+  assert.throws(() => parseScript({ steps: [{ click: [1, 2], nth: 2 }] }), /nth only goes with a named click/);
+  assert.throws(() => parseScript({ steps: [{ click: '  ' }] }), /words on the thing to click/);
+  assert.throws(() => parseScript({ steps: [{ click: 'Play', nth: 0 }] }), /nth must be a number/);
+});
+
+test('named targets match whole labels in reading order', () => {
+  const el = (text, x, y) => ({ text, rect: [x, y, 40, 12], click: [x + 20, y + 6] });
+  const elements = [el('Play', 10, 200), el('Search songs', 80, 20), el('play!', 10, 100), el('Add to playlist', 150, 200)];
+  assert.equal(pickTarget(elements, { text: 'Play' }).click[1], 106);
+  assert.equal(pickTarget(elements, { text: 'PLAY', nth: 2 }).click[1], 206);
+  assert.equal(pickTarget(elements, { text: 'Search' }), null);
+  assert.equal(pickTarget(elements, { text: 'Play', nth: 3 }), null);
+  assert.match(missMessage(elements, { text: 'Search' }, 8), /Could not find "Search".*Close matches: "Search songs"/);
+  assert.match(missMessage(elements, { text: 'Play', nth: 3 }, 8), /Found only 2 "Play", not 3/);
+  assert.match(missMessage([el('Tunes', 0, 0)], { text: 'Stop' }, 8), /Visible labels: "Tunes"/);
 });

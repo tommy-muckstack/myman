@@ -13,7 +13,7 @@ final class AgentDemoTests: XCTestCase {
                                          "title": "Spotify in 20 seconds"], app: "Spotify")
         XCTAssertEqual(plan.app, "Spotify"); XCTAssertEqual(plan.region, "window")
         XCTAssertTrue(plan.focus, "other apps are hidden by default"); XCTAssertTrue(plan.close)
-        XCTAssertEqual(plan.steps.first, .click(CGPoint(x: 120, y: 80), seconds: 0.6, button: 1, double: false))
+        XCTAssertEqual(plan.steps.first, .click(.point(CGPoint(x: 120, y: 80)), seconds: 0.6, button: 1, double: false))
         XCTAssertEqual(plan.steps[1], .type("hello", cps: 20, at: nil))
         XCTAssertEqual(plan.polish?["zoom"] as? String, "steps", "zoom where the demo acted")
         XCTAssertEqual(plan.polish?["music"] as? String, "upbeat")
@@ -83,5 +83,27 @@ final class AgentDemoTests: XCTestCase {
         XCTAssertEqual(json["click"] as? [Int], [40, 112])
         XCTAssertEqual(json["source"] as? String, "accessibility")
         XCTAssertEqual(title.json(1)["source"] as? String, "text")
+    }
+
+    func testStepsCanNameWhatToClick() throws {
+        let plan = try DemoScript.parse(["app": "Tunes", "steps": [["click": "Search"], ["type": "lofi", "at": "Search songs"], ["click": " Play ", "nth": 2], ["move": [5, 5]]]])
+        XCTAssertEqual(plan.steps[0], .click(.named("Search", nth: 1), seconds: 0.6, button: 1, double: false))
+        XCTAssertEqual(plan.steps[1], .type("lofi", cps: 14, at: .named("Search songs", nth: 1)))
+        XCTAssertEqual(plan.steps[2], .click(.named("Play", nth: 2), seconds: 0.6, button: 1, double: false))
+        XCTAssertEqual(plan.steps[3], .move(.point(CGPoint(x: 5, y: 5)), seconds: 0.6))
+        XCTAssertEqual(plan.namedTargets, 3)
+        XCTAssertThrowsError(try DemoScript.parse(["steps": [["click": [1, 2], "nth": 2]]]))
+        XCTAssertThrowsError(try DemoScript.parse(["steps": [["click": "  "]]]))
+    }
+
+    func testNamedTargetsMatchWholeLabelsInReadingOrder() {
+        func el(_ label: String, _ y: CGFloat, kind: String = "button") -> DemoLook.Element { DemoLook.Element(kind: kind, label: label, rect: CGRect(x: 10, y: y, width: 40, height: 12)) }
+        let elements = [el("Play", 200), el("Search songs", 20, kind: "search field"), el("play!", 100, kind: "text")]
+        XCTAssertEqual(DemoLook.pick(elements, text: "Play", nth: 1)?.rect.minY, 100)
+        XCTAssertEqual(DemoLook.pick(elements, text: "PLAY", nth: 2)?.rect.minY, 200)
+        XCTAssertNil(DemoLook.pick(elements, text: "Search", nth: 1))
+        XCTAssertNil(DemoLook.pick(elements, text: "Play", nth: 3))
+        XCTAssertTrue(DemoLook.miss(elements, text: "Search", nth: 1, seconds: 8).contains("Close matches: \"Search songs\""))
+        XCTAssertTrue(DemoLook.miss(elements, text: "Play", nth: 3, seconds: 8).hasPrefix("Found only 2 \"Play\", not 3."))
     }
 }

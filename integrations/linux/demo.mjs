@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { noteEvents } from './recording.mjs';
+import { noteEvents, pause, resume } from './recording.mjs';
 import { capture, screens } from './images.mjs';
 import { parseTsv } from './desktop.mjs';
 import { command, fail, imageCommand, run, unsupported } from './system.mjs';
@@ -17,13 +17,23 @@ import { command, fail, imageCommand, run, unsupported } from './system.mjs';
 const exec = promisify(execFile);
 const SCRIPT_KEYS = ['app', 'window', 'region', 'steps', 'title', 'end', 'polish', 'close', 'focus', 'max_duration'];
 const STEP_KINDS = ['wait', 'move', 'click', 'type', 'key', 'scroll'];
-const STEP_KEYS = { wait: [], move: ['seconds'], click: ['seconds', 'button', 'double'], type: ['cps', 'at'], key: [], scroll: [] };
+const STEP_KEYS = { wait: [], move: ['seconds', 'nth'], click: ['seconds', 'button', 'double', 'nth'], type: ['cps', 'at', 'nth'], key: [], scroll: [] };
+const FIND_SECONDS = 8;
 export const DEFAULT_POLISH = { zoom: { auto: true }, cursor: { size: 'big' }, background: 'dusk', music: 'upbeat' };
 const LEAD_IN = 0.8, LEAD_OUT = 1.2;
 
 const bad = message => fail('INVALID_ARGUMENTS', message);
 const number = (v, lo, hi, name) => { if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi) bad(`${name} must be a number from ${lo} to ${hi}.`); return v; };
 const point = (v, name) => { if (!Array.isArray(v) || v.length !== 2) bad(`${name} must be [x, y] inside the recorded area.`); return [number(v[0], 0, 16000, `${name}[0]`), number(v[1], 0, 16000, `${name}[1]`)]; };
+// A click or move takes a point, or the words on the thing to click ("Search"),
+// found on screen right before the step. "nth" picks among several matches.
+function target(v, name, nth, at) {
+  if (typeof v !== 'string') return point(v, name);
+  const text = v.trim();
+  if (!text || text.length > 120 || !/[\p{L}\p{N}]/u.test(text)) bad(`${name} must be [x, y] or the words on the thing to click, such as "Search".`);
+  return { text, nth: nth === undefined ? 1 : Math.trunc(number(nth, 1, 20, `${at}.nth`)) };
+}
+const noNth = (s, kind, at, named) => { if (s.nth !== undefined && !named) bad(`${at}.nth only goes with a named ${kind}, such as {"${kind}": "Play", "nth": 2}.`); };
 function words(v, name) {
   if (typeof v === 'string') { const argv = v.trim().split(/\s+/).filter(Boolean); if (!argv.length) bad(`${name} is empty.`); return argv; }
   if (Array.isArray(v) && v.length && v.every(a => typeof a === 'string' && a.length)) return v;
@@ -44,12 +54,15 @@ export function parseScript(script, { app } = {}) {
     if (other.length) bad(`${at} has unknown key ${other[0]}. A ${kind} step allows: ${[kind, ...STEP_KEYS[kind]].join(', ') }.`);
     const v = s[kind];
     if (kind === 'wait') return { wait: number(v, 0, 30, `${at}.wait`) };
-    if (kind === 'move') return { move: point(v, `${at}.move`), seconds: s.seconds === undefined ? 0.6 : number(s.seconds, 0, 5, `${at}.seconds`) };
+    if (kind === 'move') noNth(s, 'move', at, typeof v === 'string');
+    if (kind === 'click') noNth(s, 'click', at, typeof v === 'string');
+    if (kind === 'type') noNth(s, 'type', at, typeof s.at === 'string');
+    if (kind === 'move') return { move: target(v, `${at}.move`, s.nth, at), seconds: s.seconds === undefined ? 0.6 : number(s.seconds, 0, 5, `${at}.seconds`) };
     if (kind === 'click') {
       if (s.double !== undefined && typeof s.double !== 'boolean') bad(`${at}.double must be true or false.`);
-      return { click: point(v, `${at}.click`), seconds: s.seconds === undefined ? 0.6 : number(s.seconds, 0, 5, `${at}.seconds`), button: s.button === undefined ? 1 : number(s.button, 1, 3, `${at}.button`), double: s.double === true };
+      return { click: target(v, `${at}.click`, s.nth, at), seconds: s.seconds === undefined ? 0.6 : number(s.seconds, 0, 5, `${at}.seconds`), button: s.button === undefined ? 1 : number(s.button, 1, 3, `${at}.button`), double: s.double === true };
     }
-    if (kind === 'type') { if (typeof v !== 'string' || !v.length || v.length > 2000) bad(`${at}.type must be text of 1 to 2000 characters.`); return { type: v, cps: s.cps === undefined ? 14 : number(s.cps, 2, 60, `${at}.cps`), ...(s.at !== undefined ? { at: point(s.at, `${at}.at`) } : {}) }; }
+    if (kind === 'type') { if (typeof v !== 'string' || !v.length || v.length > 2000) bad(`${at}.type must be text of 1 to 2000 characters.`); return { type: v, cps: s.cps === undefined ? 14 : number(s.cps, 2, 60, `${at}.cps`), ...(s.at !== undefined ? { at: target(s.at, `${at}.at`, s.nth, at) } : {}) }; }
     if (kind === 'key') { if (typeof v !== 'string' || !/^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$/.test(v)) bad(`${at}.key must be a key or combination such as "Return" or "ctrl+s".`); return { key: v }; }
     return { scroll: Math.trunc(number(v, -50, 50, `${at}.scroll`)) || bad(`${at}.scroll must not be 0.`) };
   });
@@ -72,7 +85,8 @@ export function parseScript(script, { app } = {}) {
   if (script.close !== undefined && typeof script.close !== 'boolean') bad('"close" must be true or false.');
   if (script.focus !== undefined && typeof script.focus !== 'boolean') bad('"focus" must be true or false.');
   const focus = script.focus !== false && Boolean(cmd || script.window);
-  return { app: cmd, window: script.window ?? null, region, steps, polish, close: script.close !== false, focus, hides_other_windows: focus, estimated_seconds: +seconds.toFixed(1), max_duration: max };
+  const named = steps.filter(s => [s.click, s.move, s.at].some(t => t && !Array.isArray(t))).length;
+  return { app: cmd, window: script.window ?? null, region, steps, named_targets: named, polish, close: script.close !== false, focus, hides_other_windows: focus, estimated_seconds: +seconds.toFixed(1), max_duration: max };
 }
 
 // record start takes global coordinates with a bottom-left origin (as on the
@@ -167,7 +181,7 @@ export async function demo({ script: file, app, dryRun = false }) {
   let raw; try { raw = file.trim().startsWith('{') ? file : await readFile(file, 'utf8'); } catch { bad(`Could not read the steps file ${file}.`); }
   let json; try { json = JSON.parse(raw); } catch { bad('The steps file is not valid JSON.'); }
   const plan = parseScript(json, { app });
-  if (dryRun) return { ok: true, dry_run: true, ...plan, note: 'Coordinates are relative to the top-left of the recorded area (the app window by default).' };
+  if (dryRun) return { ok: true, dry_run: true, ...plan, note: `Coordinates are relative to the top-left of the recorded area (the app window by default).${plan.named_targets ? ' Named targets are found on screen when the demo runs; check the names against myman demo --look.' : ''}` };
   const desktop = await screens();
   if (desktop.session === 'wayland') unsupported('myman demo drives the app with xdotool, which needs X11 for now. On Wayland (Omarchy, Sway) record with myman record start and polish with myman record polish.');
   if (!(await command('xdotool'))) fail('DEPENDENCY_MISSING', 'Install xdotool to run demo steps.');
@@ -191,12 +205,27 @@ export async function demo({ script: file, app, dryRun = false }) {
     await xdo('mousemove', ox + Math.round((rect?.[2] ?? 200) / 2), oy + Math.round((rect?.[3] ?? 200) / 2));
     const started = await myman(['record', 'start', '--hide-cursor', '--max-duration', String(plan.max_duration), ...(rect ? ['--region', toGlobal(rect, desktop).join(',')] : [])]);
     session = started.session_id;
-    const events = [], typing = []; let last = null;
+    let events = [], last = null;
+    const typing = [], timed = [], found = [];
+    // Finding a named target means reading the screen, which takes a moment, so
+    // the recording pauses while it looks and the video has no dead air.
+    // Clicks noted so far are timed before the pause, against the segment they fell in.
+    const area = rect ?? [0, 0, desktop.width, desktop.height];
+    const where = async (t, at) => {
+      if (Array.isArray(t)) return t;
+      timed.push(...await noteEvents(session, events)); events = [];
+      await pause({ session_id: session });
+      try {
+        const hit = await findTarget(area, t);
+        found.push({ step: at, text: t.text, nth: t.nth, matched: hit.text, click: hit.click });
+        return hit.click;
+      } finally { await resume({ session_id: session }); await sleep(0.15); }
+    };
     await sleep(LEAD_IN);
-    for (const s of plan.steps) {
+    for (const [i, s] of plan.steps.entries()) {
       if (s.wait !== undefined) await sleep(s.wait);
       else if (s.move || s.click) {
-        const [x, y] = s.move || s.click, to = [ox + x, oy + y];
+        const [x, y] = await where(s.move || s.click, i), to = [ox + x, oy + y];
         await glide(await pointer(), to, s.seconds);
         if (s.click) {
           last = [x, y];
@@ -205,19 +234,21 @@ export async function demo({ script: file, app, dryRun = false }) {
           await sleep(0.15);
         }
       } else if (s.type) {
-        const delay = Math.round(1000 / s.cps), at = Date.now();
-        typing.push({ from: events.length, count: s.type.length, focus: s.at ?? last });
-        [...s.type].forEach((_, i) => events.push({ e: 'key', at: at + i * delay }));
+        const delay = Math.round(1000 / s.cps);
+        const focus = s.at ? await where(s.at, i) : last;
+        typing.push({ from: timed.length + events.length, count: s.type.length, focus });
+        const at = Date.now();
+        [...s.type].forEach((_, k) => events.push({ e: 'key', at: at + k * delay }));
         await xdo('type', '--delay', delay, '--', s.type);
       } else if (s.key) { events.push({ e: 'key', at: Date.now() }); await xdo('key', '--', s.key); await sleep(0.2); }
       else if (s.scroll) { const n = Math.abs(s.scroll); await xdo('click', '--repeat', n, '--delay', 60, s.scroll > 0 ? 5 : 4); await sleep(0.2); }
     }
-    const timed = await noteEvents(session, events);
+    timed.push(...await noteEvents(session, events));
     await sleep(LEAD_OUT);
     const recorded = await myman(['record', 'stop', '--session-id', session]); session = null;
     const hid = shown?.hidden.length ?? 0, warning = plan.focus && !target ? 'The app window was not found, so other windows stayed visible.' : shown?.warning;
     await restoreOthers(shown); shown = null;
-    const result = { ok: true, recording_id: recorded.id, steps_run: plan.steps.length, clicks: events.filter(e => e.e === 'click').length, region: rect ?? 'display', hidden_windows: hid, ...(warning ? { warning } : {}) };
+    const result = { ok: true, recording_id: recorded.id, steps_run: plan.steps.length, clicks: timed.filter(e => e.e === 'click').length, region: rect ?? 'display', hidden_windows: hid, ...(found.length ? { found } : {}), ...(warning ? { warning } : {}) };
     if (!plan.polish) return { ...result, id: recorded.id, video_path: recorded.video_path, note: `Polish it with myman record polish --id ${recorded.id} --json.` };
     const recipe = { ...plan.polish };
     if (recipe.zoom === 'steps') recipe.zoom = { moments: stepMoments(timed, typing) };
@@ -297,6 +328,41 @@ export function mergeLines(first, second) {
   const out = [...first];
   for (const l of second) if (!out.some(o => overlaps(o.rect, l.rect))) out.push(l);
   return out.sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0]);
+}
+// Named targets match whole labels, ignoring case, spacing and punctuation, so
+// "Search" never lands on a "Search songs" field by accident. Several matches
+// are taken in reading order; "nth" picks one.
+export const normLabel = text => String(text).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+export function pickTarget(elements, { text, nth = 1 }) {
+  const want = normLabel(text);
+  const hits = elements.filter(e => normLabel(e.text) === want).sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0]);
+  return hits[nth - 1] ?? null;
+}
+export function missMessage(elements, { text, nth = 1 }, seconds) {
+  const want = normLabel(text), all = elements.map(e => e.text);
+  const near = all.filter(t => normLabel(t).includes(want) || (want.includes(normLabel(t)) && normLabel(t).length >= 3));
+  const count = elements.filter(e => normLabel(e.text) === want).length;
+  const head = count && nth > count ? `Found only ${count} "${text}", not ${nth}.` : `Could not find "${text}" in the recorded area within ${seconds} s.`;
+  const tail = near.length ? ` Close matches: ${near.slice(0, 5).map(t => `"${t}"`).join(', ')}.` : all.length ? ` Visible labels: ${all.slice(0, 12).map(t => `"${t}"`).join(', ')}.` : ' No text could be read there.';
+  return `${head}${tail} Use the exact label from myman demo --look, or a point [x, y] for icons.`;
+}
+// Read the recorded area until the target appears (the app may still be
+// loading after the last step), up to FIND_SECONDS.
+async function findTarget(area, t) {
+  if (!(await command('tesseract'))) fail('DEPENDENCY_MISSING', 'Install tesseract to click named targets, or use points [x, y].');
+  const desktop = await screens(), deadline = Date.now() + FIND_SECONDS * 1000;
+  let elements = [];
+  for (;;) {
+    const work = await mkdtemp(path.join(os.tmpdir(), 'myman-find-'));
+    try {
+      const shot = await capture({ region: toGlobal(area, desktop) }, work);
+      elements = lookElements(await readUi(shot.file, work), [shot.width, shot.height]);
+    } finally { await rm(work, { recursive: true, force: true }).catch(() => {}); }
+    const hit = pickTarget(elements, t);
+    if (hit) return hit;
+    if (Date.now() > deadline) fail('NOT_FOUND', missMessage(elements, t, FIND_SECONDS));
+    await sleep(0.5);
+  }
 }
 const labelAt = ([x, y, , h]) => [Math.max(0, x - 4), y >= 16 ? y - 16 : y + h + 3];
 const lookDir = () => path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'myman', 'demo-look');
