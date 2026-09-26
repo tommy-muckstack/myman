@@ -54,6 +54,15 @@ test('markup file, colors, text origin and crop map to native pixel schema',asyn
  await writeFile(path.join(root,'body.md'),'# Followups\n\n- Review');
  assert.equal((await plan(['note','create','--body-file',path.join(root,'body.md')])).args.body,'# Followups\n\n- Review');
 });
+test('demo reads its steps file and names the app to show',async t=>{
+ const root=await mkdtemp(path.join(tmpdir(),'myman-demo-'));t.after(()=>rm(root,{recursive:true,force:true}));
+ const script={steps:[{click:[40,30]},{type:'hello'},{key:'cmd+s'}],title:'Spotify in 20 seconds'};
+ await writeFile(path.join(root,'steps.json'),JSON.stringify(script));
+ const p=await plan(['demo','--app','Spotify','--script',path.join(root,'steps.json'),'--dry-run']);
+ assert.equal(p.name,'demo.run');assert.deepEqual(p.args,{app:'Spotify',script,dry_run:true});
+ assert.ok(ajv.validate(describe('demo.run').inputSchema,p.args));
+ assert.deepEqual(describe('demo.run').permissions,['recording','control']);
+});
 test('legacy UI aliases dispatch only explicit UI and never toggle on an invalid flag',async()=>{
  const opened=[];for(const host of ['open','screenshot','note','dictation','meeting','record','settings','cancel-meeting'])assert.equal((await run([host],{open:async h=>opened.push(h)})).interactive,true);
  assert.equal(opened.length,8);

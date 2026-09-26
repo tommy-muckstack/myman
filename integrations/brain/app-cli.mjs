@@ -103,6 +103,7 @@ Or wait --job-id UUID / --session-id ID. No action is started or replayed.
 Compare: capture compare --before-id ID --after-id ID [--ignore-rects JSON]
 Video: record export --id ID --edits JSON (caption/step/title/zoom/redact).
 Demo: record start --hide-cursor; record polish --id ID --auto-zoom --cursor big --background dusk [--music upbeat|calm|cinematic|FILE] [--title TEXT] [--end TEXT] [--recipe FILE|JSON] [--dry-run]
+Demo an app: demo --app Spotify --script steps.json [--dry-run] (hides other apps, records the app's window, runs click/type/key/scroll steps, then polishes; needs recording + control access and macOS Accessibility)
 Media: record start --window-id ID --max-duration 30; record result --session-id ID
 record frames --id ID --times 0,2,5; record export --id ID --start 1 --end 10 --max-bytes 20000000
 Markup: capture targets --id ID --query TEXT; ops accept target_text or target_region.
@@ -171,6 +172,7 @@ export async function plan(argv) {
   if(['meeting status','dictation status'].includes(pair)){allowed(v,[]);if(p.length!==2)fail('Unexpected arguments.');return {type:'action',name:'app.status',args:{},control,select:p[0]==='record'?'screen_recording':p[0]};}
   if(['screenshot','capture-markup'].includes(p[0])){if(v.mode!=='agent')fail('Geometry capture requires --mode agent.');name=p[0]==='screenshot'?'screenshot.capture':'screenshot.capture_markup';consumed=1;}
   if(p[0]==='annotate'){name='screenshot.edit';consumed=1;}
+  if(p[0]==='demo'){name='demo.run';consumed=1;}
   if(name){
     if(p.length!==consumed)fail('Unexpected positional arguments.');
     const schema=describe(name).inputSchema;
@@ -181,7 +183,7 @@ export async function plan(argv) {
       const type=schema.properties[target].type;
       if(type==='boolean')args[target]=typeof val==='string'?onOff(val):val;
       else if(type==='number'||type==='integer')args[target]=number(val);
-      else if(type==='object')args[target]=target==='recipe'&&!String(val).trim().startsWith('{')?json(await input(val)):json(val);
+      else if(type==='object')args[target]=['recipe','script'].includes(target)&&!String(val).trim().startsWith('{')?json(await input(val)):json(val);
       else if(type==='array')args[target]=['region','crop','times'].includes(target)?String(val).split(',').map(number):json(val);
       else args[target]=val;
     }

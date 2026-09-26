@@ -9,7 +9,7 @@ struct AgentPrincipal: Sendable {
     let id: String
     let name: String
     let scopes: Set<String>
-    static let local = AgentPrincipal(id: "local", name: "Local client", scopes: ["capture", "markup", "recording", "library", "sharing"])
+    static let local = AgentPrincipal(id: "local", name: "Local client", scopes: ["capture", "markup", "recording", "library", "sharing", "control"])
 }
 enum AgentContext {
     @TaskLocal static var principal = AgentPrincipal.local

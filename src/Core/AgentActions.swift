@@ -523,6 +523,7 @@ final class AgentActions {
                 Brain.syncRecording(id: record.id, filePath: record.path, duration: record.duration, transcript: "", createdAt: record.createdAt)
                 return summary.merging(["id": "recording-" + record.id, "kind": "recording", "state": "finalized", "source_id": source.id, "path": record.path, "attachment": attachment]) { a, _ in a }
             } catch { try? FileManager.default.removeItem(at: url); throw error }
+        case "demo.run": return try await runDemo(args)
         case "recording.cancel":
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
             try await recorder.cancelForAgent(); return ["cancelled": true]

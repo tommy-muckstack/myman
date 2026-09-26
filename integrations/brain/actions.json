@@ -2114,6 +2114,47 @@
       ]
     },
     {
+      "name": "demo.run",
+      "description": "One command from a steps file to a finished demo of an app, with the same steps file and names as the Linux companion. It opens the app (by name, bundle ID or .app path), hides every other app so only that app is on screen, records the app's window, performs the steps with the mouse and keyboard (click, move, type, key, scroll, wait; points from the top-left of the recorded area), brings the hidden apps back, then polishes the recording with zoom where it acted, a drawn cursor, a backdrop, music and optional title/end cards. The raw recording is kept. Script keys: app, window, region (window, display or [x,y,width,height]), steps, title, end, polish (a record polish recipe, or false), close (quit the app afterwards if the demo opened it; default true), focus (hide other apps; default true), max_duration. Keys use Mac names, e.g. cmd+s. dry_run checks the script without opening anything. Needs the control grant and macOS Accessibility access.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "object",
+            "description": "The steps file: {app, steps:[{click:[x,y]}, {type:\"text\"}, {key:\"Return\"}, {scroll:3}, {wait:1}], title, end, polish, focus, close}. Unknown keys are errors."
+          },
+          "app": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The app to demo, e.g. Spotify or MyMan. Overrides the script's app."
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "music_track": {
+            "type": "string",
+            "enum": [
+              "upbeat",
+              "calm",
+              "cinematic"
+            ],
+            "description": "Set by the myman command when it renders a built-in track to a file."
+          }
+        },
+        "required": [
+          "script"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording",
+        "control"
+      ]
+    },
+    {
       "name": "capture.search",
       "description": "Search the same local index as the UI: exact, lexical, typo-tolerant and optional semantic matches. Exact results remain above semantic results. Excluded items are omitted. Returns excerpts, reasons, applied filters and bounded pagination.",
       "inputSchema": {

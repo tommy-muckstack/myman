@@ -26,7 +26,7 @@ Linux agents: the separate [Linux companion](linux-agents.md) supports X11 and H
 
 ## Consent and permissions
 
-Settings → Agents has **Allow local app commands**, plus four separate, default-off grants:
+Settings → Agents has **Allow local app commands**, plus separate, default-off grants:
 
 | Setting | Group | Actions |
 | --- | --- | --- |
@@ -34,6 +34,7 @@ Settings → Agents has **Allow local app commands**, plus four separate, defaul
 | Edit screenshots and create fonts | markup | import/edit images, remove background, create font |
 | Control meetings, dictation and screen recordings | recording | start/control recordings, generate meeting notes, meeting auto-record preference |
 | Create and change notes, tasks and library items | library | note/task/theme/library mutations, clipboard writes, safe settings changes |
+| Move the mouse and type to record app demos | control | `myman demo` (with the recording grant) |
 
 Combined capture/markup requires both grants. The native bridge checks grants; neither JSON nor URL arguments can enable them. App settings mutation schemas exclude these grant keys. A menu-bar dot indicates that agent screenshot or recording access is enabled. Normal recording controls remain visible. No permanent “silent forever” grant is enabled by default; grants apply to this Mac login until the human turns them off. Session tokens are not implemented. Same-login processes are the trust boundary, not individual agents.
 
@@ -44,9 +45,9 @@ Stop/cancel and screen-recording pause commands remain available after revocatio
 | Screen Recording / Screen & System Audio Recording | screenshots, shareable windows, screen video, meeting system audio |
 | Microphone | dictation, meeting microphone, video `--mic on` |
 | Camera | video `--webcam on` |
-| Accessibility | existing dictation auto-paste and optional browser-window metadata |
+| Accessibility | existing dictation auto-paste, optional browser-window metadata, and `myman demo` moving the mouse and typing |
 | Full Calendar Access | existing calendar view and scheduling behavior |
-| Input Monitoring | not required by the CLI; no pointer/key injection is provided |
+| Input Monitoring | not required by the CLI; only `myman demo` injects pointer and key events, behind the control grant |
 
 macOS prompts remain real. A refusal returns `PERMISSION_REQUIRED` with the relevant permission; grant it in System Settings. The CLI never changes TCC settings. The `myman-brain` MCP remains read-only; `myman-app` exposes the CLI’s app actions through the same native permission checks. CLI operations are local; requesting agents may send returned excerpts or pixels to their model provider. MyMan does not automatically upload the Brain or send attachments/messages.
 
@@ -162,6 +163,21 @@ Frames accepts up to 12 timestamps in seconds, strictly before the file's end, o
 Export preserves the source and creates a new library recording with a `.mp4` attachment. Bounds are seconds inside the original video. With a size cap, it tries full quality, then 720p and 480p; output dimensions disclose the resulting resolution. If the complete clip still cannot fit, `SIZE_LIMIT_EXCEEDED` returns no truncated video. Increase the cap or shorten the range. A trimmed export has no generated transcript; use the original recording's evidence for analysis.
 
 Saved screenshots, finalized recordings and MP4 exports include an `attachment` object: `path`, `mime_type`, `width`, `height`, `duration` (null for an image), `file_size`, and `preview_path`. Preview generation is best-effort and does not prevent returning a successfully saved original; check for null/unavailable previews. `preview_expires_at` identifies temporary thumbnails. Attach the final file through the requesting host, not a MyMan upload endpoint.
+
+## Demo an app
+
+`myman demo` goes from a steps file to a finished demo. It opens the app, hides every other app so only that app is on screen, records the app's window, performs the steps with the mouse and keyboard, brings the hidden apps back, then polishes the recording with zoom where it acted, a drawn cursor, a dusk backdrop and the upbeat track. The raw recording is kept.
+
+```bash
+myman demo --app Spotify --script steps.json --dry-run --json   # checks the steps; opens nothing
+myman demo --app Spotify --script steps.json --json
+```
+
+```json
+{"title": "Spotify in 20 seconds", "steps": [{"click": [320, 60]}, {"type": "lofi beats"}, {"key": "Return"}, {"wait": 1.5}, {"scroll": 3}]}
+```
+
+The steps file uses the same keys as the Linux companion: `click`, `move`, `type`, `key`, `scroll` and `wait`. Points are measured from the top-left of the recorded area, which is the app's window by default. Keys use Mac names such as `cmd+s`, `Return` and `Escape`. Other script keys are `app`, `window` (part of a window title), `region`, `title`, `end`, `polish` (a `record polish` recipe, or `false`), `close`, `focus` and `max_duration`. Set `"focus": false` to leave other apps visible. The app is quit afterwards only if the demo opened it. The demo needs the recording and control grants, plus Accessibility access for MyMan in System Settings. A demo records no system audio.
 
 ## Notes, library, tasks, themes, and fonts
 
