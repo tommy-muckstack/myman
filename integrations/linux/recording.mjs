@@ -114,12 +114,17 @@ async function closeSegment(session) {
   } else await rm(session.file, { force: true });
   Object.assign(session, { file: null, pid: null, process_identity: null, run_started_at: null });
 }
+// Recorders start detached, so each is its own process group. Killing the
+// group also stops wf-recorder when it runs under GNU timeout.
+function killGroup(pid) {
+  try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
+}
 async function halt(session) {
   if (!await recorderAlive(session)) return false;
   process.kill(session.pid, 'SIGINT'); // ffmpeg and wf-recorder finalize the MP4 on SIGINT.
   for (let i = 0; i < 150 && await recorderAlive(session); i++) await new Promise(r => setTimeout(r, 100));
   if (!await recorderAlive(session)) return false;
-  process.kill(session.pid, 'SIGKILL');
+  killGroup(session.pid);
   return true; // Force-stopped: the caller keeps the video only if it still probes.
 }
 async function probe(file) {
@@ -177,7 +182,7 @@ export async function stop({ session_id }) {
 export async function cancel({ session_id }) {
   const session = await load(session_id);
   if (!['recording', 'paused'].includes(session.state)) fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
-  if (await recorderAlive(session)) process.kill(session.pid, 'SIGKILL');
+  if (await recorderAlive(session)) killGroup(session.pid);
   for (const f of [session.file, ...(session.segments ?? [])]) if (f) await rm(f, { force: true });
   session.segments = [];
   Object.assign(session, { state: 'canceled', ended_at: new Date().toISOString() }); await save(session);

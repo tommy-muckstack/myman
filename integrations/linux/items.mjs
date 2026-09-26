@@ -194,16 +194,27 @@ export function exclude(args) {
       note: args.excluded ? 'Hidden from search, collect, recent and read. The files stay in the Brain; unhide to restore.' : 'Visible again in search and readers.' } };
   }, 'MyMan Linux: hide item');
 }
+const libraryFolders = ['notes', 'screenshots', 'recordings', 'meetings', 'dictations', 'task-items', 'themes'];
+// A catalog path the library may delete: a relative .md file directly inside a known library folder.
+export function itemFile(value) {
+  if (typeof value !== 'string' || path.isAbsolute(value) || path.normalize(value) !== value) return false;
+  const parts = value.split('/');
+  return parts.length === 2 && libraryFolders.includes(parts[0]) && /^[^.][^/]*\.md$/.test(parts[1]);
+}
 export function remove(args) {
   noLease(args);
   if (args.confirm !== true) fail('CONFIRMATION_REQUIRED', 'Deleting removes the item and its owned media from the Brain. Re-run with --confirm to proceed.');
   return mutate(args.id, async ({ root, catalog, entry, hidden, now }) => {
     checkRevision(entry, args.expected_revision);
-    const inside = file => typeof file === 'string' && path.isAbsolute(file) && file.startsWith(root + path.sep + 'assets' + path.sep) && !file.includes(`${path.sep}..${path.sep}`);
+    // Catalog paths are data: only ever delete the item's own Markdown file and
+    // media files inside assets/, never a folder named by the catalog.
+    const inside = file => typeof file === 'string' && path.isAbsolute(file) && path.normalize(file) === file && file.startsWith(root + path.sep + 'assets' + path.sep);
+    if (!itemFile(entry.path)) fail('UNSAFE_PATH', 'This catalog entry does not point at a library Markdown file, so nothing was deleted.');
     const owned = [entry.image_path, entry.thumbnail_path, entry.video_path].filter(inside);
     const files = [entry.path, ...owned.map(f => path.relative(root, f))];
-    if (entry.kind === 'notes') files.push(`assets/note-images/${entry.item_id.replace(/^note-/, '')}`);
-    for (const f of files) await rm(path.join(root, f), { recursive: true, force: true });
+    for (const f of files) await rm(path.join(root, f), { force: true });
+    const noteId = entry.item_id.replace(/^note-/, '');
+    if (entry.kind === 'notes' && /^[0-9a-f-]{36}$/i.test(noteId)) { const images = `assets/note-images/${noteId}`; await rm(path.join(root, images), { recursive: true, force: true }); files.push(images); }
     if (hidden) { catalog.excluded = catalog.excluded.filter(e => e !== entry); if (!catalog.excluded.length) delete catalog.excluded; }
     else catalog.exports = catalog.exports.filter(e => e !== entry);
     return { files, result: { id: entry.item_id, kind: singular[entry.kind], title: entry.title, deleted: true, removed: files, note: 'Git history still holds earlier versions of committed files. Recordings were never committed.' } };
