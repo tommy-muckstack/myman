@@ -226,6 +226,24 @@ The result adds `cursor: {drawn, highlight, ripples}` and `warnings`, and the re
 - The result adds `background: {style, output, video_box}`. `video_box` is where the video sits on the canvas, which helps when placing things later.
 - `myman record polish --id rec-UUID --auto-zoom --cursor big --background ocean --json` is the usual full polish.
 
+### Polished demos: music
+
+`myman record polish --id rec-UUID --music upbeat --json` adds a background track. MyMan ships three tracks, and it composes them from code with no samples. That means they are free to use anywhere (CC0), and the same track sounds identical every time:
+
+| Track | Feel | Loop length |
+| --- | --- | --- |
+| `upbeat` | Bright and energetic: synth arpeggio, soft beat, warm pad (116 BPM) | 33 s |
+| `calm` | Relaxed and friendly: electric piano, gentle pad and bass, no drums (84 BPM) | 46 s |
+| `cinematic` | Big and building: low strings, pulsing octaves, deep hits (72 BPM) | 53 s |
+
+Each track loops seamlessly for longer videos. It is trimmed to the video's length and fades in (1.5 s) and out (2.5 s). You can also pass your own file by absolute path (`--music /home/me/song.mp3`); you are responsible for its licence. `--music-volume 0.3` sets the level between 0 and 1. By default the level is 0.8 when music is the only sound and 0.4 under narration.
+
+When the recording has its own audio (a voice-over), the music ducks: it dips automatically while someone is speaking and comes back up in the pauses. Turn that off with `"duck": false` in a recipe.
+
+Polishing now keeps the recording's own audio, even without music, the same way the Mac app does. Earlier Linux builds dropped it.
+
+In a recipe, `music` is a track name, an absolute path, or an object: `{"track": "calm", "volume": 0.5, "fade_in": 1.5, "fade_out": 2.5, "duck": true, "start": 0}` (`file` replaces `track` for your own audio; `start` skips into the track by that many seconds). `--dry-run` lists the built-in tracks under `music_tracks`. The Mac app has no music option yet, so these names are the ones it should adopt.
+
 ## Brain and MCP
 
 The layout is the existing `notes/*.md`, `screenshots/*.md`, version-1 `catalog.json`, and Git history. Original PNGs live under `assets/captures`, with 400px thumbnails under `assets/capture-thumbnails`. Existing catalog entries and legacy Markdown exports are preserved. Git commits include only the new document/assets and catalog, leaving unrelated staged files untouched. No remotes are added and nothing is pushed. A Git failure after a successful save returns the saved ID and `git.committed: false`, so an agent can repair Git without duplicating the item.
