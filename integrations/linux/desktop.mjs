@@ -11,7 +11,7 @@ const session = () => process.env.WAYLAND_DISPLAY ? 'wayland' : 'x11';
 
 // Tesseract TSV rows are words; group them into lines with pixel rectangles
 // in the same top-left image coordinates screenshot.edit accepts.
-export function parseTsv(tsv) {
+export function parseTsv(tsv, { words = false } = {}) {
   const lines = new Map();
   for (const row of tsv.split('\n').slice(1)) {
     const c = row.split('\t');
@@ -20,12 +20,12 @@ export function parseTsv(tsv) {
     if (!text || conf < 0) continue;
     const [left, top, width, height] = c.slice(6, 10).map(Number), key = c.slice(1, 5).join('.');
     const line = lines.get(key) || { words: [], x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity, conf: [] };
-    line.words.push(text); line.conf.push(conf);
+    line.words.push(text); line.conf.push(conf); (line.boxes ||= []).push({ text, rect: [left, top, width, height] });
     line.x0 = Math.min(line.x0, left); line.y0 = Math.min(line.y0, top);
     line.x1 = Math.max(line.x1, left + width); line.y1 = Math.max(line.y1, top + height);
     lines.set(key, line);
   }
-  return [...lines.values()].map((l, i) => ({ id: `line-${i + 1}`, text: l.words.join(' '), rect: [l.x0, l.y0, l.x1 - l.x0, l.y1 - l.y0], granularity: 'line', confidence: Math.round(l.conf.reduce((a, b) => a + b, 0) / l.conf.length) / 100 }));
+  return [...lines.values()].map((l, i) => ({ id: `line-${i + 1}`, text: l.words.join(' '), rect: [l.x0, l.y0, l.x1 - l.x0, l.y1 - l.y0], granularity: 'line', confidence: Math.round(l.conf.reduce((a, b) => a + b, 0) / l.conf.length) / 100, ...(words ? { words: l.boxes } : {}) }));
 }
 export async function ocrRegions(file, width, height) {
   const tool = await command('tesseract');
@@ -153,4 +153,12 @@ export async function windowRegion(id) {
   if (!win) fail('UNKNOWN_WINDOW', 'No visible window with that ID. Run windows list for current IDs.');
   if (!win.region) fail('INVALID_ARGUMENTS', 'That window is off-screen.');
   return win;
+}
+
+// Raw OCR lines with word boxes, for targets and comparison.
+export async function ocrLines(file) {
+  const tool = await command('tesseract');
+  if (!tool) fail('DEPENDENCY_MISSING', 'Install tesseract to read text from screenshots.');
+  const { stdout } = await run(tool, [file, 'stdout', 'tsv'], { timeout: 45_000, maxBuffer: 16 * 1024 * 1024 });
+  return parseTsv(stdout, { words: true });
 }

@@ -4,14 +4,14 @@
 // pipes and whenever --json is passed).
 export const commands = [
   'doctor', 'actions', 'jobs', 'job', 'invoke', 'screenshot', 'annotate', 'search', 'recent', 'latest', 'collect', 'read', 'image', 'status', 'meetings', 'screenshots', 'tasks', 'indicator',
-  'screens list', 'windows list', 'capture ocr', 'capture image', 'capture copy', 'clipboard read', 'clipboard write',
+  'screens list', 'windows list', 'capture ocr', 'capture compare', 'capture targets', 'capture image', 'capture copy', 'clipboard read', 'clipboard write',
   'record start', 'record stop', 'record cancel', 'record status', 'record result',
   'note create', 'note append', 'note update', 'note attach',
   'library search', 'library recent', 'library read', 'library related', 'library rename', 'library pin', 'library unpin', 'library hide', 'library unhide', 'library delete',
   'task list', 'task add', 'task update', 'task complete', 'task reopen', 'task delete',
 ];
 export const flags = ['json', 'help', 'id', 'query', 'kind', 'limit', 'offset', 'after', 'before', 'title', 'body', 'body-file', 'file', 'display', 'region', 'window-id', 'coordinates', 'ops', 'ops-file',
-  'dry-run', 'preview', 'request-id', 'no-wait', 'wait-timeout', 'root', 'offline', 'format', 'text', 'session-id', 'max-duration', 'expected-updated-at', 'expected-revision', 'expected-version',
+  'before-id', 'after-id', 'ignore-rects', 'threshold', 'granularity', 'dry-run', 'preview', 'request-id', 'no-wait', 'wait-timeout', 'root', 'offline', 'format', 'text', 'session-id', 'max-duration', 'expected-updated-at', 'expected-revision', 'expected-version',
   'source-id', 'path', 'alt', 'confirm', 'pinned-only', 'lexical-only', 'semantic', 'notes', 'due', 'clear-due', 'state', 'mode'];
 
 function distance(a, b) {
@@ -50,8 +50,6 @@ const alternatives = [
   [/^theme/, 'Themes are Mac-only. Search by words with myman library search --query TEXT --json.'],
   [/^recording\.(pause|resume)|^record (pause|resume)/, 'Stop this recording and start another; each take is saved separately.'],
   [/^recording\.(frames|export)|^record (frames|export)/, 'Not on Linux yet. The recording result includes the MP4 path, which ffmpeg can trim or sample.'],
-  [/^screenshot\.compare|^capture compare/, 'Not on Linux yet. Capture both images, then compare the returned PNG paths.'],
-  [/^screenshot\.targets|^capture targets/, 'Use myman capture ocr --id SHOT-ID --json for line text with pixel boxes.'],
   [/^(meeting|dictation|live-?text)/, 'Meetings, dictation and Live Text are Mac-only. Record video with myman record start, or capture a screenshot and read its text.'],
   [/^(bundle|handoff|lease|agent|collaboration|machine|session)/, 'Named agents and multi-agent sharing are Mac-only. Use notes (myman note create) to hand work to another agent on this machine.'],
   [/^(timer|reminder)/, 'Timers are Mac-only. Use a systemd user timer or your agent host\'s scheduler.'],

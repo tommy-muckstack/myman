@@ -205,3 +205,9 @@ On Omarchy, add this module to `bar.layout.right` in `~/.config/omarchy/shell.js
 ```
 
 On Waybar, add `"custom/myman": { "exec": "myman indicator", "return-type": "json", "interval": 2, "signal": 9 }` to your config and set `MYMAN_WAYBAR_SIGNAL=9` in the agent's environment so the light updates instantly instead of on the next poll.
+
+## Compare screenshots and find text
+
+`myman capture compare --before-id ID --after-id ID --json` returns the same fields as the Mac app: `changed_pixels`, `compared_pixels`, `change_ratio`, changed `regions` (image-pixel top-left rectangles, grouped in 32-pixel tiles), `changed_text` (`added` and `removed` OCR lines), and a side-by-side PNG in `path` that is deleted after an hour. Both screenshots must be the same size. `--ignore-rects '[[x,y,w,h]]'` skips areas such as a clock, and `--threshold` (0 to 255, default 20) sets how different a pixel must be to count. It needs the library grant because it reads two saved items. Neither screenshot is changed.
+
+`myman capture targets --id SHOT-ID --query TEXT --json` finds text on a screenshot and returns regions with stable IDs (`ocr-…` for lines, `word-ocr-…` with `--granularity word`) and exact pixel rectangles you can pass to `annotate`.
