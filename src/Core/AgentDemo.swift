@@ -473,8 +473,10 @@ extension AgentActions {
                 guard !DemoStage.ownsPoint(global(p)) else { throw AgentError("INVALID_ARGUMENTS", "Step \(step + 1) would click on My Man itself, which demos never do.") }
                 return p
             }
+            // My Man's panels (Settings, launcher) can hold the keyboard without
+            // My Man being the active app, so any key window of ours counts.
             func keysAllowed(step: Int) throws {
-                guard !NSApp.isActive else { throw AgentError("INVALID_ARGUMENTS", "Step \(step + 1) would type into My Man itself, which demos never do.") }
+                guard !NSApp.isActive, NSApp.keyWindow == nil else { throw AgentError("INVALID_ARGUMENTS", "Step \(step + 1) would type into My Man itself, which demos never do.") }
             }
             try await DemoInput.glide(to: CGPoint(x: area.midX, y: area.midY), seconds: 0)
             let g = DemoStage.global(area)
@@ -543,12 +545,17 @@ extension AgentActions {
                 case .type(let text, let cps, let at):
                     var focus = last
                     if let at { focus = try checked(try await spot(at, step: i), step: i) }
-                    try keysAllowed(step: i)
                     let from = now()
-                    try await DemoInput.type(text, cps: cps)
+                    // Checked before every character: a keystroke could open a My Man panel mid-string.
+                    for character in text { try keysAllowed(step: i); try await DemoInput.type(String(character), cps: cps) }
                     acted.append(.init(typing: (from, now(), focus)))
                 case .key(let k): try keysAllowed(step: i); try DemoInput.key(k); try await Task.sleep(for: .milliseconds(200))
-                case .scroll(let n): try keysAllowed(step: i); try await DemoInput.scroll(n); try await Task.sleep(for: .milliseconds(200))
+                case .scroll(let n):
+                    // Scrolling goes to the window under the pointer, wherever it is now.
+                    if let at = CGEvent(source: nil)?.location, DemoStage.ownsPoint(at) {
+                        throw AgentError("INVALID_ARGUMENTS", "Step \(i + 1) would scroll My Man itself, which demos never do.")
+                    }
+                    try await DemoInput.scroll(n); try await Task.sleep(for: .milliseconds(200))
                 }
             }
             try await Task.sleep(for: .milliseconds(Int(DemoScript.leadOut * 1000)))
