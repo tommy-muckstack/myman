@@ -65,4 +65,23 @@ final class AgentDemoTests: XCTestCase {
         defaults.set(true, forKey: "agentControlEnabled")
         try AgentConsent.validate("demo.run", args: [:], defaults: defaults)
     }
+
+    func testLookNamesElementsLikePeopleReadThem() {
+        XCTAssertEqual(DemoLook.label(title: " ", description: "Play", placeholder: nil, help: "Starts playback", value: nil), "Play")
+        XCTAssertEqual(DemoLook.label(title: nil, description: nil, placeholder: "Search songs", help: nil, value: "lofi"), "Search songs")
+        XCTAssertNil(DemoLook.label(title: nil, description: "", placeholder: nil, help: nil, value: nil))
+    }
+
+    func testLookKeepsControlsAndAddsOnlyUncoveredText() {
+        let play = DemoLook.Element(kind: "button", label: "Play", rect: CGRect(x: 10, y: 100, width: 60, height: 24))
+        let playText = DemoLook.Element(kind: "text", label: "Play", rect: CGRect(x: 22, y: 104, width: 30, height: 14))
+        let title = DemoLook.Element(kind: "text", label: "Tunes", rect: CGRect(x: 12, y: 10, width: 50, height: 16))
+        let bar = DemoLook.Element(kind: "text", label: "|", rect: CGRect(x: 200, y: 10, width: 2, height: 16))
+        XCTAssertEqual(DemoLook.merge([play], [playText, title, bar]), [title, play])
+        let json = play.json(2)
+        XCTAssertEqual(json["n"] as? Int, 2)
+        XCTAssertEqual(json["click"] as? [Int], [40, 112])
+        XCTAssertEqual(json["source"] as? String, "accessibility")
+        XCTAssertEqual(title.json(1)["source"] as? String, "text")
+    }
 }

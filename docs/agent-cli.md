@@ -177,6 +177,16 @@ myman demo --app Spotify --script steps.json --json
 {"title": "Spotify in 20 seconds", "steps": [{"click": [320, 60]}, {"type": "lofi beats"}, {"key": "Return"}, {"wait": 1.5}, {"scroll": 3}]}
 ```
 
+### Describe the demo, let your agent make it
+
+You don't write coordinates. Tell your agent what the demo should show ("search for lofi beats in Spotify and play the first result") and it does the rest:
+
+1. `myman demo --look --app Spotify --json` opens the app and returns a picture of its window, a numbered copy with a faint grid every 50 points, and `elements`: each button, field and label with the point to click. On the Mac, buttons and fields come from Accessibility, and other text comes from reading the window.
+2. The agent matches your description to the numbered elements (reading anything unlisted, such as an icon, off the grid) and writes the steps file.
+3. It checks the file with `--dry-run`, runs `myman demo`, and looks over the result with `myman record frames` before handing it back.
+
+`--look` needs the same grants as a demo because it opens the app. Its pictures are temporary. Pass `--window` with part of a title when the app has several windows.
+
 The steps file uses the same keys as the Linux companion: `click`, `move`, `type`, `key`, `scroll` and `wait`. Points are measured from the top-left of the recorded area, which is the app's window by default. Keys use Mac names such as `cmd+s`, `Return` and `Escape`. Other script keys are `app`, `window` (part of a window title), `region`, `title`, `end`, `polish` (a `record polish` recipe, or `false`), `close`, `focus` and `max_duration`. Set `"focus": false` to leave other apps visible. The app is quit afterwards only if the demo opened it. The demo needs the recording and control grants, plus Accessibility access for MyMan in System Settings. A demo records no system audio.
 
 ## Notes, library, tasks, themes, and fonts

@@ -334,6 +334,8 @@ enum DemoInput {
 
 extension AgentActions {
     func runDemo(_ args: [String: Any]) async throws -> [String: Any] {
+        if args["look"] as? Bool == true { return try await lookDemo(args) }
+        guard args["script"] != nil else { throw AgentError("INVALID_ARGUMENTS", "Pass --script with a steps file, or --look --app NAME to see the app first.") }
         let plan = try DemoScript.parse(args["script"], app: args["app"] as? String)
         // Check the polish recipe before anything opens or records.
         var recipe = plan.polish
@@ -441,5 +443,154 @@ extension AgentActions {
             if let session { _ = try? await execute("recording.cancel", ["session_id": session]) }
             throw error
         }
+    }
+}
+
+/// `myman demo --look`: show an agent the app before it writes steps. It
+/// returns a picture of the app's window, a numbered copy with a 50-point grid,
+/// and each button, field and label with the point to click, in the same
+/// window points the steps use. Controls come from Accessibility; text the
+/// Accessibility tree doesn't cover comes from reading the window.
+enum DemoLook {
+    struct Element: Equatable {
+        let kind: String
+        let label: String
+        let rect: CGRect
+        func json(_ n: Int) -> [String: Any] {
+            ["n": n, "kind": kind, "text": label, "click": [Int(rect.midX.rounded()), Int(rect.midY.rounded())],
+             "rect": [rect.minX, rect.minY, rect.width, rect.height].map { Int($0.rounded()) }, "source": kind == "text" ? "text" : "accessibility"]
+        }
+    }
+    static let roles: [String: String] = [
+        "AXButton": "button", "AXTextField": "field", "AXSearchField": "search field", "AXTextArea": "text area", "AXComboBox": "field",
+        "AXCheckBox": "checkbox", "AXRadioButton": "option", "AXPopUpButton": "menu", "AXMenuButton": "menu", "AXLink": "link",
+        "AXTab": "tab", "AXSlider": "slider", "AXDisclosureTriangle": "disclosure", "AXSegmentedControl": "segmented control", "AXIncrementor": "stepper",
+    ]
+    /// The first non-empty of the element's names, in the order people read them.
+    static func label(title: String?, description: String?, placeholder: String?, help: String?, value: String?) -> String? {
+        for candidate in [title, description, placeholder, help, value] {
+            if let text = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty { return String(text.prefix(120)) }
+        }
+        return nil
+    }
+    static func overlaps(_ a: CGRect, _ b: CGRect) -> Bool {
+        let i = a.intersection(b)
+        return !i.isNull && i.width * i.height > 0.3 * min(a.width * a.height, b.width * b.height)
+    }
+    /// Controls first; text is added only where no control already covers it.
+    static func merge(_ controls: [Element], _ text: [Element]) -> [Element] {
+        var out = controls
+        for t in text where t.label.rangeOfCharacter(from: .alphanumerics) != nil && !out.contains(where: { overlaps($0.rect, t.rect) }) { out.append(t) }
+        return Array(out.sorted { a, b in a.rect.minY != b.rect.minY ? a.rect.minY < b.rect.minY : a.rect.minX < b.rect.minX }.prefix(200))
+    }
+
+    private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+    }
+    private static func text(_ element: AXUIElement, _ name: String) -> String? { attribute(element, name) as? String }
+    private static func frame(_ element: AXUIElement) -> CGRect? {
+        guard let p = attribute(element, "AXPosition"), let s = attribute(element, "AXSize"),
+              CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
+        var point = CGPoint.zero, size = CGSize.zero
+        guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size) else { return nil }
+        return CGRect(origin: point, size: size)
+    }
+    /// The app's labelled controls inside `window` (top-left screen points),
+    /// returned in window points. Bounded so a huge tree can't stall the look.
+    static func controls(pid: pid_t, in window: CGRect) -> [Element] {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 1)
+        var stack: [(AXUIElement, Int)] = []
+        for w in (attribute(app, "AXWindows") as? [AXUIElement]) ?? [] {
+            if let f = frame(w), overlaps(f, window) { stack.append((w, 0)) }
+        }
+        var out: [Element] = [], visited = 0
+        while visited < 4000, out.count < 200, let next = stack.popLast() {
+            let (element, depth) = next
+            visited += 1
+            if let role = text(element, "AXRole"), let kind = roles[role], let f = frame(element), f.width >= 4, f.height >= 4,
+               window.contains(CGPoint(x: f.midX, y: f.midY)),
+               let name = label(title: text(element, "AXTitle"), description: text(element, "AXDescription"), placeholder: text(element, "AXPlaceholderValue"),
+                                help: text(element, "AXHelp"), value: kind == "button" || kind == "checkbox" || kind == "option" ? nil : text(element, "AXValue")) {
+                out.append(Element(kind: kind, label: name, rect: f.offsetBy(dx: -window.minX, dy: -window.minY)))
+            }
+            if depth < 30, let children = attribute(element, "AXChildren") as? [AXUIElement] {
+                for child in children.reversed() { stack.append((child, depth + 1)) }
+            }
+        }
+        return out
+    }
+    /// The window picture with a faint grid every 50 points (labelled every 100)
+    /// and a numbered box round each element, so the picture and list match by eye.
+    static func numbered(_ image: NSImage, elements: [Element], scale: Double) -> NSImage {
+        let size = AgentImages.size(image), s = CGFloat(scale)
+        return NSImage(size: size, flipped: true) { _ in
+            image.draw(in: CGRect(origin: .zero, size: size), from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
+            let grid = NSBezierPath(); grid.lineWidth = s
+            var x: CGFloat = 50
+            while x * s < size.width { grid.move(to: CGPoint(x: x * s, y: 0)); grid.line(to: CGPoint(x: x * s, y: size.height)); x += 50 }
+            var y: CGFloat = 50
+            while y * s < size.height { grid.move(to: CGPoint(x: 0, y: y * s)); grid.line(to: CGPoint(x: size.width, y: y * s)); y += 50 }
+            NSColor(calibratedRed: 0, green: 0.6, blue: 1, alpha: 0.22).setStroke(); grid.stroke()
+            let ruler: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10 * s), .foregroundColor: NSColor(calibratedRed: 0, green: 0.47, blue: 0.67, alpha: 1)]
+            var mark: CGFloat = 100
+            while mark * s < size.width { ("\(Int(mark))" as NSString).draw(at: CGPoint(x: mark * s + 2 * s, y: size.height - 13 * s), withAttributes: ruler); mark += 100 }
+            mark = 100
+            while mark * s < size.height { ("\(Int(mark))" as NSString).draw(at: CGPoint(x: 2 * s, y: mark * s - 13 * s), withAttributes: ruler); mark += 100 }
+            let pink = NSColor(calibratedRed: 1, green: 0.18, blue: 0.58, alpha: 1)
+            let tagFont: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 11 * s), .foregroundColor: NSColor.white]
+            for (i, e) in elements.enumerated() {
+                let r = CGRect(x: (e.rect.minX - 2) * s, y: (e.rect.minY - 2) * s, width: (e.rect.width + 4) * s, height: (e.rect.height + 4) * s)
+                let box = NSBezierPath(rect: r); box.lineWidth = 2 * s; pink.setStroke(); box.stroke()
+                let tag = "\(i + 1)" as NSString, t = tag.size(withAttributes: tagFont)
+                let tagRect = CGRect(x: max(0, r.minX), y: r.minY >= t.height + 2 ? r.minY - t.height - 1 : r.maxY + 1, width: t.width + 6 * s, height: t.height)
+                pink.setFill(); NSBezierPath(rect: tagRect).fill()
+                tag.draw(at: CGPoint(x: tagRect.minX + 3 * s, y: tagRect.minY), withAttributes: tagFont)
+            }
+            return true
+        }
+    }
+}
+
+extension AgentActions {
+    func lookDemo(_ args: [String: Any]) async throws -> [String: Any] {
+        let script = args["script"] as? [String: Any]
+        guard let name = (args["app"] as? String) ?? (script?["app"] as? String), !name.isEmpty else {
+            throw AgentError("INVALID_ARGUMENTS", "Pass --app with the app to look at, e.g. myman demo --look --app Spotify.")
+        }
+        let title = (args["window"] as? String) ?? (script?["window"] as? String)
+        let trusted = AXIsProcessTrusted()
+        let front = NSWorkspace.shared.frontmostApplication
+        let opened = try await DemoStage.open(name)
+        let app = opened.0, launched = opened.1, close = script?["close"] as? Bool ?? true
+        defer {
+            if launched, close, app != .current, !app.isTerminated { app.terminate() }
+            DemoStage.restore([], front: front)
+        }
+        DemoStage.activate(app)
+        let area = DemoStage.clamp(try await DemoStage.window(of: app, title: title))
+        DemoStage.activate(app)
+        try await Task.sleep(for: .milliseconds(700))
+        let (image, scale) = try await capture.imageForAgent(region: DemoStage.global(area))
+        let s = CGFloat(max(scale, 0.5))
+        let controls = trusted ? DemoLook.controls(pid: app.processIdentifier, in: area) : []
+        let text = AgentMarkup.regions(await ImageAnalysis.textObservations(image), size: AgentImages.size(image)).map {
+            DemoLook.Element(kind: "text", label: $0.text, rect: CGRect(x: $0.rect.minX / s, y: $0.rect.minY / s, width: $0.rect.width / s, height: $0.rect.height / s))
+        }
+        let elements = DemoLook.merge(controls, text)
+        let shot = try AgentMediaStore.shared.image(image, prefix: "demo-look")
+        let numbered = try AgentMediaStore.shared.image(DemoLook.numbered(image, elements: elements, scale: Double(s)), prefix: "demo-look-numbered")
+        var result: [String: Any] = [
+            "app": app.localizedName ?? name, "window": ["size": [Int(area.width), Int(area.height)]],
+            "coordinates": "points from the top-left of the app window, the same as demo steps",
+            "screenshot": shot["path"] as Any, "numbered_screenshot": numbered["path"] as Any, "temporary": true,
+            "elements": elements.enumerated().map { $0.element.json($0.offset + 1) },
+            "element_source": trusted ? "Accessibility controls plus on-screen text. Anything unlisted (such as an unlabelled icon) can be read off the grid in the numbered screenshot."
+                                      : "On-screen text only; allow My Man under Accessibility to list buttons and fields too. Read anything unlisted off the grid in the numbered screenshot.",
+            "next": "Write steps that click the \"click\" points of the elements you need, check them with myman demo --script steps.json --dry-run, then run myman demo. The app is shown fresh for the demo, in the same state as this picture.",
+        ]
+        if !trusted { result["accessibility_trusted"] = false }
+        return result
     }
 }

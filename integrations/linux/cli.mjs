@@ -58,6 +58,7 @@ myman timer pause|resume|cancel --session-id ID --json; myman timer sound --sess
 myman reminder create --message TEXT --seconds N|--at ISO-WITH-OFFSET --json; myman reminder list|cancel [--id ID] --json
 myman record cursor --id REC-ID [--full] --json (pointer path, clicks, typing moments and where the action is)
 myman record polish --id REC-ID [--auto-zoom [subtle|normal|strong|1.1-4]] [--cursor [normal|big|huge|1-3]] [--background dusk|ocean|meadow|slate|none] [--background-color '#RRGGBB'] [--corner-radius N] [--music upbeat|calm|cinematic|/path/audio] [--music-volume 0-1] [--title TEXT] [--end TEXT] [--recipe FILE|JSON] [--dry-run] --json (polished copy: smooth zoom, cursor highlight, click ripples, backdrop like the image editor, music ducked under narration)
+myman demo --look --app 'gnome-calculator' --json (before writing steps: a picture of the app window, a numbered copy, and each piece of clickable text with the point to click)
 myman demo --script steps.json [--app 'gnome-calculator'] [--dry-run] --json (one command: open the app, record, run the steps, then polish with zoom, cursor, backdrop, music and title/end cards; X11; needs the recording and control grants)
 myman record frames --id REC-ID [--times 0,2.5|--count 6] [--width 400] --json (temporary PNGs + contact sheet)
 myman record export --id REC-ID [--start S] [--end S] [--max-bytes N] [--edits JSON] --json (new recording; caption/step/title/zoom/redact)
@@ -121,9 +122,11 @@ export async function main(argv) {
     // A demo launches the app and drives the mouse and keyboard, so beyond
     // recording it needs the separate control grant (off by default).
     // --dry-run only checks the steps file, so recording alone is enough.
-    const needs=argv.includes('--dry-run')?['recording']:['recording','control'];
+    // --look opens the app too, so it needs the same grants as a demo.
+    const needs=argv.includes('--dry-run')&&!argv.includes('--look')?['recording']:['recording','control'];
     await authorize(needs); identity.validate(await identity.authenticate(),needs);
     const val=f=>{const k=argv.indexOf(f); return k>=0?argv[k+1]:undefined;};
+    if (argv.includes('--look')) return demoRunner.look({script:val('--script'),app:val('--app'),window:val('--window')});
     return demoRunner.demo({script:val('--script'),app:val('--app'),dryRun:argv.includes('--dry-run')});
   }
   if (argv[0]==='record' && argv[1]==='polish') {

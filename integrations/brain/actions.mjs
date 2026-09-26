@@ -78,7 +78,7 @@ export async function musicFile(track, { cache = path.join(os.homedir(), 'Librar
 // A demo polishes with the upbeat track unless its script says otherwise.
 export async function withDemoMusic(args, options) {
   const script = args.script;
-  if (!script || typeof script !== 'object' || Array.isArray(script) || script.polish === false || args.dry_run === true) return args;
+  if (!script || typeof script !== 'object' || Array.isArray(script) || script.polish === false || args.dry_run === true || args.look === true) return args;
   const polish = script.polish && typeof script.polish === 'object' && !Array.isArray(script.polish) ? script.polish : {};
   if (script.polish !== undefined && polish !== script.polish) return args; // the app reports the bad recipe
   const music = polish.music === undefined ? 'upbeat' : polish.music;
