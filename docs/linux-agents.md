@@ -38,6 +38,12 @@ An existing Node 22+ is sufficient; no need to replace it. `hyprctl` is supplied
 
 Monitor selectors accept compositor output names (for example `DP-1`), `id:N`, or `main` (the focused output on Wayland). Coordinates are normalized to the desktop's top-left bounding origin, then exposed as global bottom-left or display-local top-left like X11. Wayland uses logical pixels and explicit grim scale 1, so fractional scaling, rotated outputs and monitors with negative layout positions remain consistent with annotation pixels. `native_scale` records the output's original scale; captured images are scale 1.
 
+`myman windows list --json` lists visible windows on X11, Hyprland (`hyprctl -j clients`, active and special workspaces only, most recently focused first, id is the client address) and Sway (`swaymsg -t get_tree`). Each window has app, title, PID, workspace, a compositor `frame`, and a `region` in global bottom-left coordinates clipped to the display that holds the window's centre (`clipped` or `offscreen` when that applies). Pass the id to `myman screenshot --window-id ID --json` to capture just that window; the result echoes `window_id` and the window's app and title. `--window-id` cannot be combined with `--region` or `--display`.
+
+### Omarchy theme-aware markup
+
+When an annotation has no `color` (and no top-level `--color`), markup uses the active Omarchy theme from `${XDG_STATE_HOME:-~/.local/state}/omarchy/current/theme/colors.toml` (falling back to the legacy `~/.config/omarchy/current/theme/colors.toml`): arrows use `red`, boxes and text use `accent`, highlights use `yellow`, each falling back to `accent`. The annotate result then carries `theme: {name, source: "omarchy"}`, and `doctor` reports `markup_theme`. Explicit colors always win. Set `MYMAN_MARKUP_THEME=none` to keep the default `#FF375F`, or a path to a specific `colors.toml` to pin one theme.
+
 References: [Omarchy manual](https://omarchy.org/manual/), [grim geometry and scaling](https://man.archlinux.org/man/grim.1.en).
 
 Use the X11 desktop's `DISPLAY` and, if needed, `XAUTHORITY`. For a virtual desktop:

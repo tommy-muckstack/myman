@@ -1,3 +1,4 @@
+import { markupTheme } from './theme.mjs';
 import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +11,7 @@ import { execute } from '../brain/tools.mjs';
 import { annotate, capture, ocr, screens } from './images.mjs';
 import { captureEntry, saveCapture, saveNote } from './library.mjs';
 import * as recording from './recording.mjs';
-import { clipboardRead, clipboardWrite, ocrRegions, windowsList } from './desktop.mjs';
+import { clipboardRead, clipboardWrite, ocrRegions, windowRegion, windowsList } from './desktop.mjs';
 import { processIdentity, workerAlive } from './process-identity.mjs';
 import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
@@ -23,13 +24,14 @@ export function errorData(error) { return {code:error.code || (error instanceof 
 export async function capabilities(name, offline=false) {
   if (name && !schemas.has(name)) fail('UNKNOWN_ACTION','Unknown action name.');
   const actions=catalog.actions.filter(a=>!name || a.name===name).map(a=>({...a,supported:supported.has(a.name),platforms:supported.has(a.name)?['darwin','linux']:['darwin']}));
-  const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,config_path:configPath(),limitations:['X11 capture (Wayland via grim)','Explicit pixel geometry; no Live Text targeting','Video-only recording (no microphone, system audio, webcam or window capture)','Window list and clipboard need X11 (xprop/xwininfo, xclip) or wl-clipboard','No native UI, meetings or dictation']};
+  const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,config_path:configPath(),limitations:['X11 capture (Wayland via grim)','Explicit pixel geometry; no Live Text targeting','Video-only recording (no microphone, system audio, webcam or window capture)','Windows: X11, Hyprland (Omarchy) or Sway; clipboard: xclip or wl-clipboard','No native UI, meetings or dictation']};
   return name ? {...actions[0],...metadata,grants:await grants()} : {...metadata,permissions:await grants(),actions};
 }
+async function markupThemeInfo(){const t=await markupTheme();return {source:t.source,name:t.name,colors:t.colors};}
 export async function doctor() {
   const deps=await dependencies();
   let desktop; try { desktop=await screens(); } catch(error) { desktop={ok:false,error:errorData(error)}; }
-  return {platform:'linux',version,permissions:await grants(),system_policy:{path:systemPolicyPath,present:(await systemGrants())!==null},config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (desktop.session==='wayland'?deps.grim:(deps.scrot||deps.import||deps.ffmpeg)) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git,recording:!!(desktop.displays && (desktop.session==='wayland'?deps['wf-recorder']:deps.ffmpeg) && deps.git)},note:'Owner grants are required independently of dependency readiness.'};
+  return {platform:'linux',version,permissions:await grants(),system_policy:{path:systemPolicyPath,present:(await systemGrants())!==null},markup_theme:await markupThemeInfo(),config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (desktop.session==='wayland'?deps.grim:(deps.scrot||deps.import||deps.ffmpeg)) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git,recording:!!(desktop.displays && (desktop.session==='wayland'?deps['wf-recorder']:deps.ffmpeg) && deps.git)},note:'Owner grants are required independently of dependency readiness.'};
 }
 function validate(name,args) {
   if (!schemas.has(name)) fail('UNKNOWN_ACTION', 'Use actions to discover supported action names.');
@@ -57,6 +59,11 @@ export async function dispatch(name,args) {
   const dir=await directory(path.join(statePath(),'work'),true,true);
   const work=await mkdtemp(path.join(dir,'capture-'));
   try {
+    if (name==='screenshot.capture' && args.window_id) {
+      if (args.region || args.display) fail('INVALID_ARGUMENTS','Choose window_id or region/display.');
+      const win=await windowRegion(args.window_id), {window_id,...rest}=args;
+      return {...await saveCapture(await capture({...rest,region:win.region,coordinates:'global'},work)),window_id:win.id,window:{app:win.app,title:win.title}};
+    }
     if (name==='screenshot.capture') return await saveCapture(await capture(args,work));
     const entry=await captureEntry(args.id);
     const result=await annotate(entry.image_path,args,work);
@@ -71,7 +78,8 @@ export async function dispatch(name,args) {
       await atomic(file,data);
       return {preview:true,source_id:args.id,path:file,image_path:file,width:result.width,height:result.height,expires_at:new Date(Date.now()+3600_000).toISOString(),attachment:{path:file,mime_type:'image/png',width:result.width,height:result.height,duration:null,file_size:data.length,preview_path:file}};
     }
-    return await saveCapture(result,args.id);
+    const saved=await saveCapture(result,args.id);
+    return result.theme?{...saved,theme:result.theme}:saved;
   } finally { await rm(work,{recursive:true,force:true}); }
 }
 const receiptPath=id=>{ if(!uuid.test(id || ''))fail('INVALID_ARGUMENTS','Job/request IDs must be UUIDs.');return path.join(statePath(),'jobs',`${id.toLowerCase()}.json`); };
