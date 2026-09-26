@@ -208,7 +208,7 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
-## Human and agent workflows (1.1.67 / companion 0.10.0)
+## Human and agent workflows (1.1.100 / companion 0.13.0)
 
 Workflows and Recovery brings connection checks, selected context handoff, source-backed meeting decisions, dictation delivery history and safe continuation into My Man. Scrolling capture and floating references join keyboard/VoiceOver capture controls and scalable interface text. [Workflow guide](https://github.com/tommy-muckstack/myman/blob/main/docs/human-agent-workflows.md).
 

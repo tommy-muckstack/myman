@@ -9,6 +9,20 @@ Key facts:
 - Check permissions before acting with `myman doctor --json` or the `myman_app_capabilities` MCP tool. Agents cannot grant themselves permissions.
 - No cloud relay, account, or API key. Requires macOS 14.2+ (screen recording needs macOS 15+).
 
+## Linux and Omarchy
+
+- What it is: a Node.js 22+ companion (version 0.13.0 in My Man 1.1.100) for Ubuntu/X11 and Omarchy/Hyprland (Sway also works): screenshots, markup, OCR, video-only screen recording, polished demos, meetings, Voxtype dictation, notes, tasks, Brain search, and the same `myman-app` MCP actions where supported. `myman actions` reports what is supported on Linux.
+- Install from a release: download `myman-linux-x64.tar.gz` and `myman-linux-x64.tar.gz.sha256` from https://github.com/tommy-muckstack/myman/releases/latest, then run `sha256sum -c myman-linux-x64.tar.gz.sha256`, `tar -xzf myman-linux-x64.tar.gz`, and `bash myman-linux-x64/scripts/install-linux.sh`. The installer never runs sudo; it prints the optional apt or pacman packages (for example ImageMagick, grim on Wayland, tesseract for OCR, ffmpeg or wf-recorder for recording).
+- CLI path: the installer puts the launcher at `~/.local/bin/myman` (programs in `~/.local/share/myman`; `MYMAN_INSTALL_PREFIX` changes `~/.local`). Add `~/.local/bin` to `PATH`. MCP servers: `node ~/.local/share/myman/app-server.mjs` (actions) and `node ~/.local/share/myman/server.mjs` (read-only Brain search). The Brain is `~/MyManBrain`.
+- Arch/Omarchy package: `packaging/aur/` has a `myman-bin` PKGBUILD (installs to `/usr/lib/myman`, adds `/usr/bin/myman` and `/usr/bin/myman-setup`). It is not published on the AUR yet, so build it from that folder with `makepkg -si`, then run `myman-setup` once as each user. On Omarchy, `myman omarchy install` adds a SUPER+SHIFT+PRINT "show my agents" key and a MyMan menu.
+- Owner grants: `~/.config/myman/agents.json` (or `$XDG_CONFIG_HOME/myman/agents.json`), created with every grant off: `{"version": 1, "grants": {"enabled": false, "capture": false, "markup": false, "recording": false, "library": false, "microphone": false, "control": false}}`. Only the owner edits this file; there is no CLI or MCP action that turns a grant on. An optional root-owned `/etc/myman/agents.json` caps them. Check with `myman doctor --json`.
+- `myman demo` (one-command product demo, X11 only):
+  1. Look: `myman demo --look --app gnome-calculator --json` returns a picture of the app window, a numbered copy with a 50-point grid, and each piece of on-screen text with its click point.
+  2. Steps: write a steps file with `wait`, `move`, `click`, `type`, `key` and `scroll` steps. Clicks can name the text to click, for example `{"click": "Play", "caption": "Start the song"}` (`"nth": 2` picks the second match). A `caption` is a short line shown while that step plays.
+  3. Dry run: `myman demo --script steps.json --dry-run --json` checks the file and prints the plan and estimated length without opening anything (needs only the `recording` grant).
+  4. Run: `myman demo --script steps.json --json` opens the app, records only its window, runs the steps, then polishes the video with zoom, cursor, backdrop, music, and title and end cards. Needs the owner's `recording` and `control` grants.
+- Wayland (Omarchy/Hyprland, Sway): screenshots and recording work (grim, wf-recorder), but `myman demo` and `demo --look` are not supported yet because they drive the app with xdotool. Record with `myman record start` and polish with `myman record polish` instead.
+
 ## Docs
 
 - [README, agent section](https://github.com/tommy-muckstack/myman#for-ai-agents-claude-grok-bot-cursor): what agents can do and how to connect
