@@ -84,7 +84,7 @@ for(const entry of entries) {
   const second=randomUUID(),pending=await ok(entry,['note','create','--body','async receipt','--request-id',second,'--no-wait'],f.env);
   assert.equal(pending.job_id,second);
   let receipt;for(let i=0;i<100;i++){receipt=await ok(entry,['job',second],f.env);if(receipt.job.state!=='running')break;await new Promise(r=>setTimeout(r,50));}
-  assert.equal(receipt.job.state,'succeeded');assert.equal((await ok(entry,['jobs'],f.env)).jobs.length,2);
+  assert.equal(receipt.job.state,'succeeded');const ids=(await ok(entry,['jobs'],f.env)).jobs.map(j=>j.job_id??j.id);assert.ok(ids.includes(request)&&ids.includes(second),'both note receipts are listed');
   const shared=randomUUID(),sharedArgs=['note','create','--body','Concurrent retry','--request-id',shared];
   const twins=await Promise.all([ok(entry,sharedArgs,f.env),ok(entry,sharedArgs,f.env)]);assert.equal(twins[0].id,twins[1].id);
 
