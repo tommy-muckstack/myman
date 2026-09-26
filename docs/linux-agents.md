@@ -218,6 +218,14 @@ myman record polish --id rec-UUID --auto-zoom --cursor big --json
 
 The result adds `cursor: {drawn, highlight, ripples}` and `warnings`, and the returned `recipe` reproduces the same video. Check a few `preview_times` with `myman record frames`.
 
+### Polished demos: background
+
+`myman record polish --id rec-UUID --background ocean --json` puts the recording on the same backdrops the image editor and the Mac app's recording polish use: `dusk`, `ocean`, `meadow` and `slate` (diagonal gradients), or a custom colour with `--background-color '#1E293B'`. The video becomes a card with rounded corners (`--corner-radius`, 18 by default) and a soft shadow. The padding is 6% of the width (at least 32 pixels), so the output grows by the padding on every side and the video itself is never scaled down. It combines with `--auto-zoom` and `--cursor`, and the zoom happens inside the card. Drawing the background adds almost no render time, because the backdrop is drawn once as an image with a rounded window cut out.
+
+- Recipe key `background` is a style name, or an object with `style` (`dusk`, `ocean`, `meadow`, `slate`, `custom` or `none`), `color` (only with `custom`, which is also assumed when `color` is given alone), `corner_radius` (0 to 200), `padding` (0 to 0.3 of the width) and `shadow` (`true`, `false`, or an opacity from 0 to 1; the default is 0.45). Unknown keys and styles are errors.
+- The result adds `background: {style, output, video_box}`. `video_box` is where the video sits on the canvas, which helps when placing things later.
+- `myman record polish --id rec-UUID --auto-zoom --cursor big --background ocean --json` is the usual full polish.
+
 ## Brain and MCP
 
 The layout is the existing `notes/*.md`, `screenshots/*.md`, version-1 `catalog.json`, and Git history. Original PNGs live under `assets/captures`, with 400px thumbnails under `assets/capture-thumbnails`. Existing catalog entries and legacy Markdown exports are preserved. Git commits include only the new document/assets and catalog, leaving unrelated staged files untouched. No remotes are added and nothing is pushed. A Git failure after a successful save returns the saved ID and `git.committed: false`, so an agent can repair Git without duplicating the item.

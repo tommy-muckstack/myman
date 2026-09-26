@@ -4,14 +4,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { FPS, LEVELS, MAX_RIPPLES, SIZES, YELLOW, cursorChain, cursorCommands, cursorFrames, level, parseCursor, parseRecipe, zoomExpressions, zoomGraph, zoomPlan } from '../studio.mjs';
+import { BACKDROPS, FPS, LEVELS, MAX_RIPPLES, backgroundChain, backgroundLayout, drawBackground, parseBackground, SIZES, YELLOW, cursorChain, cursorCommands, cursorFrames, level, parseCursor, parseRecipe, zoomExpressions, zoomGraph, zoomPlan } from '../studio.mjs';
 
 const size = { width: 800, height: 600, duration: 20 };
 const has = cmd => { try { execFileSync(cmd, ['-version'], { stdio: 'ignore' }); return true; } catch { return false; } };
 
 test('recipes are strict JSON: named or numeric levels, unknown keys rejected', () => {
   assert.equal(level('subtle'), LEVELS.subtle); assert.equal(level(undefined), LEVELS.normal); assert.equal(level('2.2'), 2.2);
-  assert.deepEqual(parseRecipe({}), { zoom: null, cursor: null });
+  assert.deepEqual(parseRecipe({}), { zoom: null, cursor: null, background: null });
   const r = parseRecipe({ zoom: { auto: true, level: 'strong' } });
   assert.equal(r.zoom.auto, true); assert.equal(r.zoom.level, 2.4); assert.equal(r.zoom.ramp, 0.6);
   const m = parseRecipe({ zoom: { moments: [{ start: 1, end: 2, x: 10, y: 20, level: 3 }] } });
@@ -120,5 +120,41 @@ test('rendering draws the cursor layers on the right frames', { skip: !has('ffmp
     const luma = (n, x, y) => Number(execFileSync('sh', ['-c', `ffmpeg -loglevel error -i "${out}" -vf "select=eq(n\\,${n}),crop=4:4:${x - 2}:${y - 2},format=gray" -frames:v 1 -f rawvideo - | od -An -tu1 | awk '{for(i=1;i<=NF;i++)s+=$i} END{print s/16}'`]).toString());
     assert.ok(luma(10, 60, 60) > 60 && luma(10, 260, 180) < 20, 'highlight at the first position');
     assert.ok(luma(45, 260, 180) > 60 && luma(45, 60, 60) < 20, 'and at the second after the move');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('backgrounds use the image editor names and colours; custom needs a colour; unknown keys rejected', () => {
+  assert.equal(parseBackground(undefined), null); assert.equal(parseBackground('none'), null); assert.equal(parseBackground({ style: 'None' }), null);
+  assert.deepEqual(parseBackground(true), { style: 'ocean', colors: BACKDROPS.ocean, corner_radius: 18, padding: 0.06, shadow: 0.45 });
+  assert.deepEqual(Object.keys(BACKDROPS), ['dusk', 'ocean', 'meadow', 'slate']);
+  assert.equal(parseBackground('Dusk').style, 'dusk');
+  const custom = parseBackground({ color: '#1e293b', corner_radius: 30 });
+  assert.equal(custom.style, 'custom'); assert.deepEqual(custom.colors, ['#1E293B', '#1E293B']); assert.equal(custom.corner_radius, 30);
+  assert.equal(parseRecipe({ background: 'slate' }).background.style, 'slate');
+  for (const b of [{ style: 'midnight' }, { style: 'custom' }, { style: 'ocean', color: '#000000' }, { color: 'navy' }, { corner_radius: 500 }, { padding: 1 }, { blur: 3 }, []]) assert.throws(() => parseBackground(b), e => e.code === 'INVALID_ARGUMENTS', JSON.stringify(b));
+});
+
+test('background layout matches the Mac: 6% padding (at least 32px) around the full-size video', () => {
+  const L = backgroundLayout(parseBackground('ocean'), { width: 1280, height: 800 });
+  assert.deepEqual(L, { W: 1434, H: 954, w: 1280, h: 800, x: 77, y: 77, r: 18 });
+  assert.equal(backgroundLayout(parseBackground('ocean'), { width: 320, height: 240 }).x, 32);
+  assert.equal(backgroundLayout(parseBackground({ style: 'ocean', padding: 0 }), { width: 321, height: 241 }).W, 322, 'odd sizes are made even for H.264');
+});
+
+test('background render: backdrop colours outside, video untouched inside, rounded corners', { skip: !has('ffmpeg') || !has('convert') }, async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'studio-bg-'));
+  try {
+    const src = path.join(dir, 'src.mp4'), out = path.join(dir, 'out.mp4');
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=white:s=320x240:r=30:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', src]);
+    const bg = parseBackground({ color: '#FF0000', corner_radius: 20, shadow: false }), L = backgroundLayout(bg, { width: 320, height: 240 });
+    const art = await drawBackground(dir, bg, L);
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-i', src, '-loop', '1', '-framerate', '30', '-i', art.file, '-filter_complex', backgroundChain(L, { input: '[0:v]fps=30,', bgIn: 1 }), '-map', '[out]', '-c:v', 'libx264', '-y', out]);
+    const probe = execFileSync('ffprobe', ['-v', 'error', '-count_frames', '-show_entries', 'stream=nb_read_frames,width,height', '-of', 'csv=p=0', out]).toString().trim();
+    assert.equal(probe, `${L.W},${L.H},30`, 'every frame kept, canvas grown by the padding');
+    const px = (x, y) => execFileSync('sh', ['-c', `ffmpeg -loglevel error -i "${out}" -vf "select=eq(n\\,5),crop=2:2:${x}:${y}" -frames:v 1 -f rawvideo -pix_fmt rgb24 - | od -An -tu1`]).toString().trim().split(/\s+/).map(Number).slice(0, 3);
+    const red = p => p[0] > 200 && p[1] < 60 && p[2] < 60, white = p => p.every(v => v > 220);
+    assert.ok(red(px(10, 10)), 'backdrop in the padding');
+    assert.ok(white(px(L.x + 160, L.y + 120)), 'video in the middle');
+    assert.ok(red(px(L.x + 2, L.y + 2)), 'the corner is rounded off');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

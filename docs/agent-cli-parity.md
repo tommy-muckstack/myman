@@ -98,6 +98,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Recording cursor track | `record cursor --id REC-ID [--full]` (pointer, clicks, typing moments, activity spans) | Hyprland: movement only; Sway: unavailable | Saved beside each recording; keys are never identified |
 | Polished demo: smooth auto-zoom | `record polish --id REC-ID --auto-zoom [level] [--recipe JSON] [--dry-run]` | Linux only; Mac has cut-in `record export` zoom | New recording; eased zoom and pan from the cursor track or hand-written moments |
 | Polished demo: cursor polish | `record start --hide-cursor`; `record polish --id REC-ID --cursor [normal\|big\|huge\|1-3]` | Linux (X11) only; not on Mac yet | Drawn smooth arrow when the cursor was hidden, highlight, click ripples |
+| Polished demo: background | `record polish --id REC-ID --background dusk\|ocean\|meadow\|slate\|none [--background-color HEX] [--corner-radius N]` | Same backdrops, padding and shadow as Mac recording polish and the image editor | Rounded card on a gradient or colour; output grows by the padding |
 
 Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
 
