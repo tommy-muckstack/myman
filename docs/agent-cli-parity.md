@@ -72,7 +72,8 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 
 | Capability | CLI | Linux | Behavior |
 | --- | --- | --- | --- |
-| OCR targets | `capture targets --query` | Unsupported | Stable line IDs, pixel rectangles, explicit ambiguity |
+| OCR targets | `capture targets --query` | Supported (tesseract; line and word granularity, stable IDs) | Stable line IDs, pixel rectangles, explicit ambiguity |
+| Screenshot comparison | `capture compare --before-id --after-id` | Supported (ImageMagick + tesseract; same fields, 32px regions, one-hour side-by-side PNG) | Changed pixels and ratio, regions, added/removed OCR text |
 | Rendered markup preview | `annotate --preview` | Supported; one-hour local preview | Temporary PNG; no library/clipboard/preference changes |
 | Theme-matched markup colors | App accent/markup colors | Supported on Omarchy (active theme colors.toml; `MYMAN_MARKUP_THEME=none|FILE`) | Explicit op colors always win |
 | Circles and numbered callouts | `annotate --ops` | Unsupported | Text/region targets or explicit geometry; existing editor renderer |
