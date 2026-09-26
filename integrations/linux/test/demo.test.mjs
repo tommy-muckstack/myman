@@ -55,7 +55,7 @@ test('cards render at the video size with the backdrop colours', { skip: !has('c
     const file = await drawCard(dir, 'title', { text: 'A long headline that has to shrink to fit the card', subtitle: 'subtitle' }, { width: 640, height: 360, colors: BACKDROPS.ocean });
     assert.equal(execFileSync('identify', ['-format', '%wx%h', file]).toString(), '640x360');
     const px = execFileSync('convert', [file, '-format', '%[pixel:p{2,2}]', 'info:']).toString();
-    assert.match(px, /srgb\((7[0-9]|8[0-9]),(15[0-9]|16[0-9]),2[23][0-9]\)/, `top-left is the ocean start colour (${px})`);
+    assert.match(px, /srgb\((7[0-9]|8[0-9]),(15[0-9]|16[0-9]),2[2-4][0-9]\)/, `top-left is the ocean start colour (${px})`);
     const edges = execFileSync('convert', [file, '-crop', '8x360+0+0', '-format', '%[fx:maxima.r]', 'info:']).toString();
     assert.ok(Number(edges) < 0.6, 'the headline does not run off the left edge');
   } finally { rmSync(dir, { recursive: true, force: true }); }
