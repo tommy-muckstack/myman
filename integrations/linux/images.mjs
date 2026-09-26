@@ -137,23 +137,28 @@ export async function annotate(source, args, work) {
     const color = op.color || args.color || '#FF375F';
     if (op.type === 'pixelate') {
       const [x,y,w,h] = op.rect;
-      await run(im, [current,'(',current,'-crop',`${w}x${h}+${x}+${y}`,'+repage','-scale',`${Math.max(1,Math.ceil(w/12))}x${Math.max(1,Math.ceil(h/12))}!`,'-scale',`${w}x${h}!`,')','-geometry',`+${x}+${y}`,'-composite',output]);
+      await run(im, [current,'(',current,'-crop',`${w}x${h}+${x}+${y}`,'+repage','-scale',`${Math.max(1,Math.ceil(w/12))}x${Math.max(1,Math.ceil(h/12))}!`,'-scale',`${w}x${h}!`,')','-geometry',`+${x}+${y}`,'-composite',`PNG32:${output}`]);
+    } else if (op.type === 'text') {
+      // Text stays an SVG overlay so user text is never parsed by ImageMagick's
+      // -annotate/-draw escapes. Shapes use numeric -draw primitives, because
+      // ImageMagick's internal MSVG renderer drops or fills stroke-only shapes.
+      const [x,y] = op.rect, font = op.font_size ?? 24;
+      const overlay = path.join(work, `overlay-${index}.svg`);
+      await writeFile(overlay, `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><text x="${x}" y="${y+font}" font-family="DejaVu Sans" font-size="${font}" fill="${color}">${xml(op.text)}</text></svg>`, { mode: 0o600 });
+      await run(im, [current,'-colorspace','sRGB','(','-background','none',`MSVG:${overlay}`,')','-compose','over','-composite',`PNG32:${output}`]);
     } else {
-      let shape;
+      let draw;
       if (op.type === 'arrow') {
         const [x,y] = op.to, [a,b] = op.from, angle = Math.atan2(y-b,x-a), length = Math.min(16,Math.hypot(x-a,y-b)/2);
         const points = [[x,y],[x-length*Math.cos(angle-.5),y-length*Math.sin(angle-.5)],[x-length*Math.cos(angle+.5),y-length*Math.sin(angle+.5)]];
-        shape = `<line x1="${a}" y1="${b}" x2="${x}" y2="${y}" stroke="${color}" stroke-width="3"/><polygon points="${points.map(p=>p.join(',')).join(' ')}" fill="${color}"/>`;
+        draw = ['-stroke',color,'-strokewidth','3','-fill','none','-draw',`line ${a},${b} ${x},${y}`,'-stroke','none','-fill',color,'-draw',`polygon ${points.map(p=>p.map(n=>n.toFixed(2)).join(',')).join(' ')}`];
       } else {
-        const [x,y,w,h] = op.rect;
-        if (op.type === 'text') {
-          const font = op.font_size ?? 24;
-          shape = `<text x="${x}" y="${y+font}" font-family="DejaVu Sans" font-size="${font}" fill="${color}">${xml(op.text)}</text>`;
-        } else shape = `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${op.type==='highlight'?color:'none'}" fill-opacity="${op.type==='highlight'?.3:1}" stroke="${op.type==='box'?color:'none'}" stroke-width="3"/>`;
+        const [x,y,w,h] = op.rect, box = `rectangle ${x},${y} ${x+w-1},${y+h-1}`;
+        draw = op.type === 'highlight'
+          ? ['-stroke','none','-fill',`${color}4D`,'-draw',box]
+          : ['-stroke',color,'-strokewidth','3','-fill','none','-draw',box];
       }
-      const overlay = path.join(work, `overlay-${index}.svg`);
-      await writeFile(overlay, `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${shape}</svg>`, { mode: 0o600 });
-      await run(im, [current,'(','-background','none',`MSVG:${overlay}`,')','-compose','over','-composite',output]);
+      await run(im, [current,'-colorspace','sRGB',...draw,`PNG32:${output}`]);
     }
     current = output;
   }

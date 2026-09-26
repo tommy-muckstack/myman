@@ -3761,7 +3761,7 @@
     },
     {
       "name": "timer.start",
-      "description": "Start a visible countdown widget; fails BUSY if a timer exists. Requires My Man to remain open.",
+      "description": "Start a visible countdown widget. Several timers can run at once; each gets its own session ID. Requires My Man to remain open.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3788,7 +3788,7 @@
     },
     {
       "name": "timer.status",
-      "description": "Read the active timer and its session ID.",
+      "description": "Read the newest timer and its session ID, plus every active timer in timers.",
       "inputSchema": {
         "type": "object",
         "properties": {},
