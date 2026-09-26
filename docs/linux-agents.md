@@ -177,6 +177,14 @@ X11 uses `ffmpeg` x11grab; Hyprland/Sway use `wf-recorder`. Regions follow the s
 
 Stopping saves `recordings/*.md`, a catalog entry, and a 400px thumbnail. The MP4 lives in `assets/recordings/`, which the companion adds to the Brain's `.gitignore`: videos stay on disk and are never committed, so the Brain's Git history stays small.
 
+### Cursor tracking
+
+Every recording also logs the pointer, so later steps (auto-zoom, cursor effects, finished demos) know where the action is. A small companion process runs only while the recorder runs. It samples the pointer position about 20 times a second, keeping a sample only when the pointer moved, and pauses when the recording pauses. It also logs each click and each moment a key is pressed. **Key presses are logged as a time only, never which key.** Times are seconds into the finished video, and positions are pixels inside the recorded region.
+
+Stopping saves the track as small JSON at `assets/recording-cursor/ID.json`. Unlike the video, the track is committed to Git. It is listed as `cursor_path` in the catalog and noted in the recording's Markdown, and deleting the recording deletes it too. `myman record cursor --id rec-UUID --json` (library grant) returns the clicks, the typing moments and `activity`: spans with a start, an end, a focus point and the reasons (`click`, `typing`, `pointer settled`), with nearby moments merged. `--full` adds every pointer position.
+
+On Omarchy and Hyprland the position comes from `hyprctl cursorpos`. Hyprland does not report clicks to other programs, so there the track has movement only and says `clicks_tracked: false`. On X11 the position comes from `xdotool`, and clicks and typing come from `xinput` (package `xorg-xinput`). Sway does not expose the pointer, so the track says `pointer: unavailable` rather than guessing. `MYMAN_CURSOR_TRACK=0` turns tracking off.
+
 ## Brain and MCP
 
 The layout is the existing `notes/*.md`, `screenshots/*.md`, version-1 `catalog.json`, and Git history. Original PNGs live under `assets/captures`, with 400px thumbnails under `assets/capture-thumbnails`. Existing catalog entries and legacy Markdown exports are preserved. Git commits include only the new document/assets and catalog, leaving unrelated staged files untouched. No remotes are added and nothing is pushed. A Git failure after a successful save returns the saved ID and `git.committed: false`, so an agent can repair Git without duplicating the item.

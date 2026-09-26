@@ -2,6 +2,7 @@ import { readdir, rm, stat, rename } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import * as identity from './identity.mjs';
 import { notify } from './indicator.mjs';
@@ -113,7 +114,7 @@ export async function stop({ id, keepAudio } = {}) {
   s.result = await saveMeeting({ id: s.id, title: s.title, started_at: s.started_at, ended_at: s.ended_at, status: 'processing', message: '_Transcribing on this computer. This note updates when it finishes._' });
   s.state = 'transcribing';
   await save(s);
-  const worker = spawn(process.execPath, [process.argv[1], 'meeting', 'transcribe', s.id], { detached: true, stdio: 'ignore', env: { ...process.env, MYMAN_AGENT_TOKEN: '' } });
+  const worker = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cli.mjs'), 'meeting', 'transcribe', s.id], { detached: true, stdio: 'ignore', env: { ...process.env, MYMAN_AGENT_TOKEN: '' } });
   worker.unref();
   notify('MyMan stopped the meeting recording', `${s.title} is saved. The transcript is being written on this computer.`, { urgency: 'low', icon: 'audio-input-microphone', tag: 'myman-meeting' });
   return { ok: true, ...view(s), next: `Read it when ready: myman library search --kind meetings --json (transcript_status turns ready).` };

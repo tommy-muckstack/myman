@@ -3,13 +3,15 @@ import { plan, unwrap, exitCode } from '../brain/app-cli.mjs';
 import { Brain } from '../brain/brain.mjs';
 import { execute } from '../brain/tools.mjs';
 import { capabilities, doctor, errorData, invoke, job, jobs } from './service.mjs';
-import { unsupported, fail } from './system.mjs';
+import { authorize, unsupported, fail } from './system.mjs';
 import { indicator } from './indicator.mjs';
 import * as identity from './identity.mjs';
 import * as omarchy from './omarchy.mjs';
 import { show } from './show.mjs';
 import * as dictation from './dictation.mjs';
 import * as meeting from './meeting.mjs';
+import * as recording from './recording.mjs';
+import * as cursor from './cursor.mjs';
 import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
@@ -52,6 +54,7 @@ myman record stop|cancel|status|pause|resume --session-id ID --json (video only;
 myman timer start --seconds N [--sound-enabled false] --json; myman timer status --json (library grant)
 myman timer pause|resume|cancel --session-id ID --json; myman timer sound --session-id ID --enabled true|false --json
 myman reminder create --message TEXT --seconds N|--at ISO-WITH-OFFSET --json; myman reminder list|cancel [--id ID] --json
+myman record cursor --id REC-ID [--full] --json (pointer path, clicks, typing moments and where the action is)
 myman record frames --id REC-ID [--times 0,2.5|--count 6] [--width 400] --json (temporary PNGs + contact sheet)
 myman record export --id REC-ID [--start S] [--end S] [--max-bytes N] [--edits JSON] --json (new recording; caption/step/title/zoom/redact)
 myman agent whoami|list --json; myman machine current --json (named agents: set MYMAN_AGENT_TOKEN)
@@ -104,6 +107,11 @@ export async function main(argv) {
   // default, while explicit interactive requests remain unsupported.
   if (argv.includes('--mode=interactive') || argv.some((v,i)=>v==='--mode'&&argv[i+1]==='interactive')) unsupported('The Linux companion has no interactive UI.');
   if (argv[0]==='screenshot' && !argv.some(v=>v==='--mode'||v.startsWith('--mode='))) argv=[...argv,'--mode','agent'];
+  if (argv[0]==='record' && argv[1]==='track' && argv[2] && !process.env.MYMAN_AGENT_TOKEN) { await recording.trackSession(argv[2]); process.exit(0); }
+  if (argv[0]==='record' && argv[1]==='cursor') {
+    await authorize(['library']); identity.validate(await identity.authenticate(),['library']);
+    const k=argv.indexOf('--id'); return cursor.read(k>=0?argv[k+1]:undefined,{full:argv.includes('--full')});
+  }
   if (argv[0]==='meeting') {
     const val=f=>{const k=argv.indexOf(f); return k>=0?argv[k+1]:undefined;}, has=f=>argv.includes(f);
     const sub=argv[1];
