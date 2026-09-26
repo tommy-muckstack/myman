@@ -43,10 +43,11 @@ References: [Omarchy manual](https://omarchy.org/manual/), [grim geometry and sc
 Use the X11 desktop's `DISPLAY` and, if needed, `XAUTHORITY`. For a virtual desktop:
 
 ```sh
-xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' myman screenshot --json
+env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
+  xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' myman screenshot --json
 ```
 
-This captures the virtual desktop; start the application you want to capture on that same display.
+This captures the virtual desktop; start the application you want to capture on that same display. Clearing the Wayland variables is necessary when launching Xvfb from an Omarchy/Wayland terminal, because ordinary capture deliberately prefers the real Wayland session over Xwayland.
 
 ## Owner-controlled permissions
 

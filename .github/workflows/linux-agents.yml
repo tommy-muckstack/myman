@@ -60,8 +60,16 @@ jobs:
       - name: Run CLI and MCP JSON contract against X11
         env:
           MYMAN_TEST_SYSTEM_POLICY: '1'
+          WAYLAND_DISPLAY: forbidden-inherited-session
+          XDG_SESSION_TYPE: wayland
+          HYPRLAND_INSTANCE_SIGNATURE: forbidden-inherited-session
+          SWAYSOCK: /nonexistent-inherited-session
         run: xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' npm test --prefix integrations/linux
       - name: Test native Wayland capture against a headless compositor
+        env:
+          WAYLAND_DISPLAY: forbidden-inherited-session
+          SWAYSOCK: /nonexistent-inherited-session
+          HYPRLAND_INSTANCE_SIGNATURE: forbidden-inherited-session
         run: bash scripts/test-linux-wayland.sh
       - run: npm run package --prefix integrations/linux
       - name: Test extracted release installer without node_modules
