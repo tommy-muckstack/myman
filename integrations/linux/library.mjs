@@ -64,6 +64,42 @@ export async function saveNote(args) {
     return { id:`note-${id}`, kind:'note', title, body:args.body, path:path.join(root,brain_path), brain_path, created_at, updated_at:created_at, git };
   });
 }
+export function localStamp(now = new Date()) {
+  const offset = -now.getTimezoneOffset(), sign = offset < 0 ? '-' : '+', pad = n => String(Math.floor(Math.abs(n))).padStart(2, '0');
+  return new Date(now.getTime() + offset * 60000).toISOString().slice(0, 23) + `${sign}${pad(offset / 60)}:${pad(offset % 60)}`;
+}
+const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+// Meetings follow the Mac export: meetings/DAY-ID8.md with started, ended and
+// participants, and a "## Transcript" of **Speaker** [m:ss]: lines. The file is
+// saved when recording stops and updated when local transcription finishes.
+export async function saveMeeting({ id, title, started_at, ended_at, status, message }) {
+  return lockedWrite(async root => {
+    const local = localStamp(new Date(started_at)), timezone = zone(), now = new Date().toISOString();
+    const brain_path = `meetings/${local.slice(0, 10)}-${id.slice(0, 8)}.md`, clean = titleLine(title || 'Meeting');
+    const catalog = await catalogForWrite(root);
+    await atomic(path.join(root, brain_path), `---\nid: ${id}\nkind: meeting\nstarted: ${started_at}\nended: ${ended_at}\nsource: "linux"\ntranscript_status: ${status}\ncaptured_local: ${local}\ntz: ${yaml(timezone)}\ntimezone_source: capture\nparticipants:\n  []\nupdated: ${now}\n---\n\n# ${clean}\n\n## Transcript\n\n${message}\n`);
+    catalog.exports.push({ item_id: `meeting-${id}`, revision: 1, path: brain_path, kind: 'meetings', title: clean, timestamp: started_at, captured_local: local, timezone, timezone_source: 'capture', themes: [], tags: [], screenshots: [], pinned: false });
+    catalog.generated_at = now;
+    await atomic(path.join(root, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n');
+    const git = await gitSave(root, [brain_path, 'catalog.json'], 'MyMan Linux: save meeting');
+    return { id: `meeting-${id}`, kind: 'meeting', title: clean, path: path.join(root, brain_path), brain_path, started_at, ended_at, transcript_status: status, git };
+  });
+}
+export async function finishMeeting({ brain_path, status, transcript, speakers = [] }) {
+  return lockedWrite(async root => {
+    const file = path.join(root, brain_path);
+    let doc = (await readSafe(file, 64 * 1024 * 1024)).toString();
+    const now = new Date().toISOString(), cut = doc.indexOf('\n## Transcript\n');
+    doc = doc.replace(/^transcript_status: .*$/m, `transcript_status: ${status}`).replace(/^updated: .*$/m, `updated: ${now}`)
+      .replace(/^participants:\n(?:  .*\n)*/m, `participants:\n${speakers.length ? speakers.map(s => `  - ${yaml(s)}`).join('\n') : '  []'}\n`);
+    if (transcript.split(/\s+/).filter(Boolean).length < 100 && !/^low_content:/m.test(doc)) doc = doc.replace(/^updated: /m, 'low_content: true\nupdated: ');
+    doc = (cut >= 0 ? doc.slice(0, doc.indexOf('\n## Transcript\n')) : doc.replace(/\s*$/, '')) + `\n## Transcript\n\n${transcript}\n`;
+    await atomic(file, doc);
+    const catalog = await catalogForWrite(root), entry = catalog.exports.find(e => e.path === brain_path);
+    if (entry) { entry.revision = (entry.revision || 1) + 1; catalog.generated_at = now; await atomic(path.join(root, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n'); }
+    return gitSave(root, [brain_path, 'catalog.json'], 'MyMan Linux: meeting transcript');
+  });
+}
 // Dictations use the Mac export shape: dictations/DAY-ID8.md with created,
 // captured_local and tz fields and the dictated text as the body.
 export async function saveDictation({ text, source = 'voxtype' }) {
@@ -71,10 +107,9 @@ export async function saveDictation({ text, source = 'voxtype' }) {
   if (!body) fail('INVALID_ARGUMENTS', 'There is no dictated text to save.');
   return lockedWrite(async root => {
     const id = randomUUID(), now = new Date(), created_at = now.toISOString();
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const timezone = zone();
     const words = body.split(/\s+/), title = titleLine(words.slice(0, 8).join(' ') + (words.length > 8 ? '…' : ''));
-    const offset = -now.getTimezoneOffset(), sign = offset < 0 ? '-' : '+', pad = n => String(Math.floor(Math.abs(n))).padStart(2, '0');
-    const local = new Date(now.getTime() + offset * 60000).toISOString().slice(0, 23) + `${sign}${pad(offset / 60)}:${pad(offset % 60)}`;
+    const local = localStamp(now);
     const brain_path = `dictations/${local.slice(0, 10)}-${id.slice(0, 8)}.md`;
     const catalog = await catalogForWrite(root);
     await atomic(path.join(root, brain_path), `---\nid: ${id}\ncreated: ${created_at}\nsource: ${yaml(source)}\ncaptured_local: ${local}\ntz: ${yaml(timezone)}\ntimezone_source: capture\nupdated: ${created_at}\n---\n\n# ${title}\n\n${body}\n`);

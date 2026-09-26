@@ -21,6 +21,8 @@ optdepends=(
   'wf-recorder: screen recording on Wayland'
   'ffmpeg: screen recording on X11 and recording export'
   'voxtype-bin: local dictation saved to the Brain (myman dictation connect)'
+  'whisper.cpp: meeting transcripts on this computer (voxtype also works)'
+  'pipewire-pulse: microphone and computer audio for meetings'
   'hyprland: Omarchy key binding and menu (myman omarchy install)'
 )
 provides=('myman')

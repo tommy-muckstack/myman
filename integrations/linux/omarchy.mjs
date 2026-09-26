@@ -49,6 +49,8 @@ function menuBlock(cmd) {
     'trigger.myman.brain': { icon: '', label: 'Open MyMan Brain folder', action: `xdg-open ${quote(rootPath())}` },
     'trigger.myman.doctor': { icon: '', label: 'Check MyMan setup', action: term(`${cmd} doctor`) },
     'trigger.myman.permissions': { icon: '', label: 'Edit agent permissions', action: `omarchy-launch-editor ${quote(configPath())}` },
+    'trigger.myman.meeting': { icon: '', label: 'Record a meeting (microphone and computer audio)', action: term(`${cmd} meeting start`) },
+    'trigger.myman.meeting-stop': { icon: '', label: 'Stop the meeting and transcribe it', action: term(`${cmd} meeting stop`) },
     'trigger.myman.dictation': { icon: '', label: 'Save my dictations to the Brain', action: term(`${cmd} dictation connect`) },
     'trigger.myman.agents': { icon: '', label: 'List agent credentials', action: term(`${cmd} agents list`) },
   };

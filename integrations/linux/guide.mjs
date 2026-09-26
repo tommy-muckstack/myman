@@ -6,7 +6,7 @@ export const commands = [
   'doctor', 'actions', 'jobs', 'job', 'invoke', 'screenshot', 'annotate', 'search', 'recent', 'latest', 'collect', 'read', 'image', 'status', 'meetings', 'screenshots', 'tasks', 'indicator',
   'screens list', 'windows list', 'capture ocr', 'capture compare', 'capture targets', 'capture import', 'capture-markup', 'capture image', 'capture copy', 'clipboard read', 'clipboard write',
   'record start', 'record pause', 'record resume', 'record stop', 'record cancel', 'record status', 'record result', 'record frames', 'record export',
-  'agent whoami', 'agent list', 'machine current', 'bundle create', 'bundle list', 'bundle read', 'bundle update', 'bundle delete', 'handoff create', 'handoff list', 'handoff read', 'handoff update', 'lease acquire', 'lease release', 'collaboration events', 'session transfer', 'agents list', 'agents add', 'agents revoke', 'agents require', 'show', 'omarchy install', 'omarchy remove', 'omarchy status', 'dictation connect', 'dictation disconnect', 'dictation status', 'dictation save',
+  'agent whoami', 'agent list', 'machine current', 'bundle create', 'bundle list', 'bundle read', 'bundle update', 'bundle delete', 'handoff create', 'handoff list', 'handoff read', 'handoff update', 'lease acquire', 'lease release', 'collaboration events', 'session transfer', 'agents list', 'agents add', 'agents revoke', 'agents require', 'show', 'omarchy install', 'omarchy remove', 'omarchy status', 'dictation connect', 'dictation disconnect', 'dictation status', 'dictation save', 'meeting start', 'meeting stop', 'meeting status', 'meeting cancel', 'meeting transcribe',
   'timer start', 'timer status', 'timer pause', 'timer resume', 'timer cancel', 'timer sound', 'reminder create', 'reminder list', 'reminder cancel', 'reminder sound',
   'note create', 'note append', 'note update', 'note attach',
   'library search', 'library recent', 'library read', 'library related', 'library rename', 'library pin', 'library unpin', 'library hide', 'library unhide', 'library delete',
@@ -14,7 +14,7 @@ export const commands = [
 ];
 export const flags = ['json', 'help', 'id', 'query', 'kind', 'limit', 'offset', 'after', 'before', 'title', 'body', 'body-file', 'file', 'display', 'region', 'window-id', 'coordinates', 'ops', 'ops-file',
   'before-id', 'after-id', 'ignore-rects', 'threshold', 'granularity', 'color', 'times', 'count', 'width', 'start', 'end', 'max-bytes', 'edits', 'seconds', 'item-ids', 'members', 'bundle-id', 'recipient', 'instruction', 'output-ids', 'resource', 'lease-id', 'after-cursor', 'scopes', 'machine', 'note', 'sound-enabled', 'enabled', 'message', 'at', 'dry-run', 'preview', 'request-id', 'no-wait', 'wait-timeout', 'root', 'offline', 'format', 'text', 'session-id', 'max-duration', 'expected-updated-at', 'expected-revision', 'expected-version',
-  'source-id', 'path', 'alt', 'confirm', 'pinned-only', 'lexical-only', 'semantic', 'notes', 'due', 'clear-due', 'state', 'mode'];
+  'source-id', 'path', 'alt', 'confirm', 'pinned-only', 'lexical-only', 'semantic', 'notes', 'due', 'clear-due', 'state', 'mode', 'no-system-audio', 'keep-audio', 'max-minutes'];
 
 function distance(a, b) {
   const row = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -52,7 +52,8 @@ const alternatives = [
   [/^theme/, 'Themes are Mac-only. Search by words with myman library search --query TEXT --json.'],
   [/^recording\.(pause|resume)|^record (pause|resume)/, 'Stop this recording and start another; each take is saved separately.'],
   [/^recording\.(frames|export)|^record (frames|export)/, 'Not on Linux yet. The recording result includes the MP4 path, which ffmpeg can trim or sample.'],
-  [/^(meeting|live-?text)/, 'Meetings and Live Text are Mac-only. Record video with myman record start, or capture a screenshot and read its text.'],
+  [/^meeting/, 'On Linux, record meetings with myman meeting start and myman meeting stop (needs the recording and microphone grants). Live meeting notes and the meeting assistant are Mac-only.'],
+  [/^live-?text/, 'Live Text is Mac-only. Capture a screenshot and read its text with myman screenshot ocr.'],
   [/^dictation/, 'On Linux, dictation is Voxtype (Omarchy: F9). After the person runs myman dictation connect, read dictations with myman library search --kind dictations --json.'],
   [/^(bundle|handoff|lease|agent|collaboration|machine|session)/, 'Named agents and multi-agent sharing are Mac-only. Use notes (myman note create) to hand work to another agent on this machine.'],
   [/^(timer|reminder)/, 'Timers are Mac-only. Use a systemd user timer or your agent host\'s scheduler.'],
