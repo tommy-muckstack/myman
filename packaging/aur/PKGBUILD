@@ -44,6 +44,7 @@ package() {
   install -m644 src/Resources/BrainCompanion/cli.mjs "${lib}/brain-cli.mjs"
   install -m644 src/Resources/BrainCompanion/server.mjs "${lib}/server.mjs"
   install -m644 src/Resources/BrainCompanion/LICENSES.txt "${lib}/BRAIN-LICENSES.txt"
+  install -m644 src/Resources/Fonts/Gellix-SemiBold.ttf "${lib}/Gellix-SemiBold.ttf"
   install -m644 integrations/linux/install.mjs "${lib}/install.mjs"
   printf '#!/bin/sh\nexec node /usr/lib/myman/cli.mjs "$@"\n' > "${pkgdir}/usr/bin/myman"
   # Per-person setup: owner grants (all off), config and Brain. Never copies programs.

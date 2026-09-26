@@ -477,6 +477,10 @@ final class AgentActions {
                 else { warnings.append("This recording already shows the system cursor, so no second cursor was drawn. Start with record start --hide-cursor to get a smooth drawn cursor.") }
             }
             if plan.autoZoom && clicks.isEmpty { warnings.append("No clicks were recorded, so auto-zoom found nothing to zoom on. Add recipe.zoom.moments to zoom by hand.") }
+            // Captions on a backdrop sit in a band under the video, never over the app.
+            if plan.background != nil, !plan.captions.isEmpty {
+                options.captionBand = DemoFinish.captionBand(videoHeight: size.height, padding: RecordingPolish.frame(for: size, options: options).padding)
+            }
             let windows: [ZoomTimeline.Window]? = plan.moments.isEmpty ? nil : AgentPolish.windows(plan.moments, size: size)
             let frame = plan.reframes ? RecordingPolish.frame(for: size, options: options) : RecordingPolish.Frame(source: size, padding: 0, output: size)
             let zooms = plan.zoom ? (windows ?? ZoomTimeline.windows(for: clicks)).count : 0
@@ -500,6 +504,7 @@ final class AgentActions {
                 let length = try await AVURLAsset(url: movie).load(.duration).seconds
                 summary["duration"] = ((t + e + length) * 100).rounded() / 100
             }
+            if !plan.captions.isEmpty { summary["captions"] = plan.captions.count }
             if args["dry_run"] as? Bool == true { return summary.merging(["source_id": source.id, "dry_run": true]) { a, _ in a } }
             let url = SettingsStore.shared.screenshotFolderURL.appendingPathComponent("Polished-\(UUID().uuidString).mp4")
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -513,7 +518,10 @@ final class AgentActions {
                     try await RecordingPolish.export(source: movie, to: stage, options: options, clicks: clicks, cursor: track, zoomWindows: windows)
                 }
                 if plan.finishes {
-                    let done = try await DemoFinish.finish(input: stage, to: url, title: plan.title, end: plan.end, music: plan.music, options: options, work: work)
+                    // On a backdrop, captions are centred in the space under the video.
+                    let captionPlace = options.captionBand > 0 ? CGRect(x: 0, y: 0, width: frame.output.width, height: frame.padding + frame.band) : nil
+                    let done = try await DemoFinish.finish(input: stage, to: url, title: plan.title, end: plan.end, music: plan.music,
+                                                           captions: plan.captions, captionPlace: captionPlace, captionText: size, options: options, work: work)
                     summary.merge(done) { _, new in new }
                 }
                 guard CaptureIndex.item(source.id)?.excluded == source.excluded else { throw AgentError("CONTENT_CHANGED", "Source was deleted or hidden during polish.") }

@@ -129,6 +129,8 @@ struct PolishOptions: Equatable {
     var zoomScale: CGFloat = 1.8
     var cornerRadius: CGFloat = 18
     var paddingFraction: CGFloat = 0.06
+    /// Extra backdrop below the video where captions sit (0 without captions).
+    var captionBand: CGFloat = 0
     /// Draw the cursor from the sampled track (only sensible when the movie
     /// was recorded without the system cursor).
     var drawCursor = false
@@ -150,12 +152,15 @@ enum RecordingPolish {
         let source: CGSize
         let padding: CGFloat
         let output: CGSize
+        /// Extra backdrop below the video for captions.
+        var band: CGFloat = 0
     }
 
     static func frame(for source: CGSize, options: PolishOptions) -> Frame {
         let pad = options.hasBackdrop ? max(32, (source.width * options.paddingFraction).rounded()) : 0
+        let band = options.hasBackdrop ? options.captionBand : 0
         return Frame(source: source, padding: pad,
-                     output: CGSize(width: (source.width + pad * 2).rounded(), height: (source.height + pad * 2).rounded()))
+                     output: CGSize(width: (source.width + pad * 2).rounded(), height: (source.height + pad * 2 + band).rounded()), band: band)
     }
 
     /// One frame: zoom toward the clicks, then sit on the backdrop with
@@ -193,7 +198,8 @@ enum RecordingPolish {
             let outputRect = CGRect(origin: .zero, size: frame.output)
             if options.hasBackdrop {
                 backdrop = Self.backdropImage(options: options, size: frame.output)
-                let card = CGRect(x: frame.padding, y: frame.padding, width: size.width, height: size.height)
+                // Core Image has its origin at the bottom left, so the caption band is under the card.
+                let card = CGRect(x: frame.padding, y: frame.padding + frame.band, width: size.width, height: size.height)
                 mask = Self.roundedMask(rect: card, radius: options.cornerRadius, canvas: outputRect)
                 shadow = Self.roundedMask(rect: card.offsetBy(dx: 0, dy: -8), radius: options.cornerRadius, canvas: outputRect)
                     .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 22])
@@ -244,7 +250,7 @@ enum RecordingPolish {
                 output = placed.composited(over: output).cropped(to: CGRect(origin: .zero, size: bounds.size))
             }
             guard let backdrop, let mask, let shadow else { return output }
-            let card = output.transformed(by: CGAffineTransform(translationX: frame.padding, y: frame.padding))
+            let card = output.transformed(by: CGAffineTransform(translationX: frame.padding, y: frame.padding + frame.band))
                 .applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: mask])
             return card.composited(over: shadow.composited(over: backdrop)).cropped(to: CGRect(origin: .zero, size: frame.output))
         }

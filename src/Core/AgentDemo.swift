@@ -42,6 +42,8 @@ enum DemoScript {
         var region: String
         var rect: CGRect?
         var steps: [Step]
+        /// Step index to caption text: shown from that step until the next captioned step.
+        var captions: [Int: String] = [:]
         /// The recipe for record polish (zoom "steps" means zoom where the demo acted), or nil for none.
         var polish: [String: Any]?
         var close: Bool
@@ -65,6 +67,7 @@ enum DemoScript {
                                       "estimated_seconds": estimatedSeconds, "max_duration": maxDuration]
             out["hides_other_apps"] = focus
             out["named_targets"] = namedTargets
+            out["captions"] = captions.count
             return out
         }
     }
@@ -103,14 +106,16 @@ enum DemoScript {
             throw fail("The demo script has unknown key \(extra). Allowed: \(scriptKeys.joined(separator: ", ")).")
         }
         guard let list = script["steps"] as? [Any], (1...200).contains(list.count) else { throw fail("\"steps\" must be a list of 1 to 200 steps.") }
+        var captions: [Int: String] = [:]
         let steps: [Step] = try list.enumerated().map { i, item in
             let at = "steps[\(i)]"
             guard let s = item as? [String: Any] else { throw fail("\(at) must be an object such as {\"click\": [120, 80]}.") }
             let kinds = s.keys.filter { stepKinds.contains($0) }
             guard kinds.count == 1, let kind = kinds.first else { throw fail("\(at) needs exactly one of \(stepKinds.joined(separator: ", ")).") }
-            if let other = s.keys.sorted().first(where: { $0 != kind && !(stepKeys[kind] ?? []).contains($0) }) {
-                throw fail("\(at) has unknown key \(other). A \(kind) step allows: \(([kind] + (stepKeys[kind] ?? [])).joined(separator: ", ")).")
+            if let other = s.keys.sorted().first(where: { $0 != kind && $0 != "caption" && !(stepKeys[kind] ?? []).contains($0) }) {
+                throw fail("\(at) has unknown key \(other). A \(kind) step allows: \(([kind] + (stepKeys[kind] ?? []) + ["caption"]).joined(separator: ", ")).")
             }
+            if let c = s["caption"] { captions[i] = try captionText(c, "\(at).caption") }
             let v = s[kind]
             let namedSpot = kind == "type" ? s["at"] is String : v is String
             if s["nth"] != nil, !namedSpot { throw fail("\(at).nth only goes with a named \(kind), such as {\"\(kind)\": \"Play\", \"nth\": 2}.") }
@@ -177,9 +182,32 @@ enum DemoScript {
         }
         let max = try script["max_duration"].map { try number($0, 5, 600, "\"max_duration\"") } ?? min(600, (seconds * 1.5 + 10).rounded(.up))
         guard seconds <= max else { throw fail("The steps take about \(Int(seconds.rounded())) s, longer than max_duration \(fmt(max)).") }
-        return Plan(app: app, window: window, region: region, rect: rect, steps: steps, polish: polish,
+        if !captions.isEmpty, polish == nil {
+            throw fail("Step captions are drawn when the demo is polished, so they need polish. Remove \"polish\": false or the captions.")
+        }
+        return Plan(app: app, window: window, region: region, rect: rect, steps: steps, captions: captions, polish: polish,
                     close: try flag(script["close"], "\"close\"") ?? true, focus: try flag(script["focus"], "\"focus\"") ?? true,
                     estimatedSeconds: (seconds * 10).rounded() / 10, maxDuration: max)
+    }
+
+    /// A step's caption: one or two short lines, no control characters.
+    private static func captionText(_ value: Any, _ name: String) throws -> String {
+        guard let s = value as? String, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, s.count <= 100,
+              s.components(separatedBy: "\n").count <= 2,
+              !s.unicodeScalars.contains(where: { ($0.value < 0x20 && $0 != "\n") || $0.value == 0x7F }) else {
+            throw fail("\(name) must be text of 1 to 100 characters on at most 2 lines.")
+        }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Each caption runs from its step's start until the next captioned step
+    /// starts, or to the end of the video (at least 1.5 s for the last one).
+    static func captionTimes(_ marks: [(t: Double, text: String)], duration: Double?) -> [[String: Any]] {
+        marks.enumerated().compactMap { i, m in
+            let end = i + 1 < marks.count ? marks[i + 1].t : max(duration ?? m.t + 3, m.t + 1.5)
+            guard end > m.t else { return nil }
+            return ["text": m.text, "start": (m.t * 100).rounded() / 100, "end": (end * 100).rounded() / 100]
+        }
     }
 
     /// The demo knows what it did, so it zooms where it acted: on each click,
@@ -465,9 +493,10 @@ extension AgentActions {
                     try await Task.sleep(for: .milliseconds(400))
                 }
             }
-            var acted: [DemoScript.Acted] = [], last: CGPoint?, clicks = 0
+            var acted: [DemoScript.Acted] = [], last: CGPoint?, clicks = 0, marks: [(t: Double, text: String)] = []
             try await Task.sleep(for: .milliseconds(Int(DemoScript.leadIn * 1000)))
             for (i, step) in plan.steps.enumerated() {
+                if let text = plan.captions[i] { marks.append((now(), text)) }
                 switch step {
                 case .wait(let s): try await Task.sleep(for: .milliseconds(Int(s * 1000)))
                 case .move(let t, let s):
@@ -502,6 +531,8 @@ extension AgentActions {
             guard var polish = recipe, !recordingID.isEmpty else {
                 return result.merging(["id": recordingID, "note": "Polish it with myman record polish --id \(recordingID) --json."]) { a, _ in a }
             }
+            let captions = DemoScript.captionTimes(marks, duration: (recorded["duration"] as? NSNumber)?.doubleValue)
+            if !captions.isEmpty { polish["captions"] = (polish["captions"] as? [Any] ?? []) + captions }
             if polish["zoom"] as? String == "steps" {
                 var scale = 1.0
                 if let path = recorded["path"] as? String ?? recorded["video_path"] as? String, let size = try? await AgentPolish.videoSize(URL(fileURLWithPath: path)), area.width > 0 {

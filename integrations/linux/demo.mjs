@@ -50,8 +50,22 @@ export function parseScript(script, { app } = {}) {
     if (!s || typeof s !== 'object' || Array.isArray(s)) bad(`${at} must be an object such as {"click": [120, 80]}.`);
     const kinds = Object.keys(s).filter(k => STEP_KINDS.includes(k));
     if (kinds.length !== 1) bad(`${at} needs exactly one of ${STEP_KINDS.join(', ')}.`);
-    const kind = kinds[0], other = Object.keys(s).filter(k => k !== kind && !STEP_KEYS[kind].includes(k));
-    if (other.length) bad(`${at} has unknown key ${other[0]}. A ${kind} step allows: ${[kind, ...STEP_KEYS[kind]].join(', ') }.`);
+    const kind = kinds[0], other = Object.keys(s).filter(k => k !== kind && k !== 'caption' && !STEP_KEYS[kind].includes(k));
+    if (other.length) bad(`${at} has unknown key ${other[0]}. A ${kind} step allows: ${[kind, ...STEP_KEYS[kind], 'caption'].join(', ') }.`);
+    const step = parseStep(s, kind, at);
+    if (s.caption !== undefined) step.caption = captionText(s.caption, `${at}.caption`);
+    return step;
+  });
+  const captions = steps.filter(s => s.caption).length;
+  if (captions && script.polish === false) bad('Step captions are drawn when the demo is polished, so they need polish. Remove "polish": false or the captions.');
+  return finishScript(script, steps, captions, { app });
+}
+// A step's caption: one or two short lines shown while the step plays.
+function captionText(v, name) {
+  if (typeof v !== 'string' || !v.trim() || v.length > 100 || v.split('\n').length > 2 || /[\u0000-\u0009\u000b-\u001f\u007f]/.test(v)) bad(`${name} must be text of 1 to 100 characters on at most 2 lines.`);
+  return v.trim();
+}
+function parseStep(s, kind, at) {
     const v = s[kind];
     if (kind === 'wait') return { wait: number(v, 0, 30, `${at}.wait`) };
     if (kind === 'move') noNth(s, 'move', at, typeof v === 'string');
@@ -65,7 +79,8 @@ export function parseScript(script, { app } = {}) {
     if (kind === 'type') { if (typeof v !== 'string' || !v.length || v.length > 2000) bad(`${at}.type must be text of 1 to 2000 characters.`); return { type: v, cps: s.cps === undefined ? 14 : number(s.cps, 2, 60, `${at}.cps`), ...(s.at !== undefined ? { at: target(s.at, `${at}.at`, s.nth, at) } : {}) }; }
     if (kind === 'key') { if (typeof v !== 'string' || !/^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$/.test(v)) bad(`${at}.key must be a key or combination such as "Return" or "ctrl+s".`); return { key: v }; }
     return { scroll: Math.trunc(number(v, -50, 50, `${at}.scroll`)) || bad(`${at}.scroll must not be 0.`) };
-  });
+}
+function finishScript(script, steps, captions, { app }) {
   const cmd = app !== undefined ? words(app, '--app') : script.app === undefined ? null : words(script.app, '"app"');
   if (script.window !== undefined && (typeof script.window !== 'string' || !script.window || script.window.length > 200)) bad('"window" must be part of the app window\'s title.');
   let region = script.region ?? (cmd || script.window ? 'window' : 'display');
@@ -86,11 +101,19 @@ export function parseScript(script, { app } = {}) {
   if (script.focus !== undefined && typeof script.focus !== 'boolean') bad('"focus" must be true or false.');
   const focus = script.focus !== false && Boolean(cmd || script.window);
   const named = steps.filter(s => [s.click, s.move, s.at].some(t => t && !Array.isArray(t))).length;
-  return { app: cmd, window: script.window ?? null, region, steps, named_targets: named, polish, close: script.close !== false, focus, hides_other_windows: focus, estimated_seconds: +seconds.toFixed(1), max_duration: max };
+  return { app: cmd, window: script.window ?? null, region, steps, named_targets: named, captions, polish, close: script.close !== false, focus, hides_other_windows: focus, estimated_seconds: +seconds.toFixed(1), max_duration: max };
 }
 
 // record start takes global coordinates with a bottom-left origin (as on the
 // Mac); X11 windows and xdotool use a top-left origin.
+// Each caption runs from its step's start until the next captioned step starts,
+// or to the end of the video (at least 1.5 s for the last one).
+export function captionTimes(marks, duration) {
+  return marks.map((m, i) => {
+    const next = marks[i + 1]?.t, end = next ?? Math.max(Number.isFinite(duration) ? duration : m.t + 3, m.t + 1.5);
+    return { text: m.text, start: +m.t.toFixed(2), end: +end.toFixed(2) };
+  }).filter(c => c.end > c.start);
+}
 export const toGlobal = ([x, y, w, h], desktop) => [x, desktop.height - y - h, w, h].map(Math.round);
 // The demo knows what it did, so it zooms where it acted: on each click, and on
 // each typing burst (at "at", or where it last clicked).
@@ -206,7 +229,7 @@ export async function demo({ script: file, app, dryRun = false }) {
     const started = await myman(['record', 'start', '--hide-cursor', '--max-duration', String(plan.max_duration), ...(rect ? ['--region', toGlobal(rect, desktop).join(',')] : [])]);
     session = started.session_id;
     let events = [], last = null;
-    const typing = [], timed = [], found = [];
+    const typing = [], timed = [], found = [], marks = [];
     // Finding a named target means reading the screen, which takes a moment, so
     // the recording pauses while it looks and the video has no dead air.
     // Clicks noted so far are timed before the pause, against the segment they fell in.
@@ -223,6 +246,7 @@ export async function demo({ script: file, app, dryRun = false }) {
     };
     await sleep(LEAD_IN);
     for (const [i, s] of plan.steps.entries()) {
+      if (s.caption) marks.push(...await noteEvents(session, [{ e: 'mark', text: s.caption, at: Date.now() }]));
       if (s.wait !== undefined) await sleep(s.wait);
       else if (s.move || s.click) {
         const [x, y] = await where(s.move || s.click, i), to = [ox + x, oy + y];
@@ -251,6 +275,8 @@ export async function demo({ script: file, app, dryRun = false }) {
     const result = { ok: true, recording_id: recorded.id, steps_run: plan.steps.length, clicks: timed.filter(e => e.e === 'click').length, region: rect ?? 'display', hidden_windows: hid, ...(found.length ? { found } : {}), ...(warning ? { warning } : {}) };
     if (!plan.polish) return { ...result, id: recorded.id, video_path: recorded.video_path, note: `Polish it with myman record polish --id ${recorded.id} --json.` };
     const recipe = { ...plan.polish };
+    const captions = captionTimes(marks, recorded.duration);
+    if (captions.length) recipe.captions = [...(recipe.captions || []), ...captions];
     if (recipe.zoom === 'steps') recipe.zoom = { moments: stepMoments(timed, typing) };
     if (!recipe.zoom?.moments?.length && plan.polish.zoom === 'steps') delete recipe.zoom;
     const polished = await myman(['record', 'polish', '--id', recorded.id, '--recipe', JSON.stringify(recipe)]);

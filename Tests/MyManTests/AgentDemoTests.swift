@@ -106,4 +106,16 @@ final class AgentDemoTests: XCTestCase {
         XCTAssertTrue(DemoLook.miss(elements, text: "Search", nth: 1, seconds: 8).contains("Close matches: \"Search songs\""))
         XCTAssertTrue(DemoLook.miss(elements, text: "Play", nth: 3, seconds: 8).hasPrefix("Found only 2 \"Play\", not 3."))
     }
+
+    func testStepCaptionsAreTimedUntilTheNextCaption() throws {
+        let plan = try DemoScript.parse(["app": "Music", "steps": [["click": "Search", "caption": "Search for a song"] as [String: Any], ["wait": 1], ["key": "Return", "caption": "Play it"] as [String: Any]]])
+        XCTAssertEqual(plan.captions, [0: "Search for a song", 2: "Play it"])
+        XCTAssertEqual(plan.json["captions"] as? Int, 2)
+        XCTAssertEqual(code(["app": "X", "steps": [["wait": 1, "caption": ""] as [String: Any]]]), "INVALID_ARGUMENTS", "empty captions fail")
+        XCTAssertEqual(code(["app": "X", "steps": [["wait": 1, "caption": "a\nb\nc"] as [String: Any]]]), "INVALID_ARGUMENTS", "at most two lines")
+        XCTAssertEqual(code(["app": "X", "polish": false, "steps": [["wait": 1, "caption": "Hi"] as [String: Any]]]), "INVALID_ARGUMENTS", "captions need polish")
+        let times = DemoScript.captionTimes([(t: 1, text: "a"), (t: 3.2, text: "b")], duration: 6)
+        XCTAssertEqual(times.map { $0["start"] as? Double }, [1, 3.2]); XCTAssertEqual(times.map { $0["end"] as? Double }, [3.2, 6])
+        XCTAssertEqual(DemoScript.captionTimes([(t: 5, text: "a")], duration: 5.5).first?["end"] as? Double, 6.5, "the last caption gets at least 1.5 s")
+    }
 }

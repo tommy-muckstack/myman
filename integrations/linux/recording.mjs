@@ -144,12 +144,14 @@ export async function trackSession(session_id) {
 // myman demo performs its own clicks and typing, so it knows exactly when and
 // where they happened even where input is not detectable (no xinput). Those
 // events go into the live cursor log with the same clock as the tracker.
+// A "mark" (a caption's start) is only timed, never written to the log.
 export async function noteEvents(session_id, events) {
   const session = await load(session_id);
   if (session.state !== 'recording' || !session.run_started_at) fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
   const base = session.recorded || 0, began = Date.parse(session.run_started_at);
-  const timed = events.map(ev => ({ t: +(base + (ev.at - began) / 1000).toFixed(2), e: ev.e, ...(ev.e === 'click' ? { x: Math.round(ev.x), y: Math.round(ev.y), b: ev.b ?? 1 } : {}), by: 'demo' }));
-  if (timed.length) await appendFile(await cursorLog(session), timed.map(r => JSON.stringify(r) + '\n').join(''), { mode: 0o600 });
+  const timed = events.map(ev => ({ t: +(base + (ev.at - began) / 1000).toFixed(2), e: ev.e, ...(ev.e === 'click' ? { x: Math.round(ev.x), y: Math.round(ev.y), b: ev.b ?? 1 } : {}), ...(ev.e === 'mark' ? { text: ev.text } : {}), by: 'demo' }));
+  const logged = timed.filter(r => r.e !== 'mark');
+  if (logged.length) await appendFile(await cursorLog(session), logged.map(r => JSON.stringify(r) + '\n').join(''), { mode: 0o600 });
   return timed;
 }
 export async function cursorTrack(session, duration) { return cursor.build(await cursorLog(session), { width: session.width, height: session.height, duration, cursorInVideo: !session.cursor_hidden }); }

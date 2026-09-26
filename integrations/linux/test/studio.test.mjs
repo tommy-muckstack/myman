@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { TRACKS, compose } from '../music.mjs';
-import { BACKDROPS, musicChain, parseMusic, FPS, LEVELS, MAX_RIPPLES, backgroundChain, backgroundLayout, drawBackground, parseBackground, SIZES, YELLOW, cursorChain, cursorCommands, cursorFrames, level, parseCursor, parseRecipe, zoomExpressions, zoomGraph, zoomPlan } from '../studio.mjs';
+import { BACKDROPS, musicChain, parseMusic, FPS, LEVELS, MAX_RIPPLES, backgroundChain, backgroundLayout, captionPoints, drawBackground, drawCaption, parseCaptions, parseBackground, SIZES, YELLOW, cursorChain, cursorCommands, cursorFrames, level, parseCursor, parseRecipe, zoomExpressions, zoomGraph, zoomPlan } from '../studio.mjs';
 
 const size = { width: 800, height: 600, duration: 20 };
 const has = cmd => { try { execFileSync(cmd, ['-version'], { stdio: 'ignore' }); return true; } catch { return false; } };
 
 test('recipes are strict JSON: named or numeric levels, unknown keys rejected', () => {
   assert.equal(level('subtle'), LEVELS.subtle); assert.equal(level(undefined), LEVELS.normal); assert.equal(level('2.2'), 2.2);
-  assert.deepEqual(parseRecipe({}), { zoom: null, cursor: null, background: null, music: null, title: null, end: null });
+  assert.deepEqual(parseRecipe({}), { zoom: null, cursor: null, background: null, music: null, title: null, end: null, captions: [] });
   const r = parseRecipe({ zoom: { auto: true, level: 'strong' } });
   assert.equal(r.zoom.auto, true); assert.equal(r.zoom.level, 2.4); assert.equal(r.zoom.ramp, 0.6);
   const m = parseRecipe({ zoom: { moments: [{ start: 1, end: 2, x: 10, y: 20, level: 3 }] } });
@@ -137,7 +137,7 @@ test('backgrounds use the image editor names and colours; custom needs a colour;
 
 test('background layout matches the Mac: 6% padding (at least 32px) around the full-size video', () => {
   const L = backgroundLayout(parseBackground('ocean'), { width: 1280, height: 800 });
-  assert.deepEqual(L, { W: 1434, H: 954, w: 1280, h: 800, x: 77, y: 77, r: 18 });
+  assert.deepEqual(L, { W: 1434, H: 954, w: 1280, h: 800, x: 77, y: 77, r: 18, band: 0 });
   assert.equal(backgroundLayout(parseBackground('ocean'), { width: 320, height: 240 }).x, 32);
   assert.equal(backgroundLayout(parseBackground({ style: 'ocean', padding: 0 }), { width: 321, height: 241 }).W, 322, 'odd sizes are made even for H.264');
 });
@@ -196,5 +196,27 @@ test('music is trimmed to the video, faded, and ducked while the recording speak
     assert.ok(alone - under > 4, `music dips under narration (${alone} dB alone, ${under} dB under voice)`);
     const start = level(0, 0.1), end = level(5.9, 6);
     assert.ok(start < alone - 6 && end < alone - 6, `fades in and out (${start} dB, ${end} dB vs ${alone} dB)`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('captions: strict, sorted by start, and given room under the video on a backdrop', () => {
+  const c = parseCaptions([{ text: 'Second', start: 3, end: 5 }, { text: ' First ', start: 0.5, end: 2 }]);
+  assert.deepEqual(c.map(k => k.text), ['First', 'Second']);
+  assert.deepEqual(parseRecipe({ captions: [{ text: 'Hi', start: 0, end: 1 }] }).captions, [{ text: 'Hi', start: 0, end: 1 }]);
+  assert.deepEqual(parseRecipe({}).captions, []);
+  for (const bad of ['hello', [{ text: 'x', start: 2, end: 1 }], [{ text: 'x', start: 0, end: 1, size: 3 }], [{ text: '', start: 0, end: 1 }], [{ text: 'a\nb\nc', start: 0, end: 1 }], Array.from({ length: 61 }, () => ({ text: 'x', start: 0, end: 1 }))])
+    assert.throws(() => parseCaptions(bad), /recipe\.captions/);
+  assert.equal(captionPoints(420), 21);
+  const bg = parseBackground('dusk'), plain = backgroundLayout(bg, { width: 640, height: 420 }), roomy = backgroundLayout(bg, { width: 640, height: 420 }, { captions: true });
+  assert.equal(roomy.band, 46); assert.equal(roomy.H, plain.H + 46); assert.equal(roomy.y, plain.y, 'the band is under the video, not above it');
+});
+
+test('a caption is drawn as a transparent pill', { skip: !has('magick') && !has('convert') }, async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'myman-caption-test-'));
+  try {
+    const file = await drawCaption(dir, 'c', { text: 'Search for a song' }, { width: 640, height: 420 });
+    const png = readFileSync(file);
+    assert.equal(png.toString('ascii', 1, 4), 'PNG'); assert.ok(png.readUInt32BE(16) > 100 && png.readUInt32BE(16) < 640);
+    assert.equal(png[25], 6, 'RGBA, so the backdrop shows around the pill');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
