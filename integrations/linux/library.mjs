@@ -128,6 +128,16 @@ export async function captureEntry(id) {
   pngSize(await readSafe(entry.image_path,128*1024*1024));
   return entry;
 }
+export async function recordingEntry(id) {
+  const brain = new Brain(rootPath()), catalog = await brain.catalog();
+  const entry = catalog?.exports.find(e=>e.kind==='recordings' && (e.item_id===id || e.item_id===`rec-${id}`));
+  if (!entry) fail('UNKNOWN_ITEM','No recording with that ID exists in this Brain.');
+  await brain.load(entry.path);
+  if (!path.isAbsolute(entry.video_path || '') || path.extname(entry.video_path) !== '.mp4') fail('INVALID_VIDEO','Recording has no MP4 file.');
+  const info = await stat(entry.video_path).catch(() => null);
+  if (!info?.isFile()) fail('INVALID_VIDEO','The recording file is missing from this computer.');
+  return entry;
+}
 export async function saveRecording(rec) {
   if (!await command('git')) fail('DEPENDENCY_MISSING', 'Install git before saving recordings.');
   return lockedWrite(async root => {
@@ -142,8 +152,8 @@ export async function saveRecording(rec) {
     if (ffmpeg) { try { await run(ffmpeg,['-nostdin','-loglevel','error','-ss',String(Math.min(1,rec.duration/2)),'-i',video_path,'-frames:v','1','-vf','scale=400:-2','-y',thumbnail_path]); thumb=true; } catch {} }
     const title=`Recording ${created_at}`, duration=+rec.duration.toFixed(2), size=(await stat(video_path)).size;
     const alt_text=`Screen recording, ${duration} seconds, ${rec.width}x${rec.height} pixels, video only (no audio)`;
-    await atomic(path.join(root,brain_path),`---\nid: ${id}\nkind: recording\ncreated: ${created_at}\nrecorded: ${rec.started_at}\nduration: ${duration}\nwidth: ${rec.width}\nheight: ${rec.height}\naudio: false\nfile: ${video_path}\nalt: ${yaml(alt_text)}\n---\n\n# ${title}\n\n${thumb?`![First frame: ${alt_text}](../${thumbnailRelative})\n\n`:''}${alt_text}, captured with ${rec.backend}. The video file is kept locally at \`${video_path}\` and is not stored in Git.\n`);
-    catalog.exports.push({ item_id:`rec-${id}`, revision:1, path:brain_path, kind:'recordings', title, timestamp:created_at, video_path, ...(thumb?{thumbnail_path}:{}), duration, width:rec.width, height:rec.height, captured_local:rec.started_at, timezone, themes:[], tags:[], meetings:[], pinned:false, alt_text });
+    await atomic(path.join(root,brain_path),`---\nid: ${id}\nkind: recording\ncreated: ${created_at}\nrecorded: ${rec.started_at}\nduration: ${duration}\nwidth: ${rec.width}\nheight: ${rec.height}\naudio: false\n${rec.source_id?`source_id: ${rec.source_id}\n`:''}file: ${video_path}\nalt: ${yaml(alt_text)}\n---\n\n# ${title}\n\n${thumb?`![First frame: ${alt_text}](../${thumbnailRelative})\n\n`:''}${alt_text}, ${rec.source_id?`exported from ${rec.source_id}`:`captured with ${rec.backend}`}. The video file is kept locally at \`${video_path}\` and is not stored in Git.\n`);
+    catalog.exports.push({ item_id:`rec-${id}`, revision:1, path:brain_path, kind:'recordings', title, timestamp:created_at, video_path, ...(thumb?{thumbnail_path}:{}), duration, width:rec.width, height:rec.height, captured_local:rec.started_at, timezone, themes:[], tags:[], meetings:[], pinned:false, alt_text, ...(rec.source_id?{source_id:rec.source_id}:{}) });
     catalog.generated_at=created_at;
     await atomic(path.join(root,'catalog.json'),JSON.stringify(catalog,null,2)+'\n');
     // Videos stay on disk but out of Git history so the Brain repo never bloats.
@@ -152,6 +162,6 @@ export async function saveRecording(rec) {
     const ignoreChanged=!rules.split('\n').includes('assets/recordings/');
     if (ignoreChanged) await atomic(ignore,rules+(rules&&!rules.endsWith('\n')?'\n':'')+'# MyMan: large media is kept locally, not in Git\nassets/recordings/\n');
     const git=await gitSave(root,[brain_path,...(thumb?[thumbnailRelative]:[]),'catalog.json',...(ignoreChanged?['.gitignore']:[])]);
-    return { id:`rec-${id}`, kind:'recording', title, alt_text, path:video_path, video_path, brain_path, width:rec.width, height:rec.height, duration, created_at, timezone, backend:rec.backend, attachment:{path:video_path,mime_type:'video/mp4',width:rec.width,height:rec.height,duration,file_size:size,preview_path:thumb?thumbnail_path:null}, git };
+    return { id:`rec-${id}`, kind:'recording', title, alt_text, path:video_path, video_path, brain_path, width:rec.width, height:rec.height, duration, created_at, timezone, backend:rec.backend, ...(rec.source_id?{source_id:rec.source_id}:{}), attachment:{path:video_path,mime_type:'video/mp4',width:rec.width,height:rec.height,duration,file_size:size,preview_path:thumb?thumbnail_path:null}, git };
   });
 }

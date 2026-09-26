@@ -151,7 +151,17 @@ myman record start --display main --max-duration 30 --json   # returns session_i
 myman record status --session-id rec-session-UUID --json
 myman record stop --session-id rec-session-UUID --json       # finalizes and saves to the Brain
 myman record cancel --session-id rec-session-UUID --json     # discards the video
+myman record pause --session-id rec-session-UUID --json      # stops capturing; nothing is recorded while paused
+myman record resume --session-id rec-session-UUID --json
+myman record frames --id rec-UUID --count 6 --width 400 --json
+myman record export --id rec-UUID --start 2 --end 20 --edits edits.json --json
 ```
+
+Pausing closes the current segment and resuming starts a new one; stop joins the segments, so paused time never appears in the video and `max_duration` counts only recorded time. The status bar indicator shows `❚❚ REC` (class `paused`) while paused, and each pause and resume raises a notice.
+
+`record frames` returns up to 12 still PNGs (evenly spaced with `--count`, default 6, or at `--times 0,2.5,5` in seconds) plus a contact sheet labeled with each time. They are temporary files that expire after an hour; nothing is added to the library. No grant is needed beyond reading the recording.
+
+`record export` needs the recording grant. It writes a new library recording and never changes the source. `--start` and `--end` trim; `--max-bytes` tries full quality, then 1280x720, then 640x480, and fails with `SIZE_LIMIT_EXCEEDED` rather than cutting the clip short. `--edits` takes up to 20 timed edits whose times are in seconds of the source video: `caption` (bottom), `step` (top, with `number` 1 to 99), and `title` (centered, opaque) take `text`; `zoom` and `redact` take `rect` `[x,y,w,h]` in source pixels. Zoom is limited to 8x, zooms cannot overlap, and two overlays of the same kind cannot overlap in time. Redaction is applied before zooming, so a zoom never uncovers a redacted area. Text is drawn from an image, never passed through ffmpeg's text parser.
 
 X11 uses `ffmpeg` x11grab; Hyprland/Sway use `wf-recorder` with `--no-damage` (when available) so idle screens still produce frames, stop finalizes promptly and video length matches wall time. `max_duration` is enforced on Wayland through GNU `timeout`, which sends the same finalizing SIGINT. If a recorder must be force-stopped, a video that still probes as readable is saved with a warning; otherwise the session is marked failed. Regions follow the screenshot rules. Output is H.264 MP4 at 30 fps with the pointer drawn. `max_duration` defaults to 300 seconds. Only one recording can be active per login, and sessions are durable files under `${XDG_STATE_HOME:-~/.local/state}/myman/recordings`, so any later CLI or MCP process can stop them. Microphone, system audio, webcam and window recording remain Mac-only and return `unsupported_on_platform`.
 
