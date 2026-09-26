@@ -128,7 +128,7 @@ myman record stop --session-id rec-session-UUID --json       # finalizes and sav
 myman record cancel --session-id rec-session-UUID --json     # discards the video
 ```
 
-X11 uses `ffmpeg` x11grab; Hyprland/Sway use `wf-recorder`. Regions follow the screenshot rules. Output is H.264 MP4 at 30 fps with the pointer drawn. `max_duration` defaults to 300 seconds. Only one recording can be active per login, and sessions are durable files under `${XDG_STATE_HOME:-~/.local/state}/myman/recordings`, so any later CLI or MCP process can stop them. Microphone, system audio, webcam and window recording remain Mac-only and return `unsupported_on_platform`.
+X11 uses `ffmpeg` x11grab; Hyprland/Sway use `wf-recorder` with `--no-damage` (when available) so idle screens still produce frames, stop finalizes promptly and video length matches wall time. `max_duration` is enforced on Wayland through GNU `timeout`, which sends the same finalizing SIGINT. If a recorder must be force-stopped, a video that still probes as readable is saved with a warning; otherwise the session is marked failed. Regions follow the screenshot rules. Output is H.264 MP4 at 30 fps with the pointer drawn. `max_duration` defaults to 300 seconds. Only one recording can be active per login, and sessions are durable files under `${XDG_STATE_HOME:-~/.local/state}/myman/recordings`, so any later CLI or MCP process can stop them. Microphone, system audio, webcam and window recording remain Mac-only and return `unsupported_on_platform`.
 
 Stopping saves `recordings/*.md`, a catalog entry, and a 400px thumbnail. The MP4 lives in `assets/recordings/`, which the companion adds to the Brain's `.gitignore`: videos stay on disk and are never committed, so the Brain's Git history stays small.
 

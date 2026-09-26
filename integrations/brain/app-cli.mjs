@@ -189,10 +189,10 @@ export async function plan(argv) {
       if(v.ops!==undefined&&v['ops-file']!==undefined)fail('Choose ops or ops-file.');
       const ops=json(v.ops??await input(v['ops-file'])); if(!Array.isArray(ops)||ops.length>100)fail('Expected at most 100 operations.');
       args.annotations=[];
-      for(const op of ops){if(!op || typeof op!=='object'||Array.isArray(op))fail('Each operation must be an object.');const {op:type,at,...rest}=op;
+      for(const op of ops){if(!op || typeof op!=='object'||Array.isArray(op))fail('Each operation must be an object.');const {op:opName,type:typeName,at,...rest}=op;if(opName!==undefined&&typeName!==undefined&&opName!==typeName)fail('Use op or type, not both.');const type=opName??typeName;if(typeof type!=='string')fail('Each operation needs op: arrow, box, highlight, text, pixelate, crop or image.');
         if(type==='crop'){if(args.crop || Object.keys(rest).some(k=>k!=='rect')||at)fail('Use one crop with rect.');args.crop=rest.rect;continue;}
-        if(at!==undefined){if(type!=='text'||!Array.isArray(at)||at.length!==2||rest.rect)fail('at requires text and two coordinates.');rest.rect=[...at,1,1];}
-        args.annotations.push({...rest,type:type??rest.type});
+        if(at!==undefined){if(type!=='text'||!Array.isArray(at)||at.length!==2||rest.rect)fail(type!=='text'?`at is only for text; use rect for ${type}.`:'Text at needs two coordinates [x,y] and no rect.');rest.rect=[...at,1,1];}
+        args.annotations.push({...rest,type});
       }
     }
     if(v['open-editor']&&v['save-only'])fail('Choose open-editor or save-only.');
