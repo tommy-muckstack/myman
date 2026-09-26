@@ -1,5 +1,5 @@
 import { readdir, rm, stat } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -7,7 +7,7 @@ import { captureRect, screens } from './images.mjs';
 import * as cursor from './cursor.mjs';
 import { saveRecording } from './library.mjs';
 import { processIdentity } from './process-identity.mjs';
-import { atomic, dependencies, directory, fail, readSafe, run, statePath, unsupported } from './system.mjs';
+import { atomic, command, dependencies, directory, fail, readSafe, run, statePath, unsupported } from './system.mjs';
 
 // Linux screen recording: X11 via ffmpeg x11grab, Wayland (Hyprland/Sway) via
 // wf-recorder. Video only; microphone, system audio, webcam and window capture
@@ -29,6 +29,11 @@ async function recorderAlive(session) {
   if (!session.pid || !session.process_identity) return false;
   const current = await processIdentity(session.pid);
   return current !== null && JSON.stringify(current) === JSON.stringify(session.process_identity);
+}
+let noDamage;
+async function wfRecorderNoDamage(bin) {
+  noDamage ??= await new Promise(resolve => execFile(bin, ['--help'], { timeout: 5000 }, (_error, stdout = '', stderr = '') => resolve(/--no-damage/.test(`${stdout}${stderr}`))));
+  return noDamage;
 }
 // Pausing finalizes the current segment and resuming starts a new one, so
 // both backends produce clean files; stop joins them. `recorded` counts
@@ -70,7 +75,14 @@ async function launch(session) {
   let file_, argv;
   if (session.session_type === 'wayland') {
     if (!deps['wf-recorder']) fail('DEPENDENCY_MISSING', 'Install wf-recorder for Wayland (Hyprland/Sway) recording.');
-    [file_, argv] = [deps['wf-recorder'], ['-y', '-g', `${x + session.origin[0]},${y + session.origin[1]} ${w}x${h}`, '-c', 'libx264', '-p', 'preset=veryfast', '-x', 'yuv420p', '-f', file]];
+    // wf-recorder only receives frames when the screen changes. Without
+    // --no-damage an idle screen yields no frame, so SIGINT never finalizes
+    // (stop hangs) and the video is shorter than wall time. It also has no
+    // duration flag, so GNU timeout enforces the remaining time with the same
+    // SIGINT finalization, and forwards our SIGINT on stop.
+    const recorder = [deps['wf-recorder'], ...(await wfRecorderNoDamage(deps['wf-recorder']) ? ['-D'] : []), '-y', '-g', `${x + session.origin[0]},${y + session.origin[1]} ${w}x${h}`, '-c', 'libx264', '-p', 'preset=veryfast', '-x', 'yuv420p', '-f', file];
+    const timeout = await command('timeout');
+    [file_, argv] = timeout ? [timeout, ['--signal=INT', '--kill-after=10', String(seconds), ...recorder]] : [recorder[0], recorder.slice(1)];
   } else {
     if (!deps.ffmpeg) fail('DEPENDENCY_MISSING', 'Install ffmpeg for X11 screen recording.');
     // captureRect returns X11 top-left coordinates for the capture backends.
@@ -122,20 +134,28 @@ export async function cursorTrack(session, duration) { return cursor.build(await
 async function closeSegment(session) {
   if (!session.file) return;
   await stopTracker(session);
-  await halt(session);
+  const forced = await halt(session);
   const info = await stat(session.file).catch(() => null);
-  if (info && info.size >= 1024) {
+  if (forced) session.forced = true;
+  if (info && info.size >= 1024 && (!forced || (await probe(session.file)) !== null)) {
     session.segments.push(session.file);
     const now = Date.now(), wall = (now - Date.parse(session.run_started_at)) / 1000;
     session.recorded = Math.min(session.max_duration, session.recorded + Math.max(0, Math.min(wall, (await probe(session.file)) ?? wall)));
   } else await rm(session.file, { force: true });
   Object.assign(session, { file: null, pid: null, process_identity: null, run_started_at: null });
 }
+// Recorders start detached, so each is its own process group. Killing the
+// group also stops wf-recorder when it runs under GNU timeout.
+function killGroup(pid) {
+  try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
+}
 async function halt(session) {
-  if (!await recorderAlive(session)) return;
+  if (!await recorderAlive(session)) return false;
   process.kill(session.pid, 'SIGINT'); // ffmpeg and wf-recorder finalize the MP4 on SIGINT.
   for (let i = 0; i < 150 && await recorderAlive(session); i++) await new Promise(r => setTimeout(r, 100));
-  if (await recorderAlive(session)) { process.kill(session.pid, 'SIGKILL'); fail('PROCESSING_TIMEOUT', 'The recorder did not finalize within 15 seconds and was stopped; the video may be unusable.'); }
+  if (!await recorderAlive(session)) return false;
+  killGroup(session.pid);
+  return true; // Force-stopped: the caller keeps the video only if it still probes.
 }
 async function probe(file) {
   const deps = await dependencies();
@@ -176,7 +196,7 @@ export async function stop({ session_id }) {
   if (session.state === 'saved') return session.result;
   if (!['recording', 'paused'].includes(session.state)) fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
   const legacy = !session.segments;
-  if (legacy) { await halt(session); session.segments = []; const info = await stat(session.file).catch(() => null); if (info && info.size >= 1024) session.segments.push(session.file); session.file = null; }
+  if (legacy) { if (await halt(session)) session.forced = true; session.segments = []; const info = await stat(session.file).catch(() => null); if (info && info.size >= 1024) session.segments.push(session.file); session.file = null; }
   else await closeSegment(session);
   session.ended_at = new Date().toISOString();
   if (!session.segments.length) { session.state = 'failed'; await save(session); fail('BACKEND_FAILED', 'The recorder produced no usable video.'); }
@@ -184,7 +204,8 @@ export async function stop({ session_id }) {
   const file = await join(session);
   const duration = await probe(file) ?? elapsed(session);
   const track = process.env.MYMAN_CURSOR_TRACK === '0' ? null : await cursorTrack(session, duration);
-  const result = await saveRecording({ file, width: session.width, height: session.height, duration, started_at: session.started_at, backend: session.backend, cursor: track });
+  const saved = await saveRecording({ file, width: session.width, height: session.height, duration, started_at: session.started_at, backend: session.backend, cursor: track });
+  const result = session.forced ? { ...saved, warnings: ['The recorder was force-stopped after 15 seconds; the saved video probed as readable but may end early.'] } : saved;
   for (const f of new Set([file, ...session.segments])) await rm(f, { force: true });
   await cursor.cleanup(await cursorLog(session));
   Object.assign(session, { state: 'saved', result, segments: [] }); await save(session);
@@ -194,7 +215,7 @@ export async function cancel({ session_id }) {
   const session = await load(session_id);
   if (!['recording', 'paused'].includes(session.state)) fail('SESSION_NOT_ACTIVE', `Recording session is ${session.state}.`);
   await stopTracker(session);
-  if (await recorderAlive(session)) process.kill(session.pid, 'SIGKILL');
+  if (await recorderAlive(session)) killGroup(session.pid);
   for (const f of [session.file, ...(session.segments ?? [])]) if (f) await rm(f, { force: true });
   await cursor.cleanup(await cursorLog(session));
   session.segments = [];
