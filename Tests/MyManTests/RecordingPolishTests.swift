@@ -183,11 +183,67 @@ extension RecordingPolishTests {
         XCTAssertEqual(code(["cursor": ["size": true, "smooth": 1] as [String: Any]]), nil, "a JSON true size means normal")
         XCTAssertEqual(code(["cursor": ["size": 1] as [String: Any]]), nil, "1 is a size, not true")
         XCTAssertEqual(code([:]), "INVALID_ARGUMENTS", "nothing to polish")
-        XCTAssertEqual(code(["music": "upbeat", "zoom": true]), "UNSUPPORTED", "music is Linux-only for now")
-        XCTAssertEqual(code(["title": "Hi", "zoom": true]), "UNSUPPORTED")
-        XCTAssertThrowsError(try AgentPolish.recipe(from: ["id": "x", "title": "Hi"]))
+        XCTAssertEqual(code(["music": "upbeat"]), "UNSUPPORTED", "built-in tracks are rendered by the companion")
+        XCTAssertEqual(code(["music": ["track": "polka"]]), "INVALID_ARGUMENTS")
+        XCTAssertEqual(code(["music": "relative/song.wav"]), "INVALID_ARGUMENTS", "a bare name is a track, and polka-style names fail")
+        XCTAssertEqual(code(["music": ["file": "/nonexistent/song.wav"]]), "NOT_FOUND")
+        XCTAssertEqual(code(["title": String(repeating: "x", count: 81)]), "INVALID_ARGUMENTS")
+        XCTAssertEqual(code(["title": "one\ntwo\nthree"]), "INVALID_ARGUMENTS", "at most two lines")
+        XCTAssertEqual(code(["end": ["text": "Bye", "seconds": 20] as [String: Any]]), "INVALID_ARGUMENTS")
+        XCTAssertEqual(code(["title": ["text": "Hi", "colour": "red"]]), "INVALID_ARGUMENTS", "unknown keys are errors")
+        XCTAssertEqual(code(["title": "Hi"]), nil, "a card alone is enough to polish")
         let custom = try AgentPolish.plan(try AgentPolish.recipe(from: ["id": "x", "background_color": "#1E293B"]))
         XCTAssertEqual(custom.background, "custom"); XCTAssertEqual(AgentPolish.hex(custom.options.customColor), "#1E293B")
+    }
+
+    func testCardsAndMusicParseLikeLinux() throws {
+        let song = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("song-\(UUID().uuidString).wav")
+        FileManager.default.createFile(atPath: song.path, contents: Data([0]))
+        defer { try? FileManager.default.removeItem(at: song) }
+        let flags = try AgentPolish.plan(try AgentPolish.recipe(from: ["id": "x", "title": "Launch day", "end": "Thanks",
+                                                                      "music": song.path, "music_volume": 0.3, "music_track": "calm"]))
+        XCTAssertEqual(flags.title?.text, "Launch day"); XCTAssertEqual(flags.title?.seconds, 2.5)
+        XCTAssertEqual(flags.end?.seconds, 2)
+        XCTAssertEqual(flags.music?.file, song.path); XCTAssertEqual(flags.music?.track, "calm"); XCTAssertEqual(flags.music?.volume, 0.3)
+        XCTAssertFalse(flags.reframes); XCTAssertTrue(flags.finishes)
+        XCTAssertEqual((flags.recipe["music"] as? [String: Any])?["fade_out"] as? Double, 2.5)
+        let recipe = try AgentPolish.plan(["zoom": true, "title": ["text": "Hi", "subtitle": "A demo", "seconds": 1] as [String: Any],
+                                           "music": ["file": song.path, "duck": false, "start": 4] as [String: Any]])
+        XCTAssertEqual(recipe.title?.subtitle, "A demo"); XCTAssertEqual(recipe.title?.seconds, 1)
+        XCTAssertEqual(recipe.music?.duck, false); XCTAssertEqual(recipe.music?.start, 4)
+        XCTAssertNil(recipe.music?.volume)
+        XCTAssertEqual(DemoFinish.volume(recipe.music!, recordingHasAudio: false), 0.8)
+        XCTAssertEqual(DemoFinish.volume(recipe.music!, recordingHasAudio: true), 0.4)
+    }
+
+    @MainActor func testTitleCardAndMusicAreJoinedAroundTheVideo() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("agent-finish-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("take.mov"), song = dir.appendingPathComponent("song.wav")
+        try await fixtureVideo(source)
+        do {
+            // Scoped so the file is closed (and its WAV header finished) before it is read.
+            let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+            let file = try AVAudioFile(forWriting: song, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44_100)!
+            buffer.frameLength = 44_100
+            for ch in 0..<2 { for i in 0..<44_100 { buffer.floatChannelData![ch][i] = 0.2 * sin(Float(i) * 2 * .pi * 440 / 44_100) } }
+            try file.write(from: buffer)
+        }
+        let plan = try AgentPolish.plan(["title": ["text": "Launch day", "seconds": 1] as [String: Any], "end": "Thanks", "music": ["file": song.path]])
+        let destination = dir.appendingPathComponent("finished.mp4")
+        let length = try await AVURLAsset(url: source).load(.duration).seconds
+        let done = try await DemoFinish.finish(input: source, to: destination, title: plan.title, end: plan.end, music: plan.music,
+                                               options: plan.options, work: dir)
+        let asset = AVURLAsset(url: destination)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, length + 3, accuracy: 0.2, "title and end cards add their seconds")
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(audioTracks.isEmpty, "music is mixed in")
+        XCTAssertEqual((done["cards"] as? [String: Any])?["video_starts_at"] as? Double, 1)
+        let size = try await asset.loadTracks(withMediaType: .video).first?.load(.naturalSize)
+        XCTAssertEqual(size, CGSize(width: 320, height: 200), "cards match the video frame")
     }
 
     func testHandWrittenMomentsBecomeFractionsOfTheFrame() throws {

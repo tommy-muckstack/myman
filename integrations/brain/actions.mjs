@@ -1,7 +1,8 @@
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { lstat } from 'node:fs/promises';
+import { lstat, mkdir, rename, stat, writeFile } from 'node:fs/promises';
+import { compose, wav, VERSION as MUSIC_VERSION, TRACKS } from '../linux/music.mjs';
 import { randomUUID } from 'node:crypto';
 import catalog from './actions.json' with { type: 'json' };
 import { BrainError } from './brain.mjs';
@@ -54,9 +55,39 @@ export async function discover(action, { transport = request, offline = false } 
   if (!found) throw new BrainError('UNSUPPORTED_ACTION',`The ${live?'running app':'bundled CLI'} does not advertise ${action}. Update MyMan and check actions again.`);
   return {...found,...metadata};
 }
+// The app can mix any audio file, but the built-in tracks are composed in
+// code here (the same music as Linux), cached, and handed over as a file.
+export function musicTrack(args) {
+  const flag = args.music, recipe = args.recipe?.music;
+  if (typeof flag === 'string') return flag.startsWith('/') || flag === 'none' ? null : flag;
+  if (flag !== undefined) return null;
+  if (typeof recipe === 'string') return recipe.startsWith('/') || recipe === 'none' ? null : recipe;
+  if (recipe === true) return 'upbeat';
+  if (recipe && typeof recipe === 'object' && !recipe.file) return recipe.track ?? 'upbeat';
+  return null;
+}
+export async function musicFile(track, { cache = path.join(os.homedir(), 'Library', 'Caches', 'MyMan', 'music') } = {}) {
+  const file = path.join(cache, `${track}-v${MUSIC_VERSION}.wav`);
+  try { if ((await stat(file)).size > 44) return file; } catch {}
+  await mkdir(cache, { recursive: true, mode: 0o700 });
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temp, wav(compose(track)), { mode: 0o600 });
+  await rename(temp, file);
+  return file;
+}
+export async function withMusic(args, options) {
+  const raw = musicTrack(args); if (raw === null) return args;
+  const track = String(raw).toLowerCase();
+  if (!Object.hasOwn(TRACKS, track)) throw new BrainError('INVALID_ARGUMENTS', `Music must be one of ${Object.keys(TRACKS).join(', ')}, an absolute path to an audio file, or none.`);
+  const file = await musicFile(track, options), next = { ...args, music_track: track };
+  if (typeof args.music === 'string') next.music = file;
+  else { const m = typeof args.recipe.music === 'object' && args.recipe.music ? { ...args.recipe.music } : {}; delete m.track; next.recipe = { ...args.recipe, music: { ...m, file } }; }
+  return next;
+}
 export async function invoke(action, args = {}, { id = randomUUID(), wait = true, transport = request, waitMs = 300000 } = {}) {
   const live = await discover(action,{transport});
   if (!live.live) throw new BrainError(live.unavailable?.code??'APP_NOT_RUNNING',live.unavailable?.message??'Open MyMan to verify this action.');
+  if (action === 'recording.polish') args = await withMusic(args);
   const first = await transport({ method: 'invoke', id, action, arguments: args });
   if (!wait) return first;
   const deadline = Date.now() + waitMs;

@@ -242,7 +242,7 @@ When the recording has its own audio (a voice-over), the music ducks: it dips au
 
 Polishing now keeps the recording's own audio, even without music, the same way the Mac app does. Earlier Linux builds dropped it.
 
-In a recipe, `music` is a track name, an absolute path, or an object: `{"track": "calm", "volume": 0.5, "fade_in": 1.5, "fade_out": 2.5, "duck": true, "start": 0}` (`file` replaces `track` for your own audio; `start` skips into the track by that many seconds). `--dry-run` lists the built-in tracks under `music_tracks`. The Mac app has no music option yet, so these names are the ones it should adopt.
+In a recipe, `music` is a track name, an absolute path, or an object: `{"track": "calm", "volume": 0.5, "fade_in": 1.5, "fade_out": 2.5, "duck": true, "start": 0}` (`file` replaces `track` for your own audio; `start` skips into the track by that many seconds). `--dry-run` lists the built-in tracks under `music_tracks`. The Mac app takes the same names; there, `myman record polish` composes the built-in track and hands the app a file, and the music plays at a lower level under recording audio instead of ducking.
 
 ### Polished demos: title and end cards
 
