@@ -12,7 +12,7 @@ const has = cmd => { try { execFileSync(cmd, ['-version'], { stdio: 'ignore' });
 
 test('recipes are strict JSON: named or numeric levels, unknown keys rejected', () => {
   assert.equal(level('subtle'), LEVELS.subtle); assert.equal(level(undefined), LEVELS.normal); assert.equal(level('2.2'), 2.2);
-  assert.deepEqual(parseRecipe({}), { zoom: null, cursor: null, background: null, music: null });
+  assert.deepEqual(parseRecipe({}), { zoom: null, cursor: null, background: null, music: null, title: null, end: null });
   const r = parseRecipe({ zoom: { auto: true, level: 'strong' } });
   assert.equal(r.zoom.auto, true); assert.equal(r.zoom.level, 2.4); assert.equal(r.zoom.ramp, 0.6);
   const m = parseRecipe({ zoom: { moments: [{ start: 1, end: 2, x: 10, y: 20, level: 3 }] } });

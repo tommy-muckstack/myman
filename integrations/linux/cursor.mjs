@@ -61,17 +61,17 @@ export async function track(session, logFile, alive, { exit = true } = {}) {
 export async function build(logFile, { width, height, duration, cursorInVideo = true }) {
   let raw = '';
   try { raw = await readFile(logFile, 'utf8'); } catch {}
-  const moves = [], clicks = [], keys = []; let pointerOk = true, inputOk = raw.length > 0;
+  const moves = [], clicks = [], keys = []; let pointerOk = true, inputOk = raw.length > 0, scripted = false;
   for (const line of raw.split('\n')) {
     if (!line) continue; let r; try { r = JSON.parse(line); } catch { continue; }
     if (r.t > duration + 0.5) continue;
     if (r.e === 'info') { pointerOk = r.pointer !== 'unavailable' && pointerOk; inputOk = r.input === 'tracked' && inputOk; }
-    else if (r.e === 'click') clicks.push([r.t, r.x, r.y, r.b]);
-    else if (r.e === 'key') keys.push(r.t);
+    else if (r.e === 'click') { clicks.push([r.t, r.x, r.y, r.b]); if (r.by === 'demo') scripted = true; }
+    else if (r.e === 'key') { keys.push(r.t); if (r.by === 'demo') scripted = true; }
     else moves.push([r.t, r.x, r.y]);
   }
   moves.sort((a, b) => a[0] - b[0]); clicks.sort((a, b) => a[0] - b[0]); keys.sort((a, b) => a - b);
-  return { version: 1, rate: RATE, width, height, duration, cursor_in_video: cursorInVideo, pointer: pointerOk && moves.length ? 'tracked' : 'unavailable', clicks_tracked: inputOk, fields: { moves: ['t', 'x', 'y'], clicks: ['t', 'x', 'y', 'button'], keys: ['t'] }, moves, clicks, keys, activity: activity({ moves, clicks, keys, width, height, duration }) };
+  return { version: 1, rate: RATE, width, height, duration, cursor_in_video: cursorInVideo, pointer: pointerOk && moves.length ? 'tracked' : 'unavailable', clicks_tracked: inputOk || scripted, ...(scripted ? { input_from: 'demo script' } : {}), fields: { moves: ['t', 'x', 'y'], clicks: ['t', 'x', 'y', 'button'], keys: ['t'] }, moves, clicks, keys, activity: activity({ moves, clicks, keys, width, height, duration }) };
 }
 // Where something is happening: clicks and typing bursts, plus places the
 // pointer settled after moving. Each span has a focus point and a reason.

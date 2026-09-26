@@ -86,7 +86,7 @@ The installer creates `${XDG_CONFIG_HOME:-~/.config}/myman/agents.json` with all
 }
 ```
 
-The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. The `recording` grant enables video-only screen recording. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
+The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. The `recording` grant enables video-only screen recording. The `control` grant (off by default) lets `myman demo` start an app and drive the mouse and keyboard; recording alone never does. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
 
 ### Optional administrator ceiling
 
@@ -244,6 +244,37 @@ Polishing now keeps the recording's own audio, even without music, the same way 
 
 In a recipe, `music` is a track name, an absolute path, or an object: `{"track": "calm", "volume": 0.5, "fade_in": 1.5, "fade_out": 2.5, "duck": true, "start": 0}` (`file` replaces `track` for your own audio; `start` skips into the track by that many seconds). `--dry-run` lists the built-in tracks under `music_tracks`. The Mac app has no music option yet, so these names are the ones it should adopt.
 
+### Polished demos: title and end cards
+
+`--title "MyMan in 30 seconds"` and `--end "Try it: myman.dev"` add a card before and after the recording. A card is a full frame on the same backdrop as the video (slate when there is no background), with the text centred in white. Long lines shrink to fit. In a recipe, `title` and `end` are text or `{"text": "...", "subtitle": "...", "seconds": 2.5}`. The title lasts 2.5 s and the end card 2 s by default. Music plays across the cards, and the recording's own sound is shifted to start after the title. The result lists `cards.video_starts_at`, so an agent knows where the recording begins, and `preview_times` includes one frame from each card.
+
+### Polished demos: one command
+
+`myman demo --script steps.json --json` opens an app, records it, performs the steps and returns a finished demo. That demo has zooms, a smooth drawn cursor, click ripples, a backdrop, music, and title and end cards. A steps file looks like this:
+
+```json
+{
+  "app": ["gnome-calculator"],
+  "title": {"text": "Calculator in 10 seconds", "subtitle": "Recorded by an agent"},
+  "end": "myman demo --script steps.json",
+  "steps": [
+    {"wait": 0.5},
+    {"click": [120, 200]},
+    {"type": "12*7", "at": [200, 60]},
+    {"key": "Return"},
+    {"wait": 1.5}
+  ]
+}
+```
+
+- **Steps.** `wait` (seconds), `move` and `click` (`[x, y]`, with `seconds` for the glide, `button` and `double`), `type` (text, with `cps` for characters per second and `at` for where the text appears), `key` (such as `Return` or `ctrl+s`) and `scroll` (positive scrolls down). Coordinates are relative to the top-left of the recorded area. Unknown keys are errors.
+- **What gets recorded.** With `app` (or `--app`, which overrides it), MyMan starts the app, waits up to 15 s for its window, and records only that window. `window` picks the window by part of its title when the app opens several. `region` can also be `"display"` or `[x, y, width, height]` in top-left screen coordinates. The app is closed at the end unless you pass `"close": false`.
+- **Zoom follows the steps.** Because MyMan performs every click and keystroke itself, it knows exactly when and where each happened. It zooms on each click, and on each burst of typing at `at` (or where it last clicked). Those clicks and keys are also written into the cursor track, so click ripples work even where input can't be detected.
+- **Polish.** By default the demo uses `{"zoom": "steps", "cursor": {"size": "big"}, "background": "dusk", "music": "upbeat"}`. `polish` in the file overrides any of those keys (the same recipe `record polish` takes), and `"polish": false` keeps just the raw recording. The raw recording is always kept too, as `recording_id`.
+- **Safety.** A demo starts a program and types and clicks into your desktop, so it needs the separate `control` grant as well as `recording`. `control` is off by default, is capped by `/etc/myman/agents.json` like every grant, and must be in a named agent's credential scopes. Recording and polishing run through `myman record start`, `record stop` and `record polish`. Keystrokes go to whichever window has focus, so don't use your computer while a demo runs. If a step fails, the recording is cancelled, not saved half-done. `--dry-run` checks the file and prints the plan, with the estimated length, without opening anything.
+
+`myman demo` drives the app with `xdotool`, so for now it needs X11. On Wayland (Omarchy, Sway), record with `record start` and polish with `record polish`. The Mac app has no one-command demo yet.
+
 ## Brain and MCP
 
 The layout is the existing `notes/*.md`, `screenshots/*.md`, version-1 `catalog.json`, and Git history. Original PNGs live under `assets/captures`, with 400px thumbnails under `assets/capture-thumbnails`. Existing catalog entries and legacy Markdown exports are preserved. Git commits include only the new document/assets and catalog, leaving unrelated staged files untouched. No remotes are added and nothing is pushed. A Git failure after a successful save returns the saved ID and `git.committed: false`, so an agent can repair Git without duplicating the item.
@@ -336,7 +367,7 @@ myman agents revoke ID
 myman agents require off   # let agents without a credential work again
 ```
 
-Scopes are `capture`, `markup`, `recording` and `library`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
+Scopes are `capture`, `markup`, `recording`, `library`, `microphone` and `control`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
 
 The agent puts its token in `MYMAN_AGENT_TOKEN` in its host environment (never in a prompt). Then:
 
