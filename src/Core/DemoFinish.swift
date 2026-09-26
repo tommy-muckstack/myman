@@ -37,6 +37,26 @@ enum DemoFinish {
         }
     }
 
+    /// A line of text shown over the recording between `start` and `end`
+    /// (recording seconds, before any title card).
+    struct Caption: Equatable {
+        var text: String
+        var start: Double
+        var end: Double
+
+        var json: [String: Any] { ["text": text, "start": start, "end": end] }
+    }
+
+    static let captionFade = 0.25
+
+    /// Caption text size for a video this tall (the same rule as Linux).
+    static func captionPoints(_ height: CGFloat) -> CGFloat { max(18, (height / 20).rounded()) }
+    /// How much backdrop to add under the video so a caption fits there.
+    static func captionBand(videoHeight: CGFloat, padding: CGFloat) -> CGFloat {
+        let need = (captionPoints(videoHeight) * 4).rounded()
+        return 2 * ceil(max(0, need - padding) / 2)
+    }
+
     static let titleFadeIn = 0.4, titleFadeOut = 0.3, endFadeIn = 0.3, endFadeOut = 0.5
     static let fps: Int32 = 30
 
@@ -163,12 +183,81 @@ enum DemoFinish {
         return buffer
     }
 
+    // MARK: Captions
+
+    /// Captions use Gellix SemiBold (bundled with the app), like Linux.
+    private static func captionFont(_ size: CGFloat) -> NSFont {
+        NSFont(name: "Gellix-SemiBold", size: size) ?? .systemFont(ofSize: size, weight: .semibold)
+    }
+
+    /// The caption's still: white Gellix on a soft, translucent, fully rounded
+    /// pill with a gentle shadow (the same look as Linux).
+    static func captionImage(_ caption: Caption, videoSize: CGSize) -> CGImage? {
+        let lines = caption.text.components(separatedBy: "\n")
+        var size = captionPoints(videoSize.height)
+        while size > 12, (lines.map { ($0 as NSString).size(withAttributes: [.font: captionFont(size)]).width }.max() ?? 0) > videoSize.width * 0.86 { size -= 1 }
+        let style = NSMutableParagraphStyle(); style.alignment = .center; style.lineSpacing = size * 0.15
+        let text = NSAttributedString(string: caption.text, attributes: [.font: captionFont(size), .foregroundColor: NSColor.white, .paragraphStyle: style])
+        let textSize = text.boundingRect(with: CGSize(width: videoSize.width, height: videoSize.height), options: [.usesLineFragmentOrigin]).size
+        let padX = size * 0.95, padY = size * 0.6, shadow = size * 0.5
+        let pillW = ceil(textSize.width + padX * 2), pillH = ceil(textSize.height + padY * 2)
+        let width = Int(pillW + shadow * 2), height = Int(pillH + shadow * 2)
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        let pill = CGRect(x: shadow, y: shadow, width: pillW, height: pillH)
+        let radius = min(pillH / 2, size * 1.1)
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -shadow / 3), blur: shadow, color: NSColor.black.withAlphaComponent(0.35).cgColor)
+        NSColor(srgbRed: 16 / 255, green: 16 / 255, blue: 20 / 255, alpha: 0.66).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius).fill()
+        context.restoreGState()
+        text.draw(with: CGRect(x: pill.minX + padX, y: pill.minY + padY, width: textSize.width + 1, height: textSize.height), options: [.usesLineFragmentOrigin])
+        NSGraphicsContext.restoreGraphicsState()
+        return context.makeImage()
+    }
+
+    /// Caption layers over the whole joined video. `offset` is where the
+    /// recording starts (after the title card). `place` is the backdrop band
+    /// under the video to centre captions in; without one they sit near the
+    /// bottom of the picture. `textFor` is the recording's size, which sets
+    /// the text size.
+    static func captionLayers(_ captions: [Caption], renderSize: CGSize, offset: Double, length: Double, place: CGRect? = nil, textFor: CGSize? = nil) -> [CALayer] {
+        let sizing = textFor ?? renderSize
+        return captions.compactMap { caption -> CALayer? in
+            let start = max(0, caption.start), end = min(length, caption.end)
+            guard end > start, let image = captionImage(caption, videoSize: sizing) else { return nil }
+            let layer = CALayer()
+            let w = CGFloat(image.width), h = CGFloat(image.height)
+            // Core Animation in a video composition has its origin at the bottom left.
+            let y = place.map { $0.minY + ($0.height - h) / 2 } ?? renderSize.height * 0.05
+            layer.frame = CGRect(x: renderSize.width / 2 - w / 2, y: y, width: w, height: h)
+            layer.contents = image
+            layer.opacity = 0
+            let seconds = end - start
+            let fade = min(captionFade, seconds / 2) / seconds
+            let show = CAKeyframeAnimation(keyPath: "opacity")
+            show.values = [0, 1, 1, 0]
+            show.keyTimes = [0, NSNumber(value: fade), NSNumber(value: 1 - fade), 1]
+            show.beginTime = AVCoreAnimationBeginTimeAtZero + offset + start
+            show.duration = seconds
+            show.isRemovedOnCompletion = false
+            show.fillMode = .both
+            layer.add(show, forKey: "show")
+            return layer
+        }
+    }
+
     // MARK: Joining and music
 
     /// Joins title card, video, and end card, then lays the music under the
     /// recording's audio: trimmed from `start`, looped to the full length,
     /// faded in and out. Returns what was done for the result summary.
-    static func finish(input: URL, to destination: URL, title: Card?, end: Card?, music: Music?, options: PolishOptions, work: URL) async throws -> [String: Any] {
+    static func finish(input: URL, to destination: URL, title: Card?, end: Card?, music: Music?, captions: [Caption] = [], captionPlace: CGRect? = nil, captionText: CGSize? = nil,
+                       options: PolishOptions, work: URL) async throws -> [String: Any] {
         let asset = AVURLAsset(url: input)
         let duration = try await asset.load(.duration)
         guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else { throw AgentError("INVALID_VIDEO", "Missing video track.") }
@@ -240,6 +329,24 @@ enum DemoFinish {
             mix = audioMix
         }
 
+        var videoComposition: AVMutableVideoComposition?
+        var shown = 0
+        if !captions.isEmpty {
+            let made = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: composition)
+            let renderSize = made.renderSize
+            let layers = captionLayers(captions, renderSize: renderSize, offset: videoStart.seconds, length: duration.seconds, place: captionPlace, textFor: captionText)
+            if !layers.isEmpty {
+                let parent = CALayer(), videoLayer = CALayer()
+                parent.frame = CGRect(origin: .zero, size: renderSize)
+                videoLayer.frame = parent.frame
+                parent.addSublayer(videoLayer)
+                layers.forEach(parent.addSublayer)
+                made.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parent)
+                videoComposition = made
+                shown = layers.count
+            }
+        }
+
         let presets = [AVAssetExportPresetHEVCHighestQuality, AVAssetExportPresetHighestQuality]
         guard let preset = presets.first(where: { AVAssetExportSession.exportPresets(compatibleWith: composition).contains($0) }),
               let exporter = AVAssetExportSession(asset: composition, presetName: preset) else {
@@ -249,6 +356,7 @@ enum DemoFinish {
         exporter.outputURL = destination
         exporter.outputFileType = .mp4
         exporter.audioMix = mix
+        exporter.videoComposition = videoComposition
         exporter.shouldOptimizeForNetworkUse = true
         await exporter.export()
         guard exporter.status == .completed else {
@@ -260,6 +368,7 @@ enum DemoFinish {
             done["cards"] = ["title_seconds": title?.seconds ?? 0, "end_seconds": end?.seconds ?? 0, "video_starts_at": (videoStart.seconds * 100).rounded() / 100]
         }
         if let level { done["music_volume"] = level }
+        if !captions.isEmpty { done["captions"] = shown }
         return done
     }
 }

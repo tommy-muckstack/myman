@@ -9,13 +9,15 @@ enum AgentPolish {
     static let levels: [String: Double] = ["subtle": 1.4, "normal": 1.8, "strong": 2.4]
     static let cursorSizes: [String: Double] = ["normal": 1.5, "big": 2, "huge": 2.6]
     static let backdrops: [String: BackdropStyle] = ["dusk": .dusk, "ocean": .ocean, "meadow": .meadow, "slate": .slate]
-    static let recipeKeys = ["zoom", "cursor", "background", "music", "title", "end"]
+    static let recipeKeys = ["zoom", "cursor", "background", "music", "title", "end", "captions"]
     static let zoomKeys = ["auto", "level", "ramp", "gap", "moments"]
     static let momentKeys = ["start", "end", "x", "y", "level"]
     static let cursorKeys = ["size", "smooth", "highlight", "ripple"]
     static let backgroundKeys = ["style", "color", "corner_radius", "padding", "shadow"]
     static let musicKeys = ["track", "file", "volume", "fade_in", "fade_out", "duck", "start"]
     static let cardKeys = ["text", "subtitle", "seconds"]
+    static let captionKeys = ["text", "start", "end"]
+    static let maxCaptions = 60
     static let musicTracks = ["upbeat", "calm", "cinematic"]
 
     struct Moment: Equatable { var start: Double; var end: Double; var x: Double; var y: Double }
@@ -32,11 +34,12 @@ enum AgentPolish {
         var music: DemoFinish.Music? = nil
         var title: DemoFinish.Card? = nil
         var end: DemoFinish.Card? = nil
+        var captions: [DemoFinish.Caption] = []
 
         /// Zoom, cursor or backdrop: work for the frame renderer.
         var reframes: Bool { zoom || cursor || background != nil }
-        /// Music or cards: work for the joining step.
-        var finishes: Bool { music != nil || title != nil || end != nil }
+        /// Music, cards or captions: work for the joining step.
+        var finishes: Bool { music != nil || title != nil || end != nil || !captions.isEmpty }
 
         /// The recipe as it will be rendered, with defaults filled in.
         var recipe: [String: Any] {
@@ -55,6 +58,7 @@ enum AgentPolish {
             if let music { out["music"] = music.json }
             if let title { out["title"] = title.json }
             if let end { out["end"] = end.json }
+            if !captions.isEmpty { out["captions"] = captions.map(\.json) }
             return out
         }
     }
@@ -220,8 +224,9 @@ enum AgentPolish {
         plan.music = try music(recipe["music"])
         plan.title = try card(recipe["title"], "title", seconds: 2.5)
         plan.end = try card(recipe["end"], "end", seconds: 2)
+        plan.captions = try captions(recipe["captions"])
         guard plan.reframes || plan.finishes else {
-            throw fail("Nothing to polish. Add --auto-zoom, --cursor, --background, --music, --title, --end, or a --recipe.")
+            throw fail("Nothing to polish. Add --auto-zoom, --cursor, --background, --music, --title, --end, or a --recipe (for example with captions).")
         }
         return plan
     }
@@ -242,6 +247,23 @@ enum AgentPolish {
         return DemoFinish.Card(text: try cardText(c["text"], "recipe.\(where_).text", max: 80),
                                subtitle: try c["subtitle"].map { try cardText($0, "recipe.\(where_).subtitle", max: 120) },
                                seconds: try c["seconds"].map { try number($0, 0.5, 10, "recipe.\(where_).seconds") } ?? seconds)
+    }
+
+    /// Captions: up to 60 lines, each shown from `start` to `end` seconds of
+    /// the recording. Sorted by start; overlaps are allowed.
+    static func captions(_ value: Any?) throws -> [DemoFinish.Caption] {
+        if value == nil || value is NSNull { return [] }
+        guard let list = value as? [Any], list.count <= maxCaptions else {
+            throw fail("recipe.captions must be a list of at most \(maxCaptions) captions.")
+        }
+        return try list.enumerated().map { index, item in
+            let name = "recipe.captions[\(index)]"
+            let c = try object(item, captionKeys, name)
+            let start = try number(c["start"], 0, 86_400, "\(name).start")
+            let end = try number(c["end"], 0, 86_400, "\(name).end")
+            guard end > start else { throw fail("\(name).end must be after \(name).start.") }
+            return DemoFinish.Caption(text: try cardText(c["text"], "\(name).text", max: 100), start: start, end: end)
+        }.sorted { $0.start < $1.start }
     }
 
     /// A built-in track arrives from the companion as `file` plus its `track`

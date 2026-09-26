@@ -1,5 +1,6 @@
-import { mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { recordingEntry, saveRecording } from './library.mjs';
 import { probeVideo } from './video.mjs';
@@ -13,7 +14,7 @@ import { LICENSE as MUSIC_LICENSE, TRACKS, VERSION as MUSIC_VERSION, compose, wa
 // (--dry-run), edit it, and render the same result again.
 export const LEVELS = { subtle: 1.4, normal: 1.8, strong: 2.4 };
 export const FPS = 30;
-const RECIPE_KEYS = ['zoom', 'cursor', 'background', 'music', 'title', 'end'], CARD_KEYS = ['text', 'subtitle', 'seconds'], MUSIC_KEYS = ['track', 'file', 'volume', 'fade_in', 'fade_out', 'duck', 'start'], BACKGROUND_KEYS = ['style', 'color', 'corner_radius', 'padding', 'shadow'], CURSOR_KEYS = ['size', 'smooth', 'highlight', 'ripple'], ZOOM_KEYS = ['auto', 'level', 'ramp', 'gap', 'moments'], MOMENT_KEYS = ['start', 'end', 'x', 'y', 'level'];
+const RECIPE_KEYS = ['zoom', 'cursor', 'background', 'music', 'title', 'end', 'captions'], CARD_KEYS = ['text', 'subtitle', 'seconds'], CAPTION_KEYS = ['text', 'start', 'end'], MAX_CAPTIONS = 60, CAPTION_FADE = 0.25, MUSIC_KEYS = ['track', 'file', 'volume', 'fade_in', 'fade_out', 'duck', 'start'], BACKGROUND_KEYS = ['style', 'color', 'corner_radius', 'padding', 'shadow'], CURSOR_KEYS = ['size', 'smooth', 'highlight', 'ripple'], ZOOM_KEYS = ['auto', 'level', 'ramp', 'gap', 'moments'], MOMENT_KEYS = ['start', 'end', 'x', 'y', 'level'];
 const MAX_BLOCKS = 20, MAX_POINTS = 8;
 
 function num(v, lo, hi, name) {
@@ -35,7 +36,7 @@ export function level(v) {
 export function parseRecipe(recipe = {}) {
   onlyKeys(recipe, RECIPE_KEYS, 'The recipe');
   const cursor = parseCursor(recipe.cursor), background = parseBackground(recipe.background), music = parseMusic(recipe.music);
-  const cards = { title: parseCard(recipe.title, 'title', 2.5), end: parseCard(recipe.end, 'end', 2) };
+  const cards = { title: parseCard(recipe.title, 'title', 2.5), end: parseCard(recipe.end, 'end', 2), captions: parseCaptions(recipe.captions) };
   if (recipe.zoom === undefined) return { zoom: null, cursor, background, music, ...cards };
   onlyKeys(recipe.zoom, ZOOM_KEYS, 'recipe.zoom');
   const z = recipe.zoom;
@@ -80,10 +81,13 @@ export function parseBackground(bg) {
   return { style, colors, corner_radius: bg.corner_radius === undefined ? 18 : num(bg.corner_radius, 0, 200, 'recipe.background.corner_radius'), padding: bg.padding === undefined ? 0.06 : num(bg.padding, 0, 0.3, 'recipe.background.padding'), shadow: bg.shadow === undefined || bg.shadow === true ? 0.45 : bg.shadow === false ? 0 : num(bg.shadow, 0, 1, 'recipe.background.shadow') };
 }
 // Canvas geometry, matching the Mac: padding is 6% of the width, at least 32px.
-export function backgroundLayout(bg, { width: W, height: H }) {
+// With captions the backdrop grows a band below the video, so captions sit
+// on the backdrop under the app instead of covering it.
+export const captionPoints = h => Math.max(18, Math.round(h / 20));
+export function backgroundLayout(bg, { width: W, height: H }, { captions = false } = {}) {
   const even = v => 2 * Math.ceil(v / 2), pad = bg.padding ? Math.max(32, Math.round(W * bg.padding)) : 0;
-  const w = even(W), h = even(H);
-  return { W: w + 2 * pad, H: h + 2 * pad, w, h, x: pad, y: pad, r: Math.min(Math.round(bg.corner_radius), Math.floor(Math.min(w, h) / 2)) };
+  const w = even(W), h = even(H), band = captions ? even(Math.max(0, Math.round(captionPoints(h) * 4) - pad)) : 0;
+  return { W: w + 2 * pad, H: h + 2 * pad + band, w, h, x: pad, y: pad, band, r: Math.min(Math.round(bg.corner_radius), Math.floor(Math.min(w, h) / 2)) };
 }
 // The gradient and shadow drawn once as one image with a rounded hole where
 // the video shows through. A single overlay on the padded video then gives the
@@ -113,6 +117,19 @@ export function parseCard(c, where, seconds) {
   onlyKeys(c, CARD_KEYS, `recipe.${where}`);
   return { text: cardText(c.text, `recipe.${where}.text`, 80), subtitle: c.subtitle === undefined ? null : cardText(c.subtitle, `recipe.${where}.subtitle`, 120), seconds: c.seconds === undefined ? seconds : num(c.seconds, 0.5, 10, `recipe.${where}.seconds`) };
 }
+// Captions: lines of text shown over the recording from start to end
+// (recording seconds, before any title card), sorted by start.
+export function parseCaptions(list) {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list) || list.length > MAX_CAPTIONS) fail('INVALID_ARGUMENTS', `recipe.captions must be a list of at most ${MAX_CAPTIONS} captions.`);
+  return list.map((c, i) => {
+    const name = `recipe.captions[${i}]`;
+    onlyKeys(c, CAPTION_KEYS, name);
+    const start = num(c.start, 0, 86400, `${name}.start`), end = num(c.end, 0, 86400, `${name}.end`);
+    if (!(end > start)) fail('INVALID_ARGUMENTS', `${name}.end must be after ${name}.start.`);
+    return { text: cardText(c.text, `${name}.text`, 100), start, end };
+  }).sort((a, b) => a.start - b.start);
+}
 // ImageMagick reads "@file" and expands "%" escapes in -annotate text; both are escaped so text is only ever text.
 export const literalText = t => t.replace(/\\/g, '\\\\').replace(/%/g, '%%').replace(/^@/, '\\@');
 export async function drawCard(dir, name, card, { width: W, height: H, colors }) {
@@ -122,6 +139,29 @@ export async function drawCard(dir, name, card, { width: W, height: H, colors })
   const args = ['-size', `${W}x${H}`, '-define', 'gradient:direction=SouthEast', `gradient:${colors[0]}-${colors[1]}`, '-gravity', 'center', '-fill', 'white', '-font', 'DejaVu-Sans-Bold', '-pointsize', String(big), '-annotate', `+0${card.subtitle ? `-${Math.round(small * 0.9)}` : '+0'}`, literalText(card.text)];
   if (card.subtitle) args.push('-font', 'DejaVu-Sans', '-pointsize', String(small), '-fill', 'rgba(255,255,255,0.85)', '-annotate', `+0+${Math.round(big * 0.75)}`, literalText(card.subtitle));
   await run(await imageCommand(), [...args, '-alpha', 'off', `PNG24:${file}`]);
+  return file;
+}
+// Captions use Gellix SemiBold, the font the Mac app ships (installed next to
+// the CLI, or read from the source tree), with DejaVu Sans Bold as a fallback.
+export async function captionFont() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  for (const f of [path.join(here, 'Gellix-SemiBold.ttf'), path.join(here, '../../src/Resources/Fonts/Gellix-SemiBold.ttf'), path.join(here, '../../../src/Resources/Fonts/Gellix-SemiBold.ttf')]) {
+    if ((await stat(f).catch(() => null))?.isFile()) return f;
+  }
+  return 'DejaVu-Sans-Bold';
+}
+// A caption's still: white Gellix on a soft, translucent, fully rounded pill
+// with a gentle shadow (the same look as the Mac).
+export async function drawCaption(dir, name, caption, { width: W, height: H }) {
+  const lines = caption.text.split('\n'), pt = Math.max(12, Math.min(captionPoints(H), Math.floor((W * 0.86) / (Math.max(...lines.map(l => l.length)) * 0.55))));
+  const text = path.join(dir, `${name}-text.png`), file = path.join(dir, `${name}.png`), magick = await imageCommand();
+  await run(magick, ['-background', 'none', '-fill', 'white', '-font', await captionFont(), '-pointsize', String(pt), '-interline-spacing', String(Math.round(pt * 0.15)), '-gravity', 'center', `label:${literalText(caption.text)}`, '-trim', '+repage', `PNG32:${text}`]);
+  const png = await readFile(text), tw = png.readUInt32BE(16), th = png.readUInt32BE(20), padX = Math.round(pt * 0.95), padY = Math.round(pt * 0.6), shadow = Math.round(pt * 0.5);
+  const w = tw + padX * 2, h = th + padY * 2, r = Math.round(Math.min(h / 2, pt * 1.1));
+  await run(magick, ['-size', `${w + shadow * 2}x${h + shadow * 2}`, 'xc:none',
+    '(', '-size', `${w}x${h}`, 'xc:none', '-fill', 'rgba(0,0,0,0.35)', '-draw', `roundrectangle 0,0 ${w - 1},${h - 1} ${r},${r}`, '-blur', `0x${Math.round(shadow / 2)}`, ')', '-geometry', `+${shadow}+${shadow + Math.round(shadow / 3)}`, '-compose', 'over', '-composite',
+    '(', '-size', `${w}x${h}`, 'xc:none', '-fill', 'rgba(16,16,20,0.66)', '-draw', `roundrectangle 0,0 ${w - 1},${h - 1} ${r},${r}`, ')', '-geometry', `+${shadow}+${shadow}`, '-compose', 'over', '-composite',
+    text, '-geometry', `+${shadow + padX}+${shadow + padY}`, '-compose', 'over', '-composite', `PNG32:${file}`]);
   return file;
 }
 // Music: a built-in track (composed by code, CC0) or the agent's own audio
@@ -387,8 +427,8 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
   // A recording made with --hide-cursor has no cursor in the picture, so it always gets one drawn.
   const hidden = track?.cursor_in_video === false;
   if (hidden && !parsed.cursor) { parsed.cursor = parseCursor(true); warnings.push('This recording hid the real cursor, so a drawn cursor was added. Pass "cursor" in the recipe to change it.'); }
-  const bg = parsed.background, layout = bg ? backgroundLayout(bg, source) : null, mu = parsed.music, voice = await hasAudio(entry.video_path);
-  if (!parsed.zoom && !parsed.cursor && !bg && !mu && !parsed.title && !parsed.end) fail('INVALID_ARGUMENTS', 'Nothing to do. Pass --auto-zoom, --cursor, --background, --music, --title, or a recipe such as {"zoom":{"auto":true},"cursor":{"size":"big"},"background":"ocean","music":"upbeat"}.');
+  const bg = parsed.background, layout = bg ? backgroundLayout(bg, source, { captions: parsed.captions.length > 0 }) : null, mu = parsed.music, voice = await hasAudio(entry.video_path);
+  if (!parsed.zoom && !parsed.cursor && !bg && !mu && !parsed.title && !parsed.end && !parsed.captions.length) fail('INVALID_ARGUMENTS', 'Nothing to do. Pass --auto-zoom, --cursor, --background, --music, --title, or a recipe (captions too) such as {"zoom":{"auto":true},"cursor":{"size":"big"},"background":"ocean","music":"upbeat"}.');
   // Louder on its own; quieter under narration, where it also ducks while someone speaks.
   if (mu && mu.volume === null) mu.volume = voice ? 0.4 : 0.8;
   if (mu?.file) { const info = await stat(mu.file).catch(() => null); if (!info?.isFile()) fail('NOT_FOUND', `recipe.music.file ${mu.file} is not a readable file.`); }
@@ -418,11 +458,14 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
     ...(bg ? { background: { style: bg.style, ...(bg.style === 'custom' ? { color: bg.colors[0] } : {}), corner_radius: bg.corner_radius, padding: bg.padding, shadow: bg.shadow } } : {}),
     ...(mu ? { music: { ...(mu.file ? { file: mu.file } : { track: mu.track }), volume: mu.volume, fade_in: mu.fade_in, fade_out: mu.fade_out, duck: mu.duck, start: mu.start } } : {}),
     ...(parsed.title ? { title: parsed.title } : {}), ...(parsed.end ? { end: parsed.end } : {}),
+    ...(parsed.captions.length ? { captions: parsed.captions } : {}),
   };
+  const shownCaptions = parsed.captions.map(k => ({ ...k, end: Math.min(k.end, source.duration) })).filter(k => k.end > k.start);
+  if (shownCaptions.length < parsed.captions.length) warnings.push(`${parsed.captions.length - shownCaptions.length} caption(s) start after the recording ends, so they are not shown.`);
   const T = parsed.title?.seconds ?? 0, E = parsed.end?.seconds ?? 0, total = T + source.duration + E;
-  const summary = { ...(parsed.zoom ? { zooms: plan.length, moments_from: from } : {}), ...(c ? { cursor: { drawn: hidden, highlight: !!c.highlight, ripples: c.ripple ? Math.min(clicks.length, MAX_RIPPLES) : 0 } } : {}), ...(bg ? { background: { style: bg.style, output: { width: layout.W, height: layout.H }, video_box: { x: layout.x, y: layout.y, width: layout.w, height: layout.h } } } : {}), ...(mu ? { music: { ...(mu.file ? { file: mu.file, license: 'your file' } : { track: mu.track, about: TRACKS[mu.track].about, license: MUSIC_LICENSE }), ducked_under_recording_audio: voice && mu.duck } } : {}), audio: mu ? (voice ? 'recording audio with music' : 'music') : (voice ? 'recording audio' : 'none'), ...(T || E ? { cards: { title_seconds: T, end_seconds: E, video_starts_at: T }, duration: +total.toFixed(2) } : {}), preview_times: [...(T ? [+(T / 2).toFixed(2)] : []), ...(plan.length ? plan.map(b => (b.start + b.end) / 2) : (clicks.length ? clicks.slice(0, 6).map(k => k[0] + 0.15) : [source.duration / 2])).map(t => Math.round((t + T) * 100) / 100), ...(E ? [+(T + source.duration + E / 2).toFixed(2)] : [])], ...(warnings.length ? { warnings } : {}) };
+  const summary = { ...(parsed.zoom ? { zooms: plan.length, moments_from: from } : {}), ...(c ? { cursor: { drawn: hidden, highlight: !!c.highlight, ripples: c.ripple ? Math.min(clicks.length, MAX_RIPPLES) : 0 } } : {}), ...(bg ? { background: { style: bg.style, output: { width: layout.W, height: layout.H }, video_box: { x: layout.x, y: layout.y, width: layout.w, height: layout.h } } } : {}), ...(mu ? { music: { ...(mu.file ? { file: mu.file, license: 'your file' } : { track: mu.track, about: TRACKS[mu.track].about, license: MUSIC_LICENSE }), ducked_under_recording_audio: voice && mu.duck } } : {}), audio: mu ? (voice ? 'recording audio with music' : 'music') : (voice ? 'recording audio' : 'none'), ...(parsed.captions.length ? { captions: shownCaptions.length } : {}), ...(T || E ? { cards: { title_seconds: T, end_seconds: E, video_starts_at: T }, duration: +total.toFixed(2) } : {}), preview_times: [...(T ? [+(T / 2).toFixed(2)] : []), ...(plan.length ? plan.map(b => (b.start + b.end) / 2) : (clicks.length ? clicks.slice(0, 6).map(k => k[0] + 0.15) : [source.duration / 2])).map(t => Math.round((t + T) * 100) / 100), ...(E ? [+(T + source.duration + E / 2).toFixed(2)] : [])], ...(warnings.length ? { warnings } : {}) };
   if (dryRun) return { music_tracks: Object.fromEntries(Object.entries(TRACKS).map(([k, v]) => [k, v.about])), ok: true, dry_run: true, source_id: entry.item_id, width: source.width, height: source.height, duration: source.duration, plan, recipe: recipeOut, ...summary, note: 'Edit the recipe and pass it back with --recipe to adjust.' };
-  if (parsed.zoom && !plan.length && !c && !bg && !mu && !parsed.title && !parsed.end) fail('INVALID_ARGUMENTS', 'No moments to zoom on (the cursor track found no clicks, typing or pauses). Pass recipe.zoom.moments instead.');
+  if (parsed.zoom && !plan.length && !c && !bg && !mu && !parsed.title && !parsed.end && !shownCaptions.length) fail('INVALID_ARGUMENTS', 'No moments to zoom on (the cursor track found no clicks, typing or pauses). Pass recipe.zoom.moments instead.');
   const work = await mkdtemp(path.join(os.tmpdir(), 'myman-polish-'));
   try {
     const out = path.join(work, 'polished.mp4'), inputs = ['-i', entry.video_path];
@@ -446,6 +489,18 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
       inputs.push('-loop', '1', '-framerate', String(FPS), '-i', art.file);
       graph += `;${backgroundChain(layout, { input: '[z]', bgIn: n })}`;
       if (cards) graph = graph.replace(/\[out\]$/, '[main]');
+    }
+    if (shownCaptions.length) {
+      // Each caption fades in and out at the bottom of the video (inside the backdrop's frame when there is one).
+      graph = graph.replace(/\[(out|main)\]$/, '[cap0]');
+      // On a backdrop: centred in the space under the video. Without one: near the bottom of the picture.
+      const y = bg ? `${layout.y + layout.h}+(${layout.H - layout.y - layout.h}-overlay_h)/2` : 'main_h*0.95-overlay_h';
+      for (const [i, k] of shownCaptions.entries()) {
+        const n = inputs.filter(a => a === '-i').length, d = k.end - k.start, fade = Math.min(CAPTION_FADE, d / 2);
+        inputs.push('-loop', '1', '-framerate', String(FPS), '-t', f(k.end + 0.1), '-i', await drawCaption(work, `caption-${i}`, k, bg ? { width: layout.w, height: layout.h } : source));
+        const next = i === shownCaptions.length - 1 ? `format=yuv420p${fin}` : `[cap${i + 1}]`;
+        graph += `;[${n}:v]format=rgba,fade=t=in:st=${f(k.start)}:d=${f(fade)}:alpha=1,fade=t=out:st=${f(k.end - fade)}:d=${f(fade)}:alpha=1[cp${i}];[cap${i}][cp${i}]overlay=x=(main_w-overlay_w)/2:y=${y}:eof_action=pass:enable='between(t,${f(k.start)},${f(k.end)})'${next.startsWith('[') ? next : `,${next}`}`;
+      }
     }
     if (cards) {
       const size = { width: bg ? layout.W : source.width - source.width % 2, height: bg ? layout.H : source.height - source.height % 2, colors: bg ? bg.colors : BACKDROPS.slate };

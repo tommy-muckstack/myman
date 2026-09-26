@@ -266,4 +266,20 @@ extension RecordingPolishTests {
         let rendered = try await track?.load(.naturalSize)
         XCTAssertEqual(rendered, RecordingPolish.frame(for: size, options: plan.options).output, "backdrop padding grows the frame")
     }
+
+    func testCaptionsParseLikeLinuxAndMakeRoomUnderTheVideo() throws {
+        let plan = try AgentPolish.plan(["captions": [["text": "Second", "start": 3, "end": 5], ["text": "First", "start": 0.5, "end": 2]]])
+        XCTAssertTrue(plan.finishes, "captions alone are work for the joining step")
+        XCTAssertEqual(plan.captions.map(\.text), ["First", "Second"], "sorted by start")
+        XCTAssertEqual((plan.recipe["captions"] as? [[String: Any]])?.count, 2)
+        func code(_ recipe: [String: Any]) -> String? { do { _ = try AgentPolish.plan(recipe); return nil } catch { return (error as? AgentError)?.code } }
+        XCTAssertEqual(code(["captions": [["text": "x", "start": 2, "end": 1]]]), "INVALID_ARGUMENTS", "end must be after start")
+        XCTAssertEqual(code(["captions": [["text": "x", "start": 0, "end": 1, "size": 3]]]), "INVALID_ARGUMENTS", "unknown keys fail")
+        XCTAssertEqual(code(["captions": "hello"]), "INVALID_ARGUMENTS")
+        XCTAssertEqual(DemoFinish.captionPoints(420), 21); XCTAssertEqual(DemoFinish.captionBand(videoHeight: 420, padding: 38), 46)
+        var options = PolishOptions(); options.backdrop = .dusk; options.captionBand = 46
+        let frame = RecordingPolish.frame(for: CGSize(width: 640, height: 420), options: options)
+        XCTAssertEqual(frame.output.height, 420 + frame.padding * 2 + 46); XCTAssertEqual(frame.band, 46)
+        XCTAssertNotNil(DemoFinish.captionImage(.init(text: "Search for a song", start: 0, end: 1), videoSize: CGSize(width: 640, height: 420)))
+    }
 }

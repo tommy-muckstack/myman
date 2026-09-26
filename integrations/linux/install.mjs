@@ -44,6 +44,7 @@ for(const name of ['cli.mjs','app-server.mjs','app-server.mjs.LEGAL.txt','worker
 await copy(path.join(source,'src/Resources/BrainCompanion/cli.mjs'),path.join(install,'brain-cli.mjs'));
 await copy(path.join(source,'src/Resources/BrainCompanion/server.mjs'),path.join(install,'server.mjs'));
 await copy(path.join(source,'src/Resources/BrainCompanion/LICENSES.txt'),path.join(install,'BRAIN-LICENSES.txt'));
+await copy(path.join(source,'src/Resources/Fonts/Gellix-SemiBold.ttf'),path.join(install,'Gellix-SemiBold.ttf'));
 const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";
 const temp=launcher+`.${randomUUID()}.tmp`;
 await writeFile(temp,`#!/bin/sh\nexec node ${quote(path.join(install,'cli.mjs'))} "$@"\n`,{mode:0o755});await rename(temp,launcher);

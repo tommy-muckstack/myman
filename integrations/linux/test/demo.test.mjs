@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_POLISH, clientIds, hideable, lookElements, markArgs, mergeLines, parseScript, splitLine, stepMoments, toGlobal , pickTarget, missMessage} from '../demo.mjs';
+import { DEFAULT_POLISH, captionTimes, clientIds, hideable, lookElements, markArgs, mergeLines, parseScript, splitLine, stepMoments, toGlobal , pickTarget, missMessage} from '../demo.mjs';
 import { BACKDROPS, drawCard, literalText, parseCard, parseRecipe } from '../studio.mjs';
 
 const has = cmd => { try { execFileSync(cmd, ['-version'], { stdio: 'ignore' }); return true; } catch { return false; } };
@@ -130,4 +130,13 @@ test('named targets match whole labels in reading order', () => {
   assert.match(missMessage(elements, { text: 'Search' }, 8), /Could not find "Search".*Close matches: "Search songs"/);
   assert.match(missMessage(elements, { text: 'Play', nth: 3 }, 8), /Found only 2 "Play", not 3/);
   assert.match(missMessage([el('Tunes', 0, 0)], { text: 'Stop' }, 8), /Visible labels: "Tunes"/);
+});
+
+test('step captions: any step can carry one; each runs until the next captioned step', () => {
+  const p = parseScript({ app: 'x', steps: [{ click: 'Search', caption: 'Search for a song' }, { wait: 1 }, { key: 'Return', caption: 'Play it' }] });
+  assert.equal(p.captions, 2); assert.equal(p.steps[0].caption, 'Search for a song'); assert.equal(p.steps[1].caption, undefined);
+  assert.throws(() => parseScript({ app: 'x', steps: [{ wait: 1, caption: '' }] }), /caption must be text/);
+  assert.throws(() => parseScript({ app: 'x', polish: false, steps: [{ wait: 1, caption: 'Hi' }] }), /need polish/);
+  assert.deepEqual(captionTimes([{ t: 1, text: 'a' }, { t: 3.2, text: 'b' }], 6), [{ text: 'a', start: 1, end: 3.2 }, { text: 'b', start: 3.2, end: 6 }]);
+  assert.equal(captionTimes([{ t: 5, text: 'a' }], 5.5)[0].end, 6.5, 'the last caption gets at least 1.5 s');
 });
