@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { markupTheme } from './theme.mjs';
+import { resolveTargets } from './compare.mjs';
 import { dependencies, fail, imageCommand, pngSize, readSafe, run, unsupported } from './system.mjs';
 
 export function rect(value, width, height) {
@@ -116,7 +117,8 @@ export function validateMarkup(args, width, height) {
   if (args.open_editor || args.clipboard || args.lease_id || args.background_color || args.corner_radius || (args.background && args.background !== 'none')) unsupported('Editor UI, clipboard, leases and backdrops are not supported on Linux.');
   if (args.dry_run && args.preview) fail('INVALID_ARGUMENTS', 'Choose preview or dry-run.');
   for (const op of args.annotations ?? []) {
-    if (op.target_text || op.target_region || !['arrow','box','highlight','text','pixelate'].includes(op.type)) unsupported('Linux annotations support explicit arrow, box, highlight, text and pixelate geometry. OCR targeting and image/circle/callout overlays are unavailable.');
+    if (op.target_text || op.target_region) fail('INVALID_ARGUMENTS', 'Resolve target_text/target_region before validating markup.');
+    if (!['arrow','box','highlight','text','pixelate'].includes(op.type)) unsupported('Linux annotations support arrow, box, highlight, text and pixelate (explicit geometry, target_text or target_region). Image, circle and callout overlays are unavailable.');
     if (op.type === 'arrow') {
       for (const point of [op.from,op.to]) if (!Array.isArray(point) || point.length !== 2 || point.some((n,i) => !Number.isFinite(n) || n < 0 || n >= [width,height][i])) fail('INVALID_ARGUMENTS', 'Arrow endpoints must fit inside the image.');
       if (op.from.every((v,i) => v===op.to[i])) fail('INVALID_ARGUMENTS', 'Arrow endpoints must differ.');
@@ -129,6 +131,7 @@ export function validateMarkup(args, width, height) {
 }
 export async function annotate(source, args, work) {
   const { width, height } = pngSize(await readSafe(source, 128 * 1024 * 1024));
+  args = { ...args, annotations: await resolveTargets(source, args.annotations, width, height) };
   const dimensions = validateMarkup(args, width, height);
   if (args.dry_run) return { dry_run: true, valid: true, ...dimensions };
   const im = await imageCommand();
@@ -168,6 +171,28 @@ export async function annotate(source, args, work) {
   const crop = args.crop ? ['-crop',`${args.crop[2]}x${args.crop[3]}+${args.crop[0]}+${args.crop[1]}`,'+repage'] : [];
   await run(im, [current,...crop,'-strip',output]);
   return { file: output, ...dimensions, scale: 1, ...(theme.source==='omarchy'?{theme:{name:theme.name,source:'omarchy'}}:{}) };
+}
+// Import an existing image file. Only real raster formats are accepted (by
+// magic bytes, with an explicit ImageMagick coder), so SVG/MSL/PS delegates
+// are never reached through a user-supplied path.
+const IMPORT_MAX = 64 * 1024 * 1024;
+export function importFormat(bytes) {
+  if (bytes.subarray(0,8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))) return 'png';
+  if (bytes[0]===0xff && bytes[1]===0xd8 && bytes[2]===0xff) return 'jpeg';
+  if (bytes.subarray(0,4).toString('latin1')==='RIFF' && bytes.subarray(8,12).toString('latin1')==='WEBP') return 'webp';
+  if (/^GIF8[79]a/.test(bytes.subarray(0,6).toString('latin1'))) return 'gif';
+  return null;
+}
+export async function importImage(file, work) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) fail('INVALID_ARGUMENTS', 'Import needs an absolute path to an image file.');
+  const bytes = await readSafe(file, IMPORT_MAX);
+  const format = importFormat(bytes);
+  if (!format) fail('INVALID_ARGUMENTS', 'Import accepts PNG, JPEG, WebP or GIF files.');
+  const source = path.join(work, `import.${format}`), output = path.join(work, 'import.png');
+  await writeFile(source, bytes, { mode: 0o600 });
+  await run(await imageCommand(), [`${format}:${source}[0]`, '-auto-orient', '-strip', `PNG32:${output}`]);
+  const { width, height } = pngSize(await readSafe(output, 128 * 1024 * 1024));
+  return { file: output, width, height, backend: 'import', scale: 1, source_format: format };
 }
 export async function ocr(file) {
   const tool = (await dependencies()).tesseract;

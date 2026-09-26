@@ -11,6 +11,10 @@ const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
 myman doctor --json
 myman screenshot [--display main|INDEX|id:INDEX] [--region x,y,w,h] [--window-id ID] --json
 myman annotate --id SHOT-ID --ops-file ops.json [--dry-run|--preview] --json
+myman capture-markup --mode agent [--region x,y,w,h] --ops-file ops.json --json (capture + markup grants; saves only the marked-up image)
+myman capture import --path /abs/image.png|jpg|webp|gif --json (markup grant)
+  ops: {"type":"box|highlight|pixelate|text","rect":[x,y,w,h]} or {"type":"arrow","from":[x,y],"to":[x,y]};
+  or target on-screen text instead of pixels: {"type":"box","target_text":"Save"} / {"type":"arrow","target_region":"ocr-..."}
 myman note create --body TEXT|--body-file FILE|- [--title TITLE] --json
 myman library search --query TEXT [--kind notes|screenshots|recordings] [--after DATE] [--before DATE] [--pinned-only] [--lexical-only] --json
 myman library read --id ID --json (body, revision, updated_at, alt text)

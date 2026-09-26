@@ -9,7 +9,7 @@ import { z } from 'zod/v4';
 import { catalog } from '../brain/actions.mjs';
 import { Brain } from '../brain/brain.mjs';
 import { execute } from '../brain/tools.mjs';
-import { annotate, capture, ocr, screens } from './images.mjs';
+import { annotate, capture, importImage, ocr, screens, validateMarkup } from './images.mjs';
 import { captureEntry, saveCapture, saveNote } from './library.mjs';
 import * as recording from './recording.mjs';
 import * as comparison from './compare.mjs';
@@ -21,10 +21,10 @@ import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.13.0';
-export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets']);
+export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export function errorData(error) { return {...(error.alternative?{alternative:error.alternative}:{}),code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
+export function errorData(error) { return {...(error.alternative?{alternative:error.alternative}:{}),...(error.details&&typeof error.details==='object'?{details:error.details}:{}),code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
 export async function capabilities(name, offline=false) {
   if (name && !schemas.has(name)) fail('UNKNOWN_ACTION','Unknown action name.');
   const actions=catalog.actions.filter(a=>!name || a.name===name).map(a=>({...a,supported:supported.has(a.name),platforms:supported.has(a.name)?['darwin','linux']:['darwin']}));
@@ -46,7 +46,7 @@ function validate(name,args) {
   return parsed.data;
 }
 // Capture and recording always tell the person at the machine (see indicator.mjs).
-const visible=new Set(['screenshot.capture','recording.start','recording.stop','recording.cancel']);
+const visible=new Set(['screenshot.capture','screenshot.capture_markup','recording.start','recording.stop','recording.cancel']);
 export async function dispatch(name,args) {
   const result=await perform(name,args);
   if(visible.has(name)&&!args?.dry_run) await announce(name,result);
@@ -78,6 +78,15 @@ async function perform(name,args) {
       return {...await saveCapture(await capture({...rest,region:win.region,coordinates:'global'},work),undefined,{window:{app:win.app,title:win.title}}),window_id:win.id,window:{app:win.app,title:win.title}};
     }
     if (name==='screenshot.capture') return await saveCapture(await capture(args,work),undefined,{display:args.display,region:args.region});
+    if (name==='screenshot.capture_markup') {
+      // Capture, mark up, and save only the finished image (as on the Mac).
+      const {annotations,crop,color,background,corner_radius,background_color,open_editor,clipboard,lease_id,...where}=args;
+      validateMarkup({annotations:[],background,corner_radius,background_color,open_editor,clipboard,lease_id},1,1);
+      const shot=await capture(where,work), marked=await annotate(shot.file,{annotations,crop,color},work);
+      const saved=await saveCapture({...marked,backend:shot.backend},undefined,{display:args.display,region:args.region,markup:(annotations??[]).map(a=>a.type)});
+      return marked.theme?{...saved,theme:marked.theme}:saved;
+    }
+    if (name==='screenshot.import') return await saveCapture(await importImage(args.path,work),undefined,{imported:true});
     const entry=await captureEntry(args.id);
     const result=await annotate(entry.image_path,args,work);
     if (result.dry_run) return {id:args.id,...result};
