@@ -14,7 +14,7 @@ export const commands = [
 ];
 export const flags = ['json', 'help', 'id', 'query', 'kind', 'limit', 'offset', 'after', 'before', 'title', 'body', 'body-file', 'file', 'display', 'region', 'window-id', 'coordinates', 'ops', 'ops-file',
   'before-id', 'after-id', 'ignore-rects', 'threshold', 'granularity', 'color', 'times', 'count', 'width', 'start', 'end', 'max-bytes', 'edits', 'seconds', 'item-ids', 'members', 'bundle-id', 'recipient', 'instruction', 'output-ids', 'resource', 'lease-id', 'after-cursor', 'scopes', 'machine', 'note', 'sound-enabled', 'enabled', 'message', 'at', 'dry-run', 'preview', 'request-id', 'no-wait', 'wait-timeout', 'root', 'offline', 'format', 'text', 'session-id', 'max-duration', 'expected-updated-at', 'expected-revision', 'expected-version',
-  'source-id', 'path', 'alt', 'confirm', 'pinned-only', 'lexical-only', 'semantic', 'notes', 'due', 'clear-due', 'state', 'mode', 'no-system-audio', 'keep-audio', 'max-minutes', 'full', 'auto-zoom', 'recipe', 'hide-cursor', 'cursor', 'background', 'background-color', 'corner-radius', 'music', 'music-volume'];
+  'source-id', 'path', 'alt', 'confirm', 'pinned-only', 'lexical-only', 'semantic', 'notes', 'due', 'clear-due', 'state', 'mode', 'no-system-audio', 'keep-audio', 'max-minutes', 'full', 'auto-zoom', 'recipe', 'hide-cursor', 'cursor', 'background', 'background-color', 'corner-radius', 'music', 'music-volume', 'script', 'window', 'app'];
 
 function distance(a, b) {
   const row = Array.from({ length: b.length + 1 }, (_, i) => i);
