@@ -4,19 +4,20 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BACKDROPS, FPS, LEVELS, MAX_RIPPLES, backgroundChain, backgroundLayout, drawBackground, parseBackground, SIZES, YELLOW, cursorChain, cursorCommands, cursorFrames, level, parseCursor, parseRecipe, zoomExpressions, zoomGraph, zoomPlan } from '../studio.mjs';
+import { TRACKS, compose } from '../music.mjs';
+import { BACKDROPS, musicChain, parseMusic, FPS, LEVELS, MAX_RIPPLES, backgroundChain, backgroundLayout, drawBackground, parseBackground, SIZES, YELLOW, cursorChain, cursorCommands, cursorFrames, level, parseCursor, parseRecipe, zoomExpressions, zoomGraph, zoomPlan } from '../studio.mjs';
 
 const size = { width: 800, height: 600, duration: 20 };
 const has = cmd => { try { execFileSync(cmd, ['-version'], { stdio: 'ignore' }); return true; } catch { return false; } };
 
 test('recipes are strict JSON: named or numeric levels, unknown keys rejected', () => {
   assert.equal(level('subtle'), LEVELS.subtle); assert.equal(level(undefined), LEVELS.normal); assert.equal(level('2.2'), 2.2);
-  assert.deepEqual(parseRecipe({}), { zoom: null, cursor: null, background: null });
+  assert.deepEqual(parseRecipe({}), { zoom: null, cursor: null, background: null, music: null });
   const r = parseRecipe({ zoom: { auto: true, level: 'strong' } });
   assert.equal(r.zoom.auto, true); assert.equal(r.zoom.level, 2.4); assert.equal(r.zoom.ramp, 0.6);
   const m = parseRecipe({ zoom: { moments: [{ start: 1, end: 2, x: 10, y: 20, level: 3 }] } });
   assert.equal(m.zoom.auto, false); assert.equal(m.zoom.moments[0].level, 3);
-  const bad = [{ music: {} }, { zoom: { speed: 2 } }, { zoom: { level: 9 } }, { zoom: { level: 'huge' } }, { zoom: { moments: [{ start: 2, end: 1, x: 0, y: 0 }] } }, { zoom: { moments: [{ start: 0, end: 1, x: 0 }] } }, { zoom: { moments: [{ start: 0, end: 1, x: 0, y: 0, rect: [] }] } }, { zoom: [] }];
+  const bad = [{ sound: {} }, { zoom: { speed: 2 } }, { zoom: { level: 9 } }, { zoom: { level: 'huge' } }, { zoom: { moments: [{ start: 2, end: 1, x: 0, y: 0 }] } }, { zoom: { moments: [{ start: 0, end: 1, x: 0 }] } }, { zoom: { moments: [{ start: 0, end: 1, x: 0, y: 0, rect: [] }] } }, { zoom: [] }];
   for (const recipe of bad) assert.throws(() => parseRecipe(recipe), e => e.code === 'INVALID_ARGUMENTS', JSON.stringify(recipe));
 });
 
@@ -156,5 +157,44 @@ test('background render: backdrop colours outside, video untouched inside, round
     assert.ok(red(px(10, 10)), 'backdrop in the padding');
     assert.ok(white(px(L.x + 160, L.y + 120)), 'video in the middle');
     assert.ok(red(px(L.x + 2, L.y + 2)), 'the corner is rounded off');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('music recipes: built-in track names or an absolute file, bounded settings', () => {
+  assert.equal(parseMusic(undefined), null); assert.equal(parseMusic('none'), null);
+  assert.deepEqual(parseMusic(true), { track: 'upbeat', file: null, volume: null, fade_in: 1.5, fade_out: 2.5, duck: true, start: 0 });
+  assert.equal(parseMusic('Calm').track, 'calm');
+  assert.equal(parseMusic('/tmp/song.mp3').file, '/tmp/song.mp3');
+  assert.equal(parseMusic({ track: 'cinematic', volume: 0.3, duck: false }).duck, false);
+  assert.deepEqual(Object.keys(TRACKS), ['upbeat', 'calm', 'cinematic']);
+  for (const m of [{ track: 'jazz' }, { file: 'song.mp3' }, { track: 'calm', file: '/a.mp3' }, { volume: 2 }, { fade_in: -1 }, { duck: 'yes' }, { loop: true }, []]) assert.throws(() => parseMusic(m), e => e.code === 'INVALID_ARGUMENTS', JSON.stringify(m));
+});
+
+test('built-in tracks are deterministic, seamless loops at a sensible level', () => {
+  const a = compose('calm'), b = compose('calm');
+  assert.equal(a.left.length, b.left.length); assert.ok(a.left.every((v, i) => v === b.left[i]), 'same audio every time');
+  let sum = 0, peak = 0; for (const v of a.left) { sum += v * v; peak = Math.max(peak, Math.abs(v)); }
+  const rms = Math.sqrt(sum / a.left.length);
+  assert.ok(rms > 0.06 && rms < 0.2 && peak < 0.95, `level rms ${rms} peak ${peak}`);
+  assert.ok(Math.abs(a.left[0] - a.left[a.left.length - 1]) < 0.05, 'the loop point has no jump');
+});
+
+test('music is trimmed to the video, faded, and ducked while the recording speaks', { skip: !has('ffmpeg') }, () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'studio-music-'));
+  try {
+    const voice = path.join(dir, 'voice.wav'), music = path.join(dir, 'music.wav'), out = path.join(dir, 'out.wav');
+    // "Narration" from 2s to 4s, silence elsewhere; steady music underneath.
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', "aevalsrc='between(t,2,4)*0.5*sin(2*PI*300*t)':s=48000:d=6", '-y', voice]);
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', "aevalsrc='0.3*sin(2*PI*2000*t)':s=48000:d=2", '-y', music]);
+    const chain = musicChain({ volume: 0.8, fade_in: 0.5, fade_out: 0.5, duck: true, start: 0 }, { duration: 6, musicIn: 1, voice: '[0:a]' });
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-i', voice, '-stream_loop', '-1', '-i', music, '-filter_complex', chain, '-map', '[aout]', '-y', out]);
+    const dur = Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', out]).toString());
+    assert.ok(Math.abs(dur - 6) < 0.05, `trimmed to the video (${dur}s), even though the music loop is 2s`);
+    // Level of the 2 kHz music band alone in a window.
+    const level = (a, b) => { const v = /RMS level dB:\s*(-?[\d.]+|-inf)/.exec(execFileSync('sh', ['-c', `ffmpeg -i "${out}" -af "atrim=${a}:${b},highpass=f=1500,highpass=f=1500,astats=measure_overall=RMS_level:measure_perchannel=0" -f null - 2>&1`]).toString())?.[1]; return v === '-inf' ? -Infinity : Number(v); };
+    const alone = level(1, 1.8), under = level(2.8, 3.8);
+    assert.ok(alone - under > 4, `music dips under narration (${alone} dB alone, ${under} dB under voice)`);
+    const start = level(0, 0.1), end = level(5.9, 6);
+    assert.ok(start < alone - 6 && end < alone - 6, `fades in and out (${start} dB, ${end} dB vs ${alone} dB)`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

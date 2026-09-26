@@ -1,9 +1,10 @@
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { recordingEntry, saveRecording } from './library.mjs';
 import { probeVideo } from './video.mjs';
-import { dependencies, fail, imageCommand, readSafe, rootPath, run } from './system.mjs';
+import { dependencies, directory, fail, imageCommand, readSafe, rootPath, run, statePath } from './system.mjs';
+import { LICENSE as MUSIC_LICENSE, TRACKS, VERSION as MUSIC_VERSION, compose, wav } from './music.mjs';
 
 // myman record polish: a finished recording plus a small JSON recipe becomes a
 // polished copy (the source is never changed). Step one is smooth auto-zoom:
@@ -12,7 +13,7 @@ import { dependencies, fail, imageCommand, readSafe, rootPath, run } from './sys
 // (--dry-run), edit it, and render the same result again.
 export const LEVELS = { subtle: 1.4, normal: 1.8, strong: 2.4 };
 export const FPS = 30;
-const RECIPE_KEYS = ['zoom', 'cursor', 'background'], BACKGROUND_KEYS = ['style', 'color', 'corner_radius', 'padding', 'shadow'], CURSOR_KEYS = ['size', 'smooth', 'highlight', 'ripple'], ZOOM_KEYS = ['auto', 'level', 'ramp', 'gap', 'moments'], MOMENT_KEYS = ['start', 'end', 'x', 'y', 'level'];
+const RECIPE_KEYS = ['zoom', 'cursor', 'background', 'music'], MUSIC_KEYS = ['track', 'file', 'volume', 'fade_in', 'fade_out', 'duck', 'start'], BACKGROUND_KEYS = ['style', 'color', 'corner_radius', 'padding', 'shadow'], CURSOR_KEYS = ['size', 'smooth', 'highlight', 'ripple'], ZOOM_KEYS = ['auto', 'level', 'ramp', 'gap', 'moments'], MOMENT_KEYS = ['start', 'end', 'x', 'y', 'level'];
 const MAX_BLOCKS = 20, MAX_POINTS = 8;
 
 function num(v, lo, hi, name) {
@@ -33,8 +34,8 @@ export function level(v) {
 // Validate a recipe and fill defaults. Unknown keys are errors, never ignored.
 export function parseRecipe(recipe = {}) {
   onlyKeys(recipe, RECIPE_KEYS, 'The recipe');
-  const cursor = parseCursor(recipe.cursor), background = parseBackground(recipe.background);
-  if (recipe.zoom === undefined) return { zoom: null, cursor, background };
+  const cursor = parseCursor(recipe.cursor), background = parseBackground(recipe.background), music = parseMusic(recipe.music);
+  if (recipe.zoom === undefined) return { zoom: null, cursor, background, music };
   onlyKeys(recipe.zoom, ZOOM_KEYS, 'recipe.zoom');
   const z = recipe.zoom;
   const zoom = { auto: z.auto !== false && !z.moments, level: level(z.level), ramp: z.ramp === undefined ? 0.6 : num(z.ramp, 0.2, 2, 'recipe.zoom.ramp'), gap: z.gap === undefined ? 2.5 : num(z.gap, 0, 10, 'recipe.zoom.gap') };
@@ -47,7 +48,7 @@ export function parseRecipe(recipe = {}) {
       return { start, end, x: num(m.x, 0, 16000, `moments[${i}].x`), y: num(m.y, 0, 16000, `moments[${i}].y`), ...(m.level !== undefined ? { level: level(m.level) } : {}) };
     });
   }
-  return { zoom, cursor, background };
+  return { zoom, cursor, background, music };
 }
 // Background: the same backdrops as the image editor and the Mac app's
 // recording polish (Dusk, Ocean, Meadow, Slate, or a custom colour). The
@@ -98,6 +99,51 @@ export async function drawBackground(dir, bg, L) {
 // Filter text: pad the video onto the canvas, then lay the backdrop over it.
 export function backgroundChain(L, { input, bgIn }) {
   return `${input}pad=${L.W}:${L.H}:${L.x}:${L.y}[bp];[${bgIn}:v]format=rgba[bb];[bp][bb]overlay=0:0:shortest=1,format=yuv420p[out]`;
+}
+// Music: a built-in track (composed by code, CC0) or the agent's own audio
+// file, trimmed to the video, faded in and out, and ducked under the
+// recording's own sound (narration) when there is any.
+export function parseMusic(m) {
+  if (m === undefined || m === false || m === 'none') return null;
+  if (m === true) m = {};
+  if (typeof m === 'string') m = m.startsWith('/') ? { file: m } : { track: m };
+  onlyKeys(m, MUSIC_KEYS, 'recipe.music');
+  if (m.track !== undefined && m.file !== undefined) fail('INVALID_ARGUMENTS', 'recipe.music takes a track or a file, not both.');
+  let track = null, file = null;
+  if (m.file !== undefined) {
+    if (typeof m.file !== 'string' || !path.isAbsolute(m.file)) fail('INVALID_ARGUMENTS', 'recipe.music.file must be an absolute path to an audio file.');
+    file = m.file;
+  } else {
+    track = m.track === undefined ? 'upbeat' : String(m.track).toLowerCase();
+    if (!TRACKS[track]) fail('INVALID_ARGUMENTS', `recipe.music.track must be one of ${Object.keys(TRACKS).join(', ')} (or pass file).`);
+  }
+  const opt = (k, lo, hi, d) => m[k] === undefined ? d : num(m[k], lo, hi, `recipe.music.${k}`);
+  if (m.duck !== undefined && typeof m.duck !== 'boolean') fail('INVALID_ARGUMENTS', 'recipe.music.duck must be true or false.');
+  return { track, file, volume: opt('volume', 0, 1, null), fade_in: opt('fade_in', 0, 10, 1.5), fade_out: opt('fade_out', 0, 10, 2.5), duck: m.duck !== false, start: opt('start', 0, 3600, 0) };
+}
+// A built-in track, composed once per version and kept in MyMan's state folder.
+export async function trackFile(name) {
+  const dir = await directory(path.join(statePath(), 'music'), true, true), file = path.join(dir, `${name}-v${MUSIC_VERSION}.wav`);
+  if (await stat(file).then(i => i.isFile() && i.size > 44, () => false)) return file;
+  const tmp = `${file}.${process.pid}.tmp`;
+  await writeFile(tmp, wav(compose(name)), { mode: 0o600 }); await rename(tmp, file);
+  return file;
+}
+// Filter text for the soundtrack. Inputs: the recording's audio (when present)
+// and the looped music; output [aout], exactly the video's length.
+export function musicChain(mu, { duration, musicIn, voice }) {
+  const D = f(duration), fo = Math.min(mu.fade_out, duration / 2), fi = Math.min(mu.fade_in, duration / 2);
+  const parts = [`[${musicIn}:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=start=${f(mu.start)},asetpts=PTS-STARTPTS,atrim=end=${D},volume=${f(mu.volume)}${fi ? `,afade=t=in:d=${f(fi)}` : ''}${fo ? `,afade=t=out:st=${f(duration - fo)}:d=${f(fo)}` : ''}[mus]`];
+  if (!voice) return [...parts, '[mus]apad,atrim=end=' + D + '[aout]'].join(';');
+  parts.push(`${voice}aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=end=${D}${mu.duck ? ',asplit[vo][key]' : '[vo]'}`);
+  if (mu.duck) parts.push('[mus][key]sidechaincompress=threshold=0.03:ratio=6:attack=40:release=600:makeup=1[mud]');
+  parts.push(`[vo][${mu.duck ? 'mud' : 'mus'}]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[aout]`);
+  return parts.join(';');
+}
+async function hasAudio(file) {
+  const { ffprobe } = await dependencies();
+  const { stdout } = await run(ffprobe, ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', file]);
+  return stdout.trim().length > 0;
 }
 export const SIZES = { normal: 1.5, big: 2, huge: 2.6 };
 export const YELLOW = '#FFD60A';
@@ -292,8 +338,11 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
   // A recording made with --hide-cursor has no cursor in the picture, so it always gets one drawn.
   const hidden = track?.cursor_in_video === false;
   if (hidden && !parsed.cursor) { parsed.cursor = parseCursor(true); warnings.push('This recording hid the real cursor, so a drawn cursor was added. Pass "cursor" in the recipe to change it.'); }
-  const bg = parsed.background, layout = bg ? backgroundLayout(bg, source) : null;
-  if (!parsed.zoom && !parsed.cursor && !bg) fail('INVALID_ARGUMENTS', 'Nothing to do. Pass --auto-zoom, --cursor, --background, or a recipe such as {"zoom":{"auto":true},"cursor":{"size":"big"},"background":"ocean"}.');
+  const bg = parsed.background, layout = bg ? backgroundLayout(bg, source) : null, mu = parsed.music, voice = await hasAudio(entry.video_path);
+  if (!parsed.zoom && !parsed.cursor && !bg && !mu) fail('INVALID_ARGUMENTS', 'Nothing to do. Pass --auto-zoom, --cursor, --background, --music, or a recipe such as {"zoom":{"auto":true},"cursor":{"size":"big"},"background":"ocean","music":"upbeat"}.');
+  // Louder on its own; quieter under narration, where it also ducks while someone speaks.
+  if (mu && mu.volume === null) mu.volume = voice ? 0.4 : 0.8;
+  if (mu?.file) { const info = await stat(mu.file).catch(() => null); if (!info?.isFile()) fail('NOT_FOUND', `recipe.music.file ${mu.file} is not a readable file.`); }
   if (parsed.cursor && !track) fail('NOT_FOUND', 'This recording has no cursor track, so there is no pointer to highlight. Record again with a current MyMan.');
   if (parsed.cursor && track.pointer === 'unavailable') fail('UNSUPPORTED_DESKTOP', 'The cursor track has no pointer positions on this desktop (Sway does not expose the pointer).');
   const sx = track ? source.width / (track.width || source.width) : 1, sy = track ? source.height / (track.height || source.height) : 1;
@@ -318,10 +367,11 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
     ...(parsed.zoom ? { zoom: { level: parsed.zoom.level, ramp: parsed.zoom.ramp, gap: parsed.zoom.gap, moments: plan.flatMap(b => b.points.map((p, i) => ({ start: i ? p.t : b.start, end: b.points[i + 1]?.t ?? b.end, x: p.x, y: p.y, level: b.level }))) } } : {}),
     ...(c ? { cursor: { ...(hidden ? { size: c.size, smooth: c.smooth } : {}), highlight: c.highlight ?? false, ripple: c.ripple ?? false } } : {}),
     ...(bg ? { background: { style: bg.style, ...(bg.style === 'custom' ? { color: bg.colors[0] } : {}), corner_radius: bg.corner_radius, padding: bg.padding, shadow: bg.shadow } } : {}),
+    ...(mu ? { music: { ...(mu.file ? { file: mu.file } : { track: mu.track }), volume: mu.volume, fade_in: mu.fade_in, fade_out: mu.fade_out, duck: mu.duck, start: mu.start } } : {}),
   };
-  const summary = { ...(parsed.zoom ? { zooms: plan.length, moments_from: from } : {}), ...(c ? { cursor: { drawn: hidden, highlight: !!c.highlight, ripples: c.ripple ? Math.min(clicks.length, MAX_RIPPLES) : 0 } } : {}), ...(bg ? { background: { style: bg.style, output: { width: layout.W, height: layout.H }, video_box: { x: layout.x, y: layout.y, width: layout.w, height: layout.h } } } : {}), preview_times: plan.length ? plan.map(b => Math.round(((b.start + b.end) / 2) * 100) / 100) : (clicks.length ? clicks.slice(0, 6).map(k => Math.round((k[0] + 0.15) * 100) / 100) : [Math.round(source.duration * 50) / 100]), ...(warnings.length ? { warnings } : {}) };
-  if (dryRun) return { ok: true, dry_run: true, source_id: entry.item_id, width: source.width, height: source.height, duration: source.duration, plan, recipe: recipeOut, ...summary, note: 'Edit the recipe and pass it back with --recipe to adjust.' };
-  if (parsed.zoom && !plan.length && !c && !bg) fail('INVALID_ARGUMENTS', 'No moments to zoom on (the cursor track found no clicks, typing or pauses). Pass recipe.zoom.moments instead.');
+  const summary = { ...(parsed.zoom ? { zooms: plan.length, moments_from: from } : {}), ...(c ? { cursor: { drawn: hidden, highlight: !!c.highlight, ripples: c.ripple ? Math.min(clicks.length, MAX_RIPPLES) : 0 } } : {}), ...(bg ? { background: { style: bg.style, output: { width: layout.W, height: layout.H }, video_box: { x: layout.x, y: layout.y, width: layout.w, height: layout.h } } } : {}), ...(mu ? { music: { ...(mu.file ? { file: mu.file, license: 'your file' } : { track: mu.track, about: TRACKS[mu.track].about, license: MUSIC_LICENSE }), ducked_under_recording_audio: voice && mu.duck } } : {}), audio: mu ? (voice ? 'recording audio with music' : 'music') : (voice ? 'recording audio' : 'none'), preview_times: plan.length ? plan.map(b => Math.round(((b.start + b.end) / 2) * 100) / 100) : (clicks.length ? clicks.slice(0, 6).map(k => Math.round((k[0] + 0.15) * 100) / 100) : [Math.round(source.duration * 50) / 100]), ...(warnings.length ? { warnings } : {}) };
+  if (dryRun) return { music_tracks: Object.fromEntries(Object.entries(TRACKS).map(([k, v]) => [k, v.about])), ok: true, dry_run: true, source_id: entry.item_id, width: source.width, height: source.height, duration: source.duration, plan, recipe: recipeOut, ...summary, note: 'Edit the recipe and pass it back with --recipe to adjust.' };
+  if (parsed.zoom && !plan.length && !c && !bg && !mu) fail('INVALID_ARGUMENTS', 'No moments to zoom on (the cursor track found no clicks, typing or pauses). Pass recipe.zoom.moments instead.');
   const work = await mkdtemp(path.join(os.tmpdir(), 'myman-polish-'));
   try {
     const out = path.join(work, 'polished.mp4'), inputs = ['-i', entry.video_path];
@@ -342,7 +392,18 @@ export async function polish({ id, recipe = {}, dryRun = false }) {
       inputs.push('-loop', '1', '-framerate', String(FPS), '-i', art.file);
       graph += `;${backgroundChain(layout, { input: '[z]', bgIn: n })}`;
     }
-    await run(deps.ffmpeg, ['-nostdin', '-loglevel', 'error', ...inputs, '-filter_complex', graph, '-map', '[out]', '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-y', out], { timeout: 30 * 60_000 });
+    // Sound: the recording's own audio passes through (as on the Mac); music is mixed under it.
+    let audio = ['-an'];
+    if (mu) {
+      let src = mu.file;
+      if (src) { const copy = path.join(work, 'music-source'); await writeFile(copy, await readSafe(src, 512 * 1024 * 1024), { mode: 0o600 }); if (!(await hasAudio(copy))) fail('INVALID_ARGUMENTS', 'recipe.music.file has no audio stream.'); src = copy; }
+      else src = await trackFile(mu.track);
+      const musicIn = inputs.filter(a => a === '-i').length;
+      inputs.push('-stream_loop', '-1', '-i', src);
+      graph += `;${musicChain(mu, { duration: source.duration, musicIn, voice: voice ? '[0:a]' : null })}`;
+      audio = ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k'];
+    } else if (voice) audio = ['-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k'];
+    await run(deps.ffmpeg, ['-nostdin', '-loglevel', 'error', ...inputs, '-filter_complex', graph, '-map', '[out]', ...audio, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-y', out], { timeout: 30 * 60_000 });
     await stat(out);
     const info = await probeVideo(out);
     const result = await saveRecording({ file: out, width: info.width, height: info.height, duration: info.duration, started_at: entry.captured_local ?? entry.timestamp, backend: 'myman polish', source_id: entry.item_id });
