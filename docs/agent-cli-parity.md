@@ -25,13 +25,13 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Launcher / notes / settings panels | bare `open`, `note`, `settings`; `invoke app.open` | Unsupported | Interactive dispatch, no completed-capture claim |
 | Interactive screenshot picker | bare `screenshot` | No picker; bare screenshot captures desktop | Human selects region |
 | Display / region screenshot | `screenshot --mode agent` | Supported (X11, Hyprland/Omarchy, Sway; scale 1) | JSON completion; global or display-local geometry |
-| Window screenshot | `windows list`, `screenshot --window-id` | Unsupported | Real ScreenCaptureKit ID; app/title supplied in discovery |
+| Window screenshot | `windows list`, `screenshot --window-id` | `windows list` on X11 (app, title, PID, frame, and a ready `region` for `screenshot --region`); no `--window-id` | Real ScreenCaptureKit ID; app/title supplied in discovery |
 | Arrow / box / highlight / text / pixelate / crop / image overlay | `annotate --ops-file` | All except image overlay; explicit pixel geometry | Source preserved, new ID, OCR refresh, validation-only dry run |
 | One-command capture and markup | `capture-markup` | Unsupported; capture then annotate | Saves only final rendered capture |
 | Backdrops / custom colors / rounding | `annotate --background/--background-color/--corner-radius` | Per-operation colors only | Existing renderer; custom color uses user's existing preference |
 | Background removal | `capture remove-background` | Unsupported | No-foreground is an explicit failure |
-| OCR / regions / copy text | `capture ocr`, `capture copy --text-only` | Tesseract at save; search/read text; no Live Text boxes/copy | Individual OCR boxes returned; caller selects text |
-| Open capture / save / image bytes / clipboard | `editor open`, `editor save`, `capture image`, `clipboard read/write` | annotate/editor save and capture image; no UI/clipboard | Editor save applies supplied operations to stored image; it does not commit an unrelated open editor's unsaved edits |
+| OCR / regions / copy text | `capture ocr`, `capture copy --text-only` | Tesseract at save; `capture ocr` returns line text with pixel and normalized boxes; no Live Text copy | Individual OCR boxes returned; caller selects text |
+| Open capture / save / image bytes / clipboard | `editor open`, `editor save`, `capture image`, `clipboard read/write` | annotate/editor save and capture image; `clipboard read` (text/PNG) and `clipboard write` (text, or a capture as PNG) via xclip or wl-clipboard; no UI | Editor save applies supplied operations to stored image; it does not commit an unrelated open editor's unsaved edits |
 | Screen recording start / status / stop / discard | `record start/status/stop/cancel` | Unsupported | Session ID required to stop/cancel; native UI remains visible |
 | Recording narration toggle / system audio / webcam | `record start --mic/--system-audio/--webcam`, `record microphone --enabled` | Unsupported | Per-start audio/camera settings; existing camera bubble |
 | Recording restart / countdown | cancel then explicit start; countdown is UI-only | Unsupported | No autonomous retry or hidden picker |
