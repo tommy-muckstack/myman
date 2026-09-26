@@ -6,6 +6,8 @@ import { capabilities, doctor, errorData, invoke, job, jobs } from './service.mj
 import { unsupported, fail } from './system.mjs';
 import { indicator } from './indicator.mjs';
 import * as identity from './identity.mjs';
+import * as omarchy from './omarchy.mjs';
+import { show } from './show.mjs';
 import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
@@ -55,6 +57,8 @@ myman bundle create --title T --item-ids ID,ID [--members AGENT-ID] --json; myma
 myman handoff create --bundle-id ID --recipient AGENT-ID --instruction TEXT --json; myman handoff list|read|update --state accepted|declined|completed|failed|cancelled
 myman lease acquire --resource clipboard|item:ID [--seconds 60] --json; myman lease release --resource R --lease-id L --json
 myman collaboration events [--after-cursor N] --json; myman session transfer --session-id ID --recipient AGENT-ID --json
+myman show [--note TEXT] (people: drag over part of the screen to save it for your agents)
+myman omarchy install|remove|status (people: SUPER+SHIFT+PRINT for show, plus a MyMan menu under Trigger)
 myman agents list|add NAME --scopes capture,markup|revoke ID|require on|off (people only, at a terminal)
 myman indicator (Waybar-style JSON: is an agent recording or capturing right now?)
 Every agent screenshot and recording shows a desktop notification.
@@ -84,6 +88,8 @@ export async function main(argv) {
   if (mi>=0) { const value=argv[mi].includes('=')?argv[mi].split('=')[1]:argv[mi+1]; argv=argv.filter((_,k)=>k!==mi&&!(k===mi+1&&!argv[mi].includes('='))); await identity.checkMachine(value); }
   else await identity.checkMachine(process.env.MYMAN_MACHINE_ID);
   if (argv[0]==='agents') return manageAgents(argv.slice(1));
+  if (argv[0]==='show') { const k=argv.indexOf('--note'); return show({note:k>=0?argv[k+1]:undefined}); }
+  if (argv[0]==='omarchy') { const sub=argv[1]||'status'; if(!['install','remove','status'].includes(sub)) fail('INVALID_ARGUMENTS','Use myman omarchy install|remove|status.'); return omarchy[sub](); }
   // Linux has no interactive picker. The same agent capture schema is the
   // default, while explicit interactive requests remain unsupported.
   if (argv.includes('--mode=interactive') || argv.some((v,i)=>v==='--mode'&&argv[i+1]==='interactive')) unsupported('The Linux companion has no interactive UI.');
