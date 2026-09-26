@@ -92,6 +92,7 @@ See [next-version evidence](verification/agent-cli-2026-09-12.md). Tests disting
 | Frame/contact-sheet inspection | `record frames --times/--count` | Unsupported | Bounded temporary PNG previews with actual timestamps |
 | Trim/MP4/size cap | `record export --start/--end/--max-bytes` | Unsupported | New library item, source preserved; no truncation to meet size |
 | Attachment metadata | Capture/edit/record/export results | Supported for capture/edit/preview | Path, MIME, dimensions, duration, bytes and preview |
+| Person shows agents a region | `show --note` (person only), Omarchy `SUPER+SHIFT+PRINT` via `omarchy install` | Unsupported | Saved as a `shown` library capture with the note; agents cannot trigger it |
 
 Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
 

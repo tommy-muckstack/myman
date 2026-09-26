@@ -69,7 +69,7 @@ export async function saveNote(args) {
 // the text-recognition outcome instead of leaving an empty section.
 const yaml = value => JSON.stringify(String(value));
 const oneLine = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
-export function describeCapture({ width, height, window, display, region, source_id, markup }) {
+export function describeCapture({ width, height, window, display, region, source_id, markup, shown, note }) {
   const app = oneLine(window?.app, 80), title = oneLine(window?.title, 160);
   const what = window ? `the ${app || 'unnamed'} window${title ? ` "${title}"` : ''}`
     : region ? `a ${width}x${height} region of ${display ? `display ${oneLine(display, 40)}` : 'the desktop'}`
@@ -78,6 +78,11 @@ export function describeCapture({ width, height, window, display, region, source
   const alt = source_id ? `Marked-up copy of screenshot ${source_id}${marks}, ${width}x${height} pixels`
     : `Screenshot of ${what}, ${width}x${height} pixels`;
   const heading = source_id ? `Marked-up screenshot${title ? `: ${title}` : ''}` : window ? `Screenshot: ${title || app || 'window'}${title && app ? ` (${app})` : ''}` : `Screenshot of ${what}`;
+  if (shown) {
+    // Picked by the person with `myman show`: say so, and lead with their words.
+    const said = oneLine(note, 160);
+    return { alt_text: `Screenshot the person selected to show their agents${said ? `: ${said}` : ''}, ${width}x${height} pixels`, heading: oneLine(`Shown to agents${said ? `: ${said}` : ''}`, 160) };
+  }
   return { alt_text: alt, heading: oneLine(heading, 160) };
 }
 function summarizeMarks(types) {
@@ -109,10 +114,10 @@ export async function saveCapture(result, source_id, meta = {}) {
     const local = new Date(created_at).toLocaleString('en-US', { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' });
     const app = meta.window ? oneLine(meta.window.app, 80) : null, window_title = meta.window ? oneLine(meta.window.title, 160) : null;
     const front = [`id: ${id}`, 'kind: screenshot', `created: ${created_at}`, `captured: ${created_at}`, `file: ${image_path}`, `width: ${size.width}`, `height: ${size.height}`,
-      `alt: ${yaml(alt_text)}`, ...(app !== null ? [`app: ${yaml(app)}`, `window_title: ${yaml(window_title)}`] : []), ...(source_id ? [`source_id: ${source_id}`] : []), `ocr_status: ${recognition.status}`, `text_found: ${text_found}`];
+      `alt: ${yaml(alt_text)}`, ...(app !== null ? [`app: ${yaml(app)}`, `window_title: ${yaml(window_title)}`] : []), ...(source_id ? [`source_id: ${source_id}`] : []), ...(meta.shown ? ['shown_by: person', ...(meta.note ? [`note: ${yaml(oneLine(meta.note, 500))}`] : [])] : []), `ocr_status: ${recognition.status}`, `text_found: ${text_found}`];
     await atomic(path.join(root,brain_path),`---\n${front.join('\n')}\n---\n\n# ${heading}\n\n![${alt_text.replace(/[\[\]]/g,'')}](../${imageRelative})\n\n${alt_text}. Captured ${local} (${timezone}).\n\n${source_id?`Source: ${source_id}\n\n`:''}## Text on screen\n\n${recognitionSection(recognition)}\n`);
     const title=heading;
-    catalog.exports.push({ item_id:`shot-${id}`, revision:1, path:brain_path, kind:'screenshots', title, timestamp:created_at, image_path, thumbnail_path, captured_local:created_at, timezone, timezone_source:'capture', themes:[], tags:[], meetings:[], pinned:false, ocr_status:recognition.status, alt_text, text_found, ...(app!==null?{app,window_title}:{}), ...(source_id?{source_id}:{}) });
+    catalog.exports.push({ item_id:`shot-${id}`, revision:1, path:brain_path, kind:'screenshots', title, timestamp:created_at, image_path, thumbnail_path, captured_local:created_at, timezone, timezone_source:'capture', themes:[], tags:meta.shown?['shown']:[], meetings:[], pinned:false, ocr_status:recognition.status, alt_text, text_found, ...(app!==null?{app,window_title}:{}), ...(source_id?{source_id}:{}) });
     catalog.generated_at=created_at;
     await atomic(path.join(root,'catalog.json'),JSON.stringify(catalog,null,2)+'\n');
     const git=await gitSave(root,[brain_path,imageRelative,thumbnailRelative,'catalog.json']);

@@ -5,7 +5,10 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 if(process.platform!=='linux')throw new Error('Linux only.');
-const source=path.resolve(process.argv[2]);
+// MYMAN_SETUP_ONLY=1 (myman-setup from a system package): create this person's
+// config, owner grants (all off) and Brain, without copying programs.
+const setupOnly=process.env.MYMAN_SETUP_ONLY==='1';
+const source=setupOnly?null:path.resolve(process.argv[2]);
 const prefix=path.resolve(process.env.MYMAN_INSTALL_PREFIX||path.join(homedir(),'.local'));
 const config=path.resolve(process.env.XDG_CONFIG_HOME||path.join(homedir(),'.config'),'myman');
 const state=path.resolve(process.env.XDG_STATE_HOME||path.join(homedir(),'.local/state'),'myman');
@@ -26,13 +29,15 @@ async function copy(from,to) {
 }
 const install=path.join(prefix,'share/myman');
 if(install===brain||install.startsWith(brain+path.sep))throw new Error('The executable installation must be outside MyManBrain.');
-for(const dir of [install,path.join(prefix,'bin'),brain])await safeDirectory(dir);
+for(const dir of setupOnly?[brain]:[install,path.join(prefix,'bin'),brain])await safeDirectory(dir);
 for(const dir of [config,state])await safeDirectory(dir,true);
 const configFile=path.join(config,'agents.json');
 try {
  const handle=await open(configFile,'wx',0o600);
  try {await handle.writeFile(JSON.stringify({version:1,grants:{enabled:false,capture:false,markup:false,recording:false,library:false}},null,2)+'\n');}finally{await handle.close();}
 } catch(error){if(error.code!=='EEXIST')throw error;const info=await lstat(configFile);if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.uid!==process.getuid()||(info.mode&0o077))throw new Error(`Unsafe config: ${configFile}`);}
+const launcher=path.join(prefix,'bin/myman');
+if(!setupOnly){
 for(const name of ['cli.mjs','app-server.mjs','app-server.mjs.LEGAL.txt','worker.mjs','LICENSES.txt']) {
  await copy(path.join(source,'integrations/linux/bundle',name),path.join(install,name));
 }
@@ -40,9 +45,12 @@ await copy(path.join(source,'src/Resources/BrainCompanion/cli.mjs'),path.join(in
 await copy(path.join(source,'src/Resources/BrainCompanion/server.mjs'),path.join(install,'server.mjs'));
 await copy(path.join(source,'src/Resources/BrainCompanion/LICENSES.txt'),path.join(install,'BRAIN-LICENSES.txt'));
 const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";
-const launcher=path.join(prefix,'bin/myman'),temp=launcher+`.${randomUUID()}.tmp`;
+const temp=launcher+`.${randomUUID()}.tmp`;
 await writeFile(temp,`#!/bin/sh\nexec node ${quote(path.join(install,'cli.mjs'))} "$@"\n`,{mode:0o755});await rename(temp,launcher);
+}
 for(const dir of ['notes','screenshots','meetings','dictations','recordings','themes','task-items'])await safeDirectory(path.join(brain,dir));
 try{const info=await lstat(path.join(brain,'.git'));if(!info.isDirectory()||info.isSymbolicLink())throw new Error('Brain .git must be an ordinary directory.');}
 catch(error){if(error.code!=='ENOENT')throw error;try{execFileSync('git',['-C',brain,'init','--quiet'],{stdio:'pipe'});}catch{process.stderr.write('Git is unavailable. Install git before creating notes or screenshots.\n');}}
-console.log(`Installed: ${launcher}\nBrain: ${brain}\nOwner grants: ${configFile}\nMCP: node ${path.join(install,'app-server.mjs')}\nRead-only MCP: node ${path.join(install,'server.mjs')}\nAdd ${path.join(prefix,'bin')} to PATH if needed.\nRun: myman doctor --json`);
+const omarchy=process.env.HYPRLAND_INSTANCE_SIGNATURE||process.env.XDG_CURRENT_DESKTOP==='Hyprland'?'\nOmarchy: run myman omarchy install for the SUPER+SHIFT+PRINT show key and a MyMan menu.':'';
+if(setupOnly)console.log(`Set up MyMan for ${process.env.USER||'you'}.\nBrain: ${brain}\nOwner grants (all off until you turn them on): ${configFile}\nRun: myman doctor --json${omarchy}`);
+else console.log(`Installed: ${launcher}\nBrain: ${brain}\nOwner grants: ${configFile}\nMCP: node ${path.join(install,'app-server.mjs')}\nRead-only MCP: node ${path.join(install,'server.mjs')}\nAdd ${path.join(prefix,'bin')} to PATH if needed.\nRun: myman doctor --json${omarchy}`);
