@@ -395,6 +395,16 @@ enum RecordingSidecars {
         guard !keys.isEmpty, let data = try? JSONEncoder().encode(keys) else { return }
         try? data.write(to: keysURL(for: movie), options: .atomic)
     }
+    /// A trimmed copy keeps the cursor, clicks and keystrokes inside its range,
+    /// re-timed so the copy starts at zero; polish can then draw the cursor.
+    static func copyTrimmed(from source: URL, to destination: URL, start: Double, end: Double) {
+        let keep: (Double) -> Bool = { $0 >= start && $0 <= end }
+        if let track = loadCursor(for: source) {
+            save(cursor: CursorTrack(separate: track.separate, samples: track.samples.filter { keep($0.t) }.map { CursorSample(t: $0.t - start, x: $0.x, y: $0.y) }), for: destination)
+        }
+        ClickLog.save(ClickLog.load(for: source).filter { keep($0.time) }.map { RecordedClick(time: $0.time - start, x: $0.x, y: $0.y) }, for: destination)
+        save(keys: loadKeys(for: source).filter { keep($0.t) }.map { RecordedKeystroke(t: $0.t - start, label: $0.label) }, for: destination)
+    }
     static func loadKeys(for movie: URL) -> [RecordedKeystroke] {
         guard let data = try? Data(contentsOf: keysURL(for: movie)), let keys = try? JSONDecoder().decode([RecordedKeystroke].self, from: data) else { return [] }
         return keys.filter { $0.t.isFinite && !$0.label.isEmpty }.sorted { $0.t < $1.t }

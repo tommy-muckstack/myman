@@ -39,7 +39,10 @@ struct AgentIdentitySettings: View {
                 Text("Save this credential in your agent host as MYMAN_AGENT_TOKEN. It is shown only here until you dismiss it.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                 Text(credential).font(MM.Fonts.metadata).textSelection(.enabled)
-                Button("Done") { credential = "" }.clickable()
+                HStack {
+                    Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(credential, forType: .string) }.clickable()
+                    Button("Done") { credential = "" }.clickable()
+                }
             }
             Text("Mac ID: \(registry.machine["id"] as? String ?? "")")
                 .font(MM.Fonts.metadata).textSelection(.enabled)
