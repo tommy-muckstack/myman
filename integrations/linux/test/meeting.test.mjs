@@ -26,17 +26,17 @@ async function setup(grants) {
   return { home, brain, env };
 }
 // The person at the terminal: run through script(1) so stdin/stdout are a TTY.
-function asPerson(env, args) {
-  const out = spawnSync('script', ['-qec', [process.execPath, cli, ...args].map(quote).join(' '), '/dev/null'], { env });
+function asPerson(env, args, input = '') {
+  const out = spawnSync('script', ['-qec', [process.execPath, cli, ...args].map(quote).join(' '), '/dev/null'], { env, input });
   return JSON.parse(out.stdout.toString().trim().split('\n').pop());
 }
 const asAgent = (env, args) => { const out = spawnSync(process.execPath, [cli, ...args, '--json'], { env }); return { status: out.status, ...JSON.parse(out.stdout.toString()) }; };
 
 test('a person records a meeting; it is saved at once and transcribed on this computer as You and Others', { skip: !(hasFfmpeg && hasScript) }, async () => {
   const { brain, env } = await setup({ enabled: false });
-  const started = asPerson(env, ['meeting', 'start', '--title', 'Weekly sync', '--json']);
+  const started = asPerson(env, ['meeting', 'start', '--title', 'Weekly sync', '--json'], 'record\n');
   assert.equal(started.ok, true, JSON.stringify(started)); assert.deepEqual(started.tracks, ['You', 'Others']); assert.equal(started.started_by, 'person');
-  assert.equal(asPerson(env, ['meeting', 'start', '--json']).error.code, 'MEETING_ACTIVE');
+  assert.equal(asPerson(env, ['meeting', 'start', '--json'], 'record\n').error.code, 'MEETING_ACTIVE');
   await sleep(1500);
   const shown = JSON.parse(spawnSync(process.execPath, [cli, 'indicator', '--json'], { env }).stdout.toString());
   assert.equal(shown.class, 'meeting'); assert.match(shown.text, /^● MIC 0:0\d$/);
@@ -60,7 +60,10 @@ test('a person records a meeting; it is saved at once and transcribed on this co
 
 test('cancel stops the recording and saves nothing', { skip: !(hasFfmpeg && hasScript) }, async () => {
   const { brain, env } = await setup({ enabled: false });
-  const started = asPerson(env, ['meeting', 'start', '--no-system-audio', '--json']);
+  // A terminal without the typed confirmation records nothing (an agent can run in a pseudo-terminal).
+  assert.equal(asPerson(env, ['meeting', 'start', '--no-system-audio', '--json'], 'yes\n').error.code, 'CANCELLED');
+  assert.equal(asPerson(env, ['meeting', 'status', '--json']).active, null);
+  const started = asPerson(env, ['meeting', 'start', '--no-system-audio', '--json'], 'record\n');
   assert.deepEqual(started.tracks, ['You']);
   const canceled = asPerson(env, ['meeting', 'cancel', '--json']);
   assert.equal(canceled.saved, false);
