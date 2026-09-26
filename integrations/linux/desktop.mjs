@@ -37,13 +37,52 @@ export async function ocrRegions(file, width, height) {
 
 const prop = (text, name) => { const m = text.match(new RegExp(`^${name}\\([^)]*\\) = (.*)$`, 'm')); return m ? m[1] : null; };
 const unquote = value => value ? [...value.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(m => m[1].replace(/\\(.)/g, '$1')) : [];
+// Compositor layout coordinates (top-left, may be negative) become the same
+// normalized desktop space screenshots use; region is ready for --region.
+export function placeWindow(win, desktop) {
+  const [ox, oy] = desktop.origin ?? [0, 0], [x, y, w, h] = win.frame, nx = x - ox, ny = y - oy;
+  // Clip to the display holding the window's centre so region always fits
+  // one display, as screenshot --region requires.
+  const cx = nx + w / 2, cy = ny + h / 2;
+  const d = desktop.displays?.find(d => cx >= d.x && cy >= d.y && cx < d.x + d.width && cy < d.y + d.height);
+  const base = { ...win, coordinates: desktop.session === 'wayland' ? 'compositor-layout-top-left' : 'x11-global-top-left' };
+  if (!d) return { ...base, region: null, region_coordinates: 'global-bottom-left', offscreen: true };
+  const x0 = Math.max(nx, d.x), y0 = Math.max(ny, d.y), x1 = Math.min(nx + w, d.x + d.width), y1 = Math.min(ny + h, d.y + d.height);
+  return { ...base, display: d.selector, region: [x0, desktop.height - y1, x1 - x0, y1 - y0], region_coordinates: 'global-bottom-left', ...(x0 !== nx || y0 !== ny || x1 !== nx + w || y1 !== ny + h ? { clipped: true } : {}) };
+}
+export function hyprlandWindows(clients, monitors) {
+  const visible = new Set((monitors ?? []).flatMap(m => [m.activeWorkspace?.id, m.specialWorkspace?.id]).filter(id => id !== undefined && id !== 0));
+  return (Array.isArray(clients) ? clients : [])
+    .filter(c => c.mapped && !c.hidden && Array.isArray(c.at) && Array.isArray(c.size) && (!visible.size || visible.has(c.workspace?.id)))
+    .sort((a, b) => (a.focusHistoryID ?? 1e9) - (b.focusHistoryID ?? 1e9))
+    .map(c => ({ id: String(c.address), app: c.class || c.initialClass || '', title: c.title || '', pid: c.pid > 0 ? c.pid : null, frame: [...c.at, ...c.size], workspace: c.workspace?.name ?? null, floating: !!c.floating, focused: c.focusHistoryID === 0 }));
+}
+export function swayWindows(tree) {
+  const out = [];
+  const walk = (node, workspace) => {
+    if (node.type === 'workspace') workspace = node.name;
+    if ((node.type === 'con' || node.type === 'floating_con') && node.pid && node.visible) out.push({ id: String(node.id), app: node.app_id || node.window_properties?.class || '', title: node.name || '', pid: node.pid, frame: [node.rect.x, node.rect.y, node.rect.width, node.rect.height], workspace: workspace ?? null, floating: node.type === 'floating_con', focused: !!node.focused });
+    for (const child of [...(node.nodes ?? []), ...(node.floating_nodes ?? [])]) walk(child, workspace);
+  };
+  walk(tree ?? {}, null);
+  return out.sort((a, b) => b.focused - a.focused);
+}
+async function waylandWindows(desktop) {
+  const json = async (tool, args) => { try { return JSON.parse((await run(tool, args)).stdout); } catch { fail('BACKEND_FAILED', `${path.basename(tool)} returned no window data.`); } };
+  if (desktop.compositor === 'hyprland') {
+    const hyprctl = await command('hyprctl');
+    return hyprlandWindows(await json(hyprctl, ['-j', 'clients']), await json(hyprctl, ['-j', 'monitors']));
+  }
+  if (desktop.compositor === 'sway') return swayWindows(await json(await command('swaymsg'), ['-r', '-t', 'get_tree']));
+  unsupported('windows.list on Wayland supports Hyprland (including Omarchy) and Sway.');
+}
 export async function windowsList() {
-  if (session() === 'wayland') unsupported('windows.list needs X11. Wayland compositors do not expose other clients\' windows to agents.');
+  const desktop = await screens();
+  if (desktop.session === 'wayland') return (await waylandWindows(desktop)).slice(0, 200).map(w => placeWindow(w, desktop));
   const xprop = await command('xprop'), xwininfo = await command('xwininfo');
   if (!xprop || !xwininfo) fail('DEPENDENCY_MISSING', 'Install xprop and xwininfo (x11-utils) to list windows.');
   const root = (await run(xprop, ['-root', '_NET_CLIENT_LIST_STACKING'])).stdout;
   const ids = (root.match(/0x[0-9a-f]+/gi) || []).slice(-200).reverse(); // front-most first
-  const { height: rootHeight } = await screens();
   const windows = [];
   for (const id of ids) {
     let props, info;
@@ -53,7 +92,7 @@ export async function windowsList() {
     const [x, y, w, h] = [num('Absolute upper-left X'), num('Absolute upper-left Y'), num('Width'), num('Height')];
     const cls = unquote(prop(props, 'WM_CLASS')), title = unquote(prop(props, '_NET_WM_NAME'))[0] ?? unquote(prop(props, 'WM_NAME'))[0] ?? '';
     const pid = Number(prop(props, '_NET_WM_PID')) || null;
-    windows.push({ id: String(parseInt(id, 16)), app: cls[1] || cls[0] || '', title, pid, frame: [x, y, w, h], coordinates: 'x11-global-top-left', region: [x, rootHeight - y - h, w, h], region_coordinates: 'global-bottom-left' });
+    windows.push(placeWindow({ id: String(parseInt(id, 16)), app: cls[1] || cls[0] || '', title, pid, frame: [x, y, w, h], focused: windows.length === 0 }, desktop));
   }
   return windows;
 }
@@ -105,4 +144,13 @@ export async function clipboardWrite(args, captureEntry) {
   if (args.format === 'text') { await copy(entry.image_path, session() === 'wayland' ? 'text/plain;charset=utf-8' : 'UTF8_STRING'); return { copied: true, format: 'text', id: args.id, path: entry.image_path }; }
   await copy(await readSafe(entry.image_path, 64 * 1024 * 1024), 'image/png');
   return { copied: true, format: 'image', id: args.id, path: entry.image_path };
+}
+
+// Capture one window by the id windows.list returned. The window must sit on
+// a single display; the capture is the visible frame, not hidden contents.
+export async function windowRegion(id) {
+  const win = (await windowsList()).find(w => w.id === String(id));
+  if (!win) fail('UNKNOWN_WINDOW', 'No visible window with that ID. Run windows list for current IDs.');
+  if (!win.region) fail('INVALID_ARGUMENTS', 'That window is off-screen.');
+  return win;
 }
