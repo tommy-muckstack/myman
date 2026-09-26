@@ -19,7 +19,7 @@ Optional Ubuntu packages (the installer never runs sudo):
   sudo apt-get install imagemagick scrot x11-utils x11-xserver-utils git fonts-dejavu-core
   sudo apt-get install tesseract-ocr xvfb
 Optional Omarchy / Arch packages (Hyprland supplies hyprctl):
-  sudo pacman -S --needed nodejs-lts-jod git imagemagick grim ttf-dejavu
+  sudo pacman -S --needed nodejs-lts-jod git imagemagick librsvg grim ttf-dejavu
   sudo pacman -S --needed tesseract tesseract-data-eng
 Run inside the Hyprland session, preserving WAYLAND_DISPLAY, XDG_RUNTIME_DIR,
 and HYPRLAND_INSTANCE_SIGNATURE for remote agents. X11 uses DISPLAY/XAUTHORITY.

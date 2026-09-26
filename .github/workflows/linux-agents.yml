@@ -91,7 +91,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Install Arch runtime and test dependencies
-        run: pacman -Syu --noconfirm --needed nodejs-lts-jod npm git imagemagick grim ttf-dejavu tesseract tesseract-data-eng xorg-server-xvfb xorg-xauth xorg-xdpyinfo xorg-xrandr scrot
+        run: pacman -Syu --noconfirm --needed nodejs-lts-jod npm git imagemagick librsvg grim ttf-dejavu tesseract tesseract-data-eng xorg-server-xvfb xorg-xauth xorg-xdpyinfo xorg-xrandr scrot
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: npm ci --ignore-scripts --prefix integrations/brain
       - run: npm ci --ignore-scripts --prefix integrations/linux

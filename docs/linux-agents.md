@@ -30,11 +30,11 @@ ImageMagick is required for PNG normalization and annotation. Capture auto-detec
 The same release archive and installer work on Omarchy. Install any missing dependencies with:
 
 ```sh
-sudo pacman -S --needed nodejs-lts-jod git imagemagick grim ttf-dejavu
+sudo pacman -S --needed nodejs-lts-jod git imagemagick librsvg grim ttf-dejavu
 sudo pacman -S --needed tesseract tesseract-data-eng
 ```
 
-An existing Node 22+ is sufficient; no need to replace it. `hyprctl` is supplied by Hyprland. Run MyMan from a terminal inside the desktop session. A remote agent must run as the desktop user with that session's `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, and `HYPRLAND_INSTANCE_SIGNATURE` (or `SWAYSOCK` on Sway). Preserve these when launching the MCP server; SSH alone does not supply them. No sudo is needed for capture. Use `myman doctor --json` to check desktop access, then enable the desired owner grants below and run `myman screenshot --json`.
+An existing Node 22+ is sufficient; no need to replace it. `hyprctl` is supplied by Hyprland. Arch needs `librsvg` to load ImageMagick's SVG annotation module. Run MyMan from a terminal inside the desktop session. A remote agent must run as the desktop user with that session's `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, and `HYPRLAND_INSTANCE_SIGNATURE` (or `SWAYSOCK` on Sway). Preserve these when launching the MCP server; SSH alone does not supply them. No sudo is needed for capture. Use `myman doctor --json` to check desktop access, then enable the desired owner grants below and run `myman screenshot --json`.
 
 Monitor selectors accept compositor output names (for example `DP-1`), `id:N`, or `main` (the focused output on Wayland). Coordinates are normalized to the desktop's top-left bounding origin, then exposed as global bottom-left or display-local top-left like X11. Wayland uses logical pixels and explicit grim scale 1, so fractional scaling, rotated outputs and monitors with negative layout positions remain consistent with annotation pixels. `native_scale` records the output's original scale; captured images are scale 1.
 
