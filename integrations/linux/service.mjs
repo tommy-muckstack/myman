@@ -62,9 +62,9 @@ export async function dispatch(name,args) {
     if (name==='screenshot.capture' && args.window_id) {
       if (args.region || args.display) fail('INVALID_ARGUMENTS','Choose window_id or region/display.');
       const win=await windowRegion(args.window_id), {window_id,...rest}=args;
-      return {...await saveCapture(await capture({...rest,region:win.region,coordinates:'global'},work)),window_id:win.id,window:{app:win.app,title:win.title}};
+      return {...await saveCapture(await capture({...rest,region:win.region,coordinates:'global'},work),undefined,{window:{app:win.app,title:win.title}}),window_id:win.id,window:{app:win.app,title:win.title}};
     }
-    if (name==='screenshot.capture') return await saveCapture(await capture(args,work));
+    if (name==='screenshot.capture') return await saveCapture(await capture(args,work),undefined,{display:args.display,region:args.region});
     const entry=await captureEntry(args.id);
     const result=await annotate(entry.image_path,args,work);
     if (result.dry_run) return {id:args.id,...result};
@@ -78,7 +78,7 @@ export async function dispatch(name,args) {
       await atomic(file,data);
       return {preview:true,source_id:args.id,path:file,image_path:file,width:result.width,height:result.height,expires_at:new Date(Date.now()+3600_000).toISOString(),attachment:{path:file,mime_type:'image/png',width:result.width,height:result.height,duration:null,file_size:data.length,preview_path:file}};
     }
-    const saved=await saveCapture(result,args.id);
+    const saved=await saveCapture(result,args.id,{markup:(args.annotations??[]).map(a=>a.type),...(entry.app!==undefined?{window:{app:entry.app,title:entry.window_title}}:{})});
     return result.theme?{...saved,theme:result.theme}:saved;
   } finally { await rm(work,{recursive:true,force:true}); }
 }
