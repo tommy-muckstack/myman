@@ -229,3 +229,21 @@ Instead of pixel geometry, an annotation can name what it points at: `{"type":"b
 `myman capture-markup --mode agent [--region x,y,w,h] --ops-file ops.json --json` needs both the capture and markup grants. It captures, applies the operations, and saves only the finished image, like the Mac. The screen-capture notice fires as for `screenshot`.
 
 `myman capture import --path /abs/file --json` needs the markup grant. It accepts PNG, JPEG, WebP or GIF, detected from the file's contents rather than its name, up to 64 MB. It saves the image as a normal PNG capture with OCR. Other formats, such as SVG or PDF, are refused, so a file never reaches ImageMagick's script or vector readers.
+
+## Timers and reminders
+
+With the library grant on (the same grant the Mac requires), agents can set countdown timers and reminders:
+
+```sh
+myman timer start --seconds 300 --json                      # returns session_id
+myman timer pause|resume|cancel --session-id ID --json
+myman timer sound --session-id ID --enabled false --json
+myman timer status --json                                   # newest timer plus every active one
+myman reminder create --message "Stand up" --seconds 1800 --json
+myman reminder create --message "Call Sam" --at 2026-10-01T09:00:00-04:00 --json
+myman reminder list --json; myman reminder cancel --id ID --json
+```
+
+When a timer finishes or a reminder is due, a desktop notice appears (it stays until dismissed) and a sound plays unless `sound_enabled` is false. There is no on-screen countdown widget; `timer status` and the result's `remaining_seconds` report time left. `at` must include a time-zone offset or `Z`.
+
+Each deadline is armed as a transient systemd user timer when a user manager is running, so it fires even if no MyMan process is open. Otherwise a small detached process waits for it (`scheduler: "process"`, `survives_logout: false`). Either way, anything that came due while nothing was waiting (after a reboot, say) is delivered the next time any timer or reminder command runs. Pausing or canceling bumps a generation number, so an old schedule never fires. Only the agent that created a timer or reminder can change it; agents are told apart by `MYMAN_AGENT_ID` (default `agent`). State lives in `${XDG_STATE_HOME:-~/.local/state}/myman/quick-tools.json`, mode 600.
