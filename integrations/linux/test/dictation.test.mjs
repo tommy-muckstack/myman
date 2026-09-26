@@ -8,7 +8,20 @@ import { spawnSync } from 'node:child_process';
 const here = path.dirname(new URL(import.meta.url).pathname), cli = path.join(here, '../cli.mjs');
 const voxtype = 'state_file = "auto"\n\n[whisper]\nmodel = "base.en"\n\n[output]\nmode = "type"\n';
 const chained = '[output.post_process]\ncommand = "tr a-z A-Z"\ntimeout_ms = 2000\n';
-const settle = async (dir, count) => { for (let i = 0; i < 200; i++) { const files = await readdir(dir).catch(() => []); if (files.length >= count) return files; await new Promise(r => setTimeout(r, 100)); } return readdir(dir).catch(() => []); };
+// The detached `dictation store` writer creates `.myman-<uuid>.tmp` files and renames
+// them into place, so only count real (non-dot, non-.tmp) files, and also wait for
+// any other files that must exist (such as brain/catalog.json) before returning.
+const real = name => !name.startsWith('.') && !name.endsWith('.tmp');
+const exists = file => readFile(file).then(() => true, () => false);
+const settle = async (dir, count, { also = [], timeoutMs = 20000 } = {}) => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const files = (await readdir(dir).catch(() => [])).filter(real);
+    if (files.length >= count && (await Promise.all(also.map(exists))).every(Boolean)) return files;
+    if (Date.now() >= deadline) return files;
+    await new Promise(r => setTimeout(r, 100));
+  }
+};
 
 test('dictation connect hooks Voxtype, keeps a cleanup step, saves to the Brain, and disconnect restores', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'myman-dictation-'));
@@ -29,7 +42,7 @@ test('dictation connect hooks Voxtype, keeps a cleanup step, saves to the Brain,
   // Voxtype runs the command with the text on stdin; it must come straight back.
   const out = spawnSync(process.execPath, [cli, 'dictation', 'save'], { input: 'hello from voxtype', env });
   assert.equal(out.stdout.toString(), 'HELLO FROM VOXTYPE'); assert.equal(out.status, 0);
-  const files = await settle(path.join(home, 'brain/dictations'), 1);
+  const files = await settle(path.join(home, 'brain/dictations'), 1, { also: [path.join(home, 'brain/catalog.json')] });
   assert.equal(files.length, 1);
   const doc = await readFile(path.join(home, 'brain/dictations', files[0]), 'utf8');
   assert.match(doc, /^---\nid: [0-9a-f-]{36}\ncreated: .+\nsource: "voxtype"\ncaptured_local: .+\ntz: ".+"\ntimezone_source: capture\n/);
@@ -40,7 +53,7 @@ test('dictation connect hooks Voxtype, keeps a cleanup step, saves to the Brain,
   const agent = spawnSync(process.execPath, [cli, 'dictation', 'save'], { input: 'agent text', env: { ...env, MYMAN_AGENT_TOKEN: 'x' } });
   assert.equal(agent.stdout.toString(), 'AGENT TEXT');
   await new Promise(r => setTimeout(r, 1000));
-  assert.equal((await readdir(path.join(home, 'brain/dictations'))).length, 1);
+  assert.equal((await readdir(path.join(home, 'brain/dictations'))).filter(real).length, 1);
   await d.disconnect({ skipCheck: true });
   const restored = await readFile(config, 'utf8');
   assert.ok(!restored.includes('myman')); assert.ok(restored.includes(chained.trim()));
