@@ -44,7 +44,9 @@ for(const name of ['cli.mjs','app-server.mjs','app-server.mjs.LEGAL.txt','worker
 await copy(path.join(source,'src/Resources/BrainCompanion/cli.mjs'),path.join(install,'brain-cli.mjs'));
 await copy(path.join(source,'src/Resources/BrainCompanion/server.mjs'),path.join(install,'server.mjs'));
 await copy(path.join(source,'src/Resources/BrainCompanion/LICENSES.txt'),path.join(install,'BRAIN-LICENSES.txt'));
-await copy(path.join(source,'src/Resources/Fonts/Gellix-SemiBold.ttf'),path.join(install,'Gellix-SemiBold.ttf'));
+await copy(path.join(source,'src/Resources/Fonts/Outfit-SemiBold.ttf'),path.join(install,'Outfit-SemiBold.ttf'));
+await copy(path.join(source,'src/Resources/Fonts/Outfit-OFL.txt'),path.join(install,'Outfit-OFL.txt'));
+await rm(path.join(install,'Gellix-SemiBold.ttf'),{force:true}); // older installs shipped it; captions use Outfit now
 const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";
 const temp=launcher+`.${randomUUID()}.tmp`;
 await writeFile(temp,`#!/bin/sh\nexec node ${quote(path.join(install,'cli.mjs'))} "$@"\n`,{mode:0o755});await rename(temp,launcher);
