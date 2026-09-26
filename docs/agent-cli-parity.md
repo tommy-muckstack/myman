@@ -1,6 +1,6 @@
 # Agent CLI parity
 
-Working baseline: 1.1.100 (112), with the Linux companion at 0.13.0; the bundled action catalog now describes 126 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
+Working baseline: 1.1.101 (113), with the Linux companion at 0.13.0; the bundled action catalog now describes 126 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
 
 ## Implementation plan
 
