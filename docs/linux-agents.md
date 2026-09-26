@@ -185,3 +185,9 @@ npm run package --prefix integrations/linux
 ```
 
 The `Linux agents` workflow runs the existing Brain suite, verifies both committed bundles, runs the source/bundled CLI and MCP contract under Xvfb, tests the optional root-owned policy on a disposable Ubuntu runner, and tests an extracted tarball without npm dependencies. An Arch container runs the CLI/MCP contract with distro packages, Hyprland fixtures test monitor geometry and backend routing, and a real headless Sway compositor tests the Wayland screencopy path end to end. A physical Omarchy desktop smoke test remains useful for compositor and GPU-specific behavior. Published releases build and attach `myman-linux-x64.tar.gz` and its SHA-256 file only after those checks pass. Release actions are pinned to immutable commit SHAs, Node to 22.23.2, and npm installs use committed lockfiles. Ubuntu/Arch packages and the rolling Arch test image remain distro-managed runtime/test dependencies. The checksum detects corrupt or mismatched downloads; it is not a signature against an attacker who can replace both release assets. Mac hosts can run the portable contract tests, but Linux capture/OCR/text/installer tests require the Ubuntu job and are explicitly skipped elsewhere.
+
+## Readable errors and output
+
+Output is JSON whenever stdout is a pipe or `--json` is passed, so agents and scripts always get the same structured result. A person at a terminal (no `--json`) gets plain text instead.
+
+When a command or flag is mistyped, the error keeps its code (`INVALID_ARGUMENTS`, `UNKNOWN_TOOL` or `UNKNOWN_ACTION`) and adds `suggestions`, for example `myman library serch` returns `"suggestions": ["myman library search"]`. Mac-only actions return `unsupported_on_platform` with an `alternative` field that says what to do on Linux instead. The MCP server returns the same messages.

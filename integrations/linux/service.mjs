@@ -1,4 +1,5 @@
 import { markupTheme } from './theme.mjs';
+import { alternativeFor, closest } from './guide.mjs';
 import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +22,7 @@ export const version='0.13.0';
 export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export function errorData(error) { return {code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
+export function errorData(error) { return {...(error.alternative?{alternative:error.alternative}:{}),code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
 export async function capabilities(name, offline=false) {
   if (name && !schemas.has(name)) fail('UNKNOWN_ACTION','Unknown action name.');
   const actions=catalog.actions.filter(a=>!name || a.name===name).map(a=>({...a,supported:supported.has(a.name),platforms:supported.has(a.name)?['darwin','linux']:['darwin']}));
@@ -35,8 +36,8 @@ export async function doctor() {
   return {platform:'linux',version,permissions:await grants(),system_policy:{path:systemPolicyPath,present:(await systemGrants())!==null},markup_theme:await markupThemeInfo(),config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (desktop.session==='wayland'?deps.grim:(deps.scrot||deps.import||deps.ffmpeg)) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git,recording:!!(desktop.displays && (desktop.session==='wayland'?deps['wf-recorder']:deps.ffmpeg) && deps.git)},note:'Owner grants are required independently of dependency readiness.'};
 }
 function validate(name,args) {
-  if (!schemas.has(name)) fail('UNKNOWN_ACTION', 'Use actions to discover supported action names.');
-  if (!supported.has(name)) unsupported(`${name} is not supported on Linux. Use actions to inspect platform support.`);
+  if (!schemas.has(name)) { const near=closest(name,[...supported]); fail('UNKNOWN_ACTION', `Unknown action "${String(name).slice(0,80)}".${near.length?` Did you mean ${near.join(' or ')}?`:''} Run actions to list them.`); }
+  if (!supported.has(name)) { const error=new Error(`${name} is not supported on Linux. ${alternativeFor(name)}`); error.code='unsupported_on_platform'; error.alternative=alternativeFor(name); throw error; }
   if (Buffer.byteLength(JSON.stringify(args))>1024*1024) fail('INVALID_ARGUMENTS','Arguments exceed 1 MiB.');
   const parsed=schemas.get(name).safeParse(args);
   if (!parsed.success) fail('INVALID_ARGUMENTS',parsed.error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('; '));
