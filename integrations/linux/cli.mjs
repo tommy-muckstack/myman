@@ -5,6 +5,7 @@ import { execute } from '../brain/tools.mjs';
 import { capabilities, doctor, errorData, invoke, job, jobs } from './service.mjs';
 import { unsupported, fail } from './system.mjs';
 import { indicator } from './indicator.mjs';
+import * as identity from './identity.mjs';
 import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
@@ -49,12 +50,40 @@ myman timer pause|resume|cancel --session-id ID --json; myman timer sound --sess
 myman reminder create --message TEXT --seconds N|--at ISO-WITH-OFFSET --json; myman reminder list|cancel [--id ID] --json
 myman record frames --id REC-ID [--times 0,2.5|--count 6] [--width 400] --json (temporary PNGs + contact sheet)
 myman record export --id REC-ID [--start S] [--end S] [--max-bytes N] [--edits JSON] --json (new recording; caption/step/title/zoom/redact)
+myman agent whoami|list --json; myman machine current --json (named agents: set MYMAN_AGENT_TOKEN)
+myman bundle create --title T --item-ids ID,ID [--members AGENT-ID] --json; myman bundle list|read|update|delete
+myman handoff create --bundle-id ID --recipient AGENT-ID --instruction TEXT --json; myman handoff list|read|update --state accepted|declined|completed|failed|cancelled
+myman lease acquire --resource clipboard|item:ID [--seconds 60] --json; myman lease release --resource R --lease-id L --json
+myman collaboration events [--after-cursor N] --json; myman session transfer --session-id ID --recipient AGENT-ID --json
+myman agents list|add NAME --scopes capture,markup|revoke ID|require on|off (people only, at a terminal)
 myman indicator (Waybar-style JSON: is an agent recording or capturing right now?)
 Every agent screenshot and recording shows a desktop notification.
 Meetings, dictation, Live Text, native UI and audio/webcam recording are unsupported.
 `;
+// Person-only credential management. Never a catalog action, never reachable
+// through MCP or the app server, and refused inside an agent's environment.
+async function manageAgents(args) {
+  const [sub,...rest]=args, flag=n=>{const k=rest.indexOf('--'+n);return k>=0?rest[k+1]:undefined;};
+  if (!sub||sub==='list') return identity.listAll();
+  if (process.env.MYMAN_AGENT_TOKEN||!process.stdin.isTTY||!process.stdout.isTTY) fail('HUMAN_REQUIRED','Only the person at this computer can change agent credentials, from an interactive terminal (not from an agent).');
+  const readline=await import('node:readline/promises'), rl=readline.createInterface({input:process.stdin,output:process.stdout});
+  const confirm=async(prompt,expected)=>{ try { if((await rl.question(prompt)).trim()!==expected) fail('CANCELLED','Nothing changed.'); } finally { rl.close(); } };
+  if (sub==='add') {
+    const name=rest.find(v=>!v.startsWith('--')&&v!==flag('scopes')), scopes=(flag('scopes')??'capture,markup').split(',').map(v=>v.trim()).filter(Boolean);
+    await confirm(`Issue a credential named "${name}" with ${scopes.join(', ')} access? Local agents without a credential will then be refused (undo with myman agents require off). Type the name to confirm: `,name);
+    const out=await identity.issue(name,scopes);
+    return {...out,next:`Give this agent the environment variable MYMAN_AGENT_TOKEN=${out.token}. It is shown only once; revoke with myman agents revoke ${out.agent.id}.`};
+  }
+  if (sub==='revoke') { const id=rest[0]; await confirm(`Revoke agent ${id}? Type revoke to confirm: `,'revoke'); return identity.revoke(id); }
+  if (sub==='require') { const on=rest[0]!=='off'; await confirm(`${on?'Require':'Stop requiring'} named credentials? Type yes: `,'yes'); return identity.setRequired(on); }
+  fail('INVALID_ARGUMENTS','Use myman agents list|add NAME --scopes capture,markup|revoke ID|require on|off.');
+}
 export async function main(argv) {
-  if (argv.some(v=>v==='--machine'||v.startsWith('--machine=')) || process.env.MYMAN_MACHINE_ID || process.env.MYMAN_AGENT_TOKEN) unsupported('Named Mac agents and remote machine targeting are unavailable on Linux. Run on the intended Linux host with local owner grants.');
+  // --machine / MYMAN_MACHINE_ID only confirm this is the intended computer.
+  const mi=argv.findIndex(v=>v==='--machine'||v.startsWith('--machine='));
+  if (mi>=0) { const value=argv[mi].includes('=')?argv[mi].split('=')[1]:argv[mi+1]; argv=argv.filter((_,k)=>k!==mi&&!(k===mi+1&&!argv[mi].includes('='))); await identity.checkMachine(value); }
+  else await identity.checkMachine(process.env.MYMAN_MACHINE_ID);
+  if (argv[0]==='agents') return manageAgents(argv.slice(1));
   // Linux has no interactive picker. The same agent capture schema is the
   // default, while explicit interactive requests remain unsupported.
   if (argv.includes('--mode=interactive') || argv.some((v,i)=>v==='--mode'&&argv[i+1]==='interactive')) unsupported('The Linux companion has no interactive UI.');

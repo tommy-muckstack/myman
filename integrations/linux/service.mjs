@@ -14,6 +14,8 @@ import { captureEntry, saveCapture, saveNote } from './library.mjs';
 import * as recording from './recording.mjs';
 import * as video from './video.mjs';
 import * as timers from './timers.mjs';
+import * as identity from './identity.mjs';
+import * as collab from './collab.mjs';
 import * as comparison from './compare.mjs';
 import { announce } from './indicator.mjs';
 import * as items from './items.mjs';
@@ -23,7 +25,7 @@ import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.13.0';
-export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound']);
+export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound',...collab.actions,'machine.current']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function errorData(error) { return {...(error.alternative?{alternative:error.alternative}:{}),...(error.details&&typeof error.details==='object'?{details:error.details}:{}),code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
@@ -54,10 +56,37 @@ export async function dispatch(name,args) {
   if(visible.has(name)&&!args?.dry_run) await announce(name,result);
   return result;
 }
+// Every action runs as the credential in MYMAN_AGENT_TOKEN (or the local
+// client). Grants and /etc policy come first; a credential only narrows them.
+async function admit(name) {
+  const permissions=catalog.actions.find(a=>a.name===name).permissions;
+  await authorize(permissions);
+  identity.validate(await identity.authenticate(),permissions);
+}
+const itemPrefixes=['item.','note.','task.','theme.'];
+const sessionStarts=['recording.start'];
 async function perform(name,args) {
   args=validate(name,args);
   if (name==='app.doctor') return doctor();
-  await authorize(catalog.actions.find(a=>a.name===name).permissions);
+  await admit(name);
+  if (collab.actions.includes(name)) return collab.execute(name,args);
+  if (name==='machine.current') return identity.machine();
+  // Leases and recording ownership, as AgentActions.executeCoordinated does.
+  const mutating=catalog.actions.find(a=>a.name===name).readOnly===false, resources=[];
+  if (mutating&&args.session_id&&!name.startsWith('timer.')) await collab.checkSession(args.session_id);
+  if (name==='clipboard.write'||args.clipboard===true) resources.push('clipboard');
+  if (mutating&&itemPrefixes.some(p=>name.startsWith(p))&&args.id) resources.push('item:'+args.id);
+  if (resources.length||args.lease_id) await collab.begin(resources.sort(),args.lease_id);
+  const {lease_id,...rest}=args;
+  const result=await act(name,rest);
+  if (sessionStarts.includes(name)&&result?.session_id) {
+    try { await collab.ownSession(result.session_id); }
+    catch { const error=new Error('Recording started but its owner could not be saved. Stop it with myman record stop; do not start it again.'); error.code='OWNERSHIP_NOT_PERSISTED'; error.details={session:result}; throw error; }
+  }
+  if (mutating&&identity.principal().named) { try { await collab.completed(name,result); } catch { return {...result,coordination_persisted:false}; } }
+  return result;
+}
+async function act(name,args) {
   if (name==='screens.list') { const {displays,...desktop}=await screens(); return {result:displays,...desktop}; }
   if (name==='screenshot.image') return new Brain(rootPath()).image({path:(await captureEntry(args.id)).path});
   if (name==='note.create') return saveNote(args);
@@ -153,7 +182,7 @@ export async function jobs() {
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 export async function invoke(name,args={},control={}) {
   args=validate(name,args);
-  if (name!=='app.doctor') await authorize(catalog.actions.find(a=>a.name===name).permissions);
+  if (name!=='app.doctor') await admit(name);
   // Read-only calls have no side effects to deduplicate and need no worker.
   if (catalog.actions.find(a=>a.name===name).readOnly) return {job:{id:control.id||randomUUID(),state:'succeeded',result:await dispatch(name,args)},launch_id:'linux'};
   await directory(statePath(),true,true);

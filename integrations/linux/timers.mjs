@@ -5,13 +5,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { atomic, command, directory, fail, readSafe, run, statePath } from './system.mjs';
 import { notify } from './indicator.mjs';
+import * as identity from './identity.mjs';
 
 // Timers and reminders, matching AgentQuickTools.swift on the Mac. State is a
 // private file; each pending deadline is armed as a transient systemd user
 // timer when a user manager is running, otherwise as a detached waiter
 // process. Every fire re-checks state and a generation number, so a paused,
 // canceled or rescheduled item never fires from a stale schedule.
-const owner = () => (process.env.MYMAN_AGENT_ID || 'agent').slice(0, 120);
+const owner = () => identity.actorId();
 const file = async () => path.join(await directory(statePath(), true, true), 'quick-tools.json');
 async function load() {
   try { return JSON.parse((await readSafe(await file(), 1024 * 1024, true)).toString()); }
