@@ -50,6 +50,7 @@ async function restartVoxtype() {
   try { await run(systemctl, ['--user', 'is-active', '--quiet', 'voxtype'], { timeout: 3000 }); } catch { return false; }
   try { await run(systemctl, ['--user', 'restart', 'voxtype'], { timeout: 10000 }); return true; } catch { return false; }
 }
+async function connected() { try { return !!(await read(paths().voxtype))?.includes(start); } catch { return false; } }
 export async function status() {
   const p = paths(), text = await read(p.voxtype), state = JSON.parse((await read(p.state)) ?? '{}');
   return { connected: !!text?.includes(start), voxtype_installed: !!(await command('voxtype')), voxtype_config: p.voxtype, chained_command: state.previous_command ?? null, saves_to: 'dictations/ in your MyMan Brain' };
@@ -109,7 +110,8 @@ export async function save() {
   // Voxtype waits for this process to exit before typing, so print the text,
   // hand the Brain save to a detached process, and exit right away.
   await new Promise(resolve => process.stdout.write(text, resolve));
-  if (process.env.MYMAN_AGENT_TOKEN || !text.trim()) return;
+  // Save only after the person opted in with myman dictation connect; otherwise pass through.
+  if (process.env.MYMAN_AGENT_TOKEN || !text.trim() || !(await connected())) return;
   try {
     const dir = await mkdtemp(path.join(process.env.XDG_RUNTIME_DIR || tmpdir(), 'myman-dictation-'));
     const file = path.join(dir, 'text'); await writeFile(file, text, { mode: 0o600 });
@@ -120,6 +122,7 @@ export async function save() {
 export async function store(file) {
   const dir = path.dirname(file);
   if (!path.basename(dir).startsWith('myman-dictation-') || path.basename(file) !== 'text') return;
+  if (!(await connected())) { await rm(dir, { recursive: true, force: true }); return; }
   try {
     const text = await readFile(file, 'utf8');
     for (let attempt = 0; attempt < 20; attempt++) {
