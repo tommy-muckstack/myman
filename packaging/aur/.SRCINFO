@@ -1,0 +1,27 @@
+pkgbase = myman-bin
+	pkgdesc = Local-first screenshots, markup, recordings and notes that people and AI agents can use (Linux and Omarchy)
+	pkgver = 1.1.99
+	pkgrel = 1
+	url = https://github.com/tommy-muckstack/myman
+	install = myman.install
+	arch = any
+	license = MIT
+	depends = nodejs>=22
+	depends = git
+	optdepends = grim: screenshots on Wayland and Hyprland
+	optdepends = slurp: drag to select part of the screen on Wayland (myman show)
+	optdepends = imagemagick: screenshots and markup on X11
+	optdepends = librsvg: markup rendering
+	optdepends = ttf-dejavu: markup labels
+	optdepends = tesseract: read text in screenshots
+	optdepends = tesseract-data-eng: English text recognition
+	optdepends = libnotify: desktop notifications for timers and myman show
+	optdepends = wf-recorder: screen recording on Wayland
+	optdepends = ffmpeg: screen recording on X11 and recording export
+	optdepends = hyprland: Omarchy key binding and menu (myman omarchy install)
+	provides = myman
+	conflicts = myman
+	source = myman-bin-1.1.99.tar.gz::https://github.com/tommy-muckstack/myman/releases/download/v1.1.99/myman-linux-x64.tar.gz
+	sha256sums = 5e7f63c37bf7156538b91c1c204d54ed8e3ac50ec7e4833994144aafd2c6a84b
+
+pkgname = myman-bin

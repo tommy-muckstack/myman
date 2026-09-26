@@ -16,6 +16,16 @@ myman doctor --json
 
 The idempotent installer needs no sudo or npm install. It preserves existing owner grants and Brain documents, installs self-contained Node bundles into `~/.local/share/myman`, adds `~/.local/bin/myman`, and keeps executable tools out of `~/MyManBrain`. Node 22+ must already be available. For an older preview installation, change any MCP commands that point into `MyManBrain/tools` to the installed share directory; the new installer never executes or refreshes those legacy copies. `MYMAN_INSTALL_PREFIX` changes the default `~/.local` installation prefix. The tarball contains architecture-independent JavaScript; its release target is Linux x64.
 
+### Arch and Omarchy package (AUR)
+
+`packaging/aur/` holds the `myman-bin` package recipe. It installs the same release tarball into `/usr/lib/myman` (checked against the release checksum) and adds `/usr/bin/myman` and `/usr/bin/myman-setup`. Each person then runs `myman-setup` once, as themselves, to create `~/MyManBrain` and `~/.config/myman/agents.json` with every agent permission off. It never copies programs and never turns a permission on. Maintainers point the recipe at a new release with `packaging/aur/update.sh VERSION`.
+
+```sh
+makepkg -si        # from packaging/aur, or install myman-bin with your AUR helper
+myman-setup
+myman omarchy install   # Omarchy only
+```
+
 Install whichever local dependencies you need (the installer only prints these commands). Ubuntu/X11:
 
 ```sh
@@ -275,3 +285,14 @@ myman session transfer --session-id S --recipient OTHER-ID --json
 ```
 
 Bundles hold item references and revisions, not copies; reading one marks items that changed or disappeared. A handoff only records an offer. It never launches or messages the other agent, and its instruction is data, not a command. A live lease on the clipboard or an item blocks every other agent's write to it. A recording belongs to the agent that started it until that agent transfers it to another with the `recording` scope. `--machine ID` (or `MYMAN_MACHINE_ID`) makes a command fail with `WRONG_MACHINE` on any other computer. Coordination state is `${XDG_STATE_HOME:-~/.local/state}/myman/collaboration.json`, capped at 8 MB with the Mac's limits (100 bundles, 200 handoffs, 1000 events).
+
+## Show your agents part of the screen (Omarchy and any Linux desktop)
+
+`myman show` is for the person at the computer. Drag over part of the screen and MyMan saves just that area to the Brain, marked `shown_by: person` and tagged `shown`, with an optional `--note` saying what to look at. A notification confirms it. Agents find it with `myman library search --query shown --json` and open it with `myman library read --id ID --json`. It uses slurp and grim on Wayland, and slop with ImageMagick or `scrot --select` on X11. Pressing Escape saves nothing. It refuses to run with an agent credential (`HUMAN_REQUIRED`); agents keep using `myman screenshot`, which the owner grants control.
+
+On Omarchy, `myman omarchy install` (run by the person, in a terminal) adds:
+
+- **SUPER + SHIFT + PRINT** for `myman show`, as a clearly marked block at the end of `~/.config/hypr/bindings.lua`. Omarchy's own PRINT keys are untouched.
+- A **MyMan** menu under Trigger in the Omarchy menu, merged from `~/.config/omarchy/extensions/omarchy-menu.jsonc`, with rows to show your agents part of the screen, open the Brain folder, check setup, edit agent permissions and list agent credentials.
+
+It reloads the menu and Hyprland, keeps your own bindings and menu rows, writes through symlinked dotfiles, and installing twice changes nothing. `myman omarchy remove` takes out exactly those blocks, and `myman omarchy status --json` reports what is installed. Neither command changes agent permissions.

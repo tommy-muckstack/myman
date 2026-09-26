@@ -1,0 +1,52 @@
+# Maintainer: Tommy Keeley <tommy@muckstack.com>
+# MyMan for Linux and Omarchy: agent-ready screenshots, markup, recordings and a
+# local Brain. Built from the signed-off release tarball; update with ./update.sh.
+pkgname=myman-bin
+pkgver=1.1.99
+pkgrel=1
+pkgdesc='Local-first screenshots, markup, recordings and notes that people and AI agents can use (Linux and Omarchy)'
+arch=('any')
+url='https://github.com/tommy-muckstack/myman'
+license=('MIT')
+depends=('nodejs>=22' 'git')
+optdepends=(
+  'grim: screenshots on Wayland and Hyprland'
+  'slurp: drag to select part of the screen on Wayland (myman show)'
+  'imagemagick: screenshots and markup on X11'
+  'librsvg: markup rendering'
+  'ttf-dejavu: markup labels'
+  'tesseract: read text in screenshots'
+  'tesseract-data-eng: English text recognition'
+  'libnotify: desktop notifications for timers and myman show'
+  'wf-recorder: screen recording on Wayland'
+  'ffmpeg: screen recording on X11 and recording export'
+  'hyprland: Omarchy key binding and menu (myman omarchy install)'
+)
+provides=('myman')
+conflicts=('myman')
+install=myman.install
+source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/myman-linux-x64.tar.gz")
+sha256sums=('5e7f63c37bf7156538b91c1c204d54ed8e3ac50ec7e4833994144aafd2c6a84b')
+
+package() {
+  cd "${srcdir}/myman-linux-x64"
+  local lib="${pkgdir}/usr/lib/myman"
+  install -d "${lib}" "${pkgdir}/usr/bin"
+  local name
+  for name in cli.mjs app-server.mjs app-server.mjs.LEGAL.txt worker.mjs LICENSES.txt; do
+    install -m644 "integrations/linux/bundle/${name}" "${lib}/${name}"
+  done
+  install -m644 src/Resources/BrainCompanion/cli.mjs "${lib}/brain-cli.mjs"
+  install -m644 src/Resources/BrainCompanion/server.mjs "${lib}/server.mjs"
+  install -m644 src/Resources/BrainCompanion/LICENSES.txt "${lib}/BRAIN-LICENSES.txt"
+  install -m644 integrations/linux/install.mjs "${lib}/install.mjs"
+  printf '#!/bin/sh\nexec node /usr/lib/myman/cli.mjs "$@"\n' > "${pkgdir}/usr/bin/myman"
+  # Per-person setup: owner grants (all off), config and Brain. Never copies programs.
+  if grep -q MYMAN_SETUP_ONLY integrations/linux/install.mjs; then
+    printf '#!/bin/sh\nexport MYMAN_SETUP_ONLY=1\nexec node /usr/lib/myman/install.mjs "$@"\n' > "${pkgdir}/usr/bin/myman-setup"
+  else
+    printf '#!/bin/sh\necho "myman-setup arrives in the next MyMan release. Until then: mkdir -p ~/MyManBrain, then run myman doctor." >&2\nexit 1\n' > "${pkgdir}/usr/bin/myman-setup"
+  fi
+  chmod 755 "${pkgdir}/usr/bin/myman" "${pkgdir}/usr/bin/myman-setup"
+  install -Dm644 integrations/linux/bundle/LICENSES.txt "${pkgdir}/usr/share/licenses/${pkgname}/LICENSES.txt"
+}
