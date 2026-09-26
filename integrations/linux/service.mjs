@@ -25,7 +25,7 @@ import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.13.0';
-export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound',...collab.actions,'machine.current']);
+export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','recording.polish','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound',...collab.actions,'machine.current']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function errorData(error) { return {...(error.alternative?{alternative:error.alternative}:{}),...(error.details&&typeof error.details==='object'?{details:error.details}:{}),code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
@@ -92,7 +92,8 @@ async function act(name,args) {
   if (name==='note.create') return saveNote(args);
   const library={'item.read':items.read,'capture.search':items.search,'note.update':items.noteUpdate,'note.append':items.noteAppend,'note.attach':items.noteAttach,'item.rename':items.rename,'item.pin':items.pin,'item.exclude':items.exclude,'item.delete':items.remove,'item.related':items.related,'task.create':items.taskCreate,'task.update':items.taskUpdate,'task.delete':items.taskDelete,'screenshot.compare':comparison.compare,'screenshot.targets':comparison.targets};
   if (library[name]) return library[name](args);
-  if (name==='recording.start') return recording.start(args);
+  if (name==='recording.start') { const { hide_cursor, ...rest } = args; if (hide_cursor) await recording.requestHiddenCursor(); return recording.start(rest); }
+  if (name==='recording.polish') { const studio = await import('./studio.mjs'); return studio.polish({ id: args.id, recipe: studio.recipeFromArgs(args), dryRun: args.dry_run === true }); }
   if (name==='recording.stop') return recording.stop(args);
   if (name==='recording.cancel') return recording.cancel(args);
   if (name==='recording.pause') return recording.pause(args);

@@ -98,6 +98,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private var outputErrors: [ObjectIdentifier: String] = [:]
     private var agentHideCamera = false
     private var agentSystemAudio: Bool?
+    /// An agent asked for a cursor-free video so `record polish` can draw a smooth one.
+    private var agentHideCursor = false
     private var agentWantsCamera = false
     private var agentPreviousMicrophone: Bool?
     private var pill: FloatingPanel?
@@ -242,7 +244,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     @available(macOS 15.0, *)
-    func startForAgent(region: CGRect?, windowID: String? = nil, maximumDuration: Double = 300, microphone: Bool, systemAudio: Bool = true, webcam: Bool = false) async throws {
+    func startForAgent(region: CGRect?, windowID: String? = nil, maximumDuration: Double = 300, microphone: Bool, systemAudio: Bool = true, webcam: Bool = false, hideCursor: Bool = false) async throws {
         guard !isShuttingDown, !isBusy else { throw AgentError("BUSY", "A screen recording is active, starting, or My Man is quitting.") }
         guard maximumDuration.isFinite, (1...3600).contains(maximumDuration) else { throw AgentError("INVALID_ARGUMENTS", "Maximum duration must be 1–3600 seconds.") }
         guard windowID == nil || (region == nil && !webcam) else { throw AgentError("INVALID_ARGUMENTS", "Window recording cannot combine a region or webcam bubble.") }
@@ -255,7 +257,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
             guard await AVCaptureDevice.requestAccess(for: .video) else { isBusy = false; throw AgentError("PERMISSION_REQUIRED", "Grant Camera access for the webcam bubble.") }
         }
         guard !isShuttingDown else { isBusy = false; throw CancellationError() }
-        agentSystemAudio = systemAudio; agentWantsCamera = webcam
+        agentSystemAudio = systemAudio; agentWantsCamera = webcam; agentHideCursor = hideCursor
         agentPreviousMicrophone = microphoneEnabled
         microphoneEnabled = microphone; agentHideCamera = !webcam
         self.maximumDuration = maximumDuration
@@ -312,7 +314,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // looks soft after sharing or re-encoding.
                 config.captureResolution = .best
                 config.queueDepth = 8
-                config.showsCursor = !SettingsStore.shared.recordCursorSeparately
+                config.showsCursor = !(SettingsStore.shared.recordCursorSeparately || agentHideCursor)
                 config.capturesAudio = agentSystemAudio ?? true
                 // The mic is deliberately NOT SCK's job: captureMicrophone
                 // echo-cancels the mic against system audio, leaving
@@ -398,7 +400,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     let region = regionAppKit ?? (NSScreen.main?.frame ?? .zero)
                     self.clickRecorder = ClickRecorder(regionAppKit: region, startedAt: started)
                     self.cursorRecorder = CursorTrackRecorder(regionAppKit: region, startedAt: started,
-                                                              separate: SettingsStore.shared.recordCursorSeparately)
+                                                              separate: SettingsStore.shared.recordCursorSeparately || self.agentHideCursor)
                     self.keystrokeRecorder = KeystrokeRecorder(startedAt: started)
                 }
                 if windowID == nil, SettingsStore.shared.cursorEffects {
@@ -424,7 +426,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 self.clearCaptureControls()
                 await AudioCapture.shared.setSuppressVoiceProcessing(false)
                 self.isBusy = false
-                self.agentHideCamera = false; self.agentSystemAudio = nil; self.agentWantsCamera = false
+                self.agentHideCamera = false; self.agentSystemAudio = nil; self.agentWantsCamera = false; self.agentHideCursor = false
                 if let previous = self.agentPreviousMicrophone { self.microphoneEnabled = previous; self.agentPreviousMicrophone = nil }
                 self.borderPanel?.orderOut(nil)
                 self.borderPanel = nil
@@ -500,7 +502,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
     private func clearCaptureControls() {
         isRecording = false; isPaused = false; startedAt = nil; segmentStartedAt = nil
-        agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false
+        agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false; agentHideCursor = false
         if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
         dismissPill(); borderPanel?.orderOut(nil); borderPanel = nil; activeRegion = nil; activeWindowID = nil
         WebcamBubble.shared.preferredRegion = nil; WebcamBubble.shared.turnOff(); WebcamBubble.shared.resetPosition()

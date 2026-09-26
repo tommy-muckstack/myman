@@ -373,6 +373,24 @@ async function cursorTrack(entry) {
   if (!entry.cursor_path || !entry.cursor_path.startsWith(`${root}/assets/recording-cursor/`)) return null;
   return JSON.parse((await readSafe(entry.cursor_path, 32 * 1024 * 1024)).toString());
 }
+// The recording.polish action (MCP and the Mac-compatible app contract):
+// flags are shorthand merged into the recipe, exactly like the CLI.
+export function recipeFromArgs(args = {}) {
+  let recipe = args.recipe === undefined ? {} : args.recipe;
+  if (!recipe || typeof recipe !== 'object' || Array.isArray(recipe)) fail('INVALID_ARGUMENTS', 'recipe must be a JSON object.');
+  recipe = { ...recipe };
+  const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  if (args.auto_zoom !== undefined) recipe.zoom = { ...obj(recipe.zoom), auto: true, ...(args.auto_zoom === true ? {} : { level: args.auto_zoom }) };
+  if (args.cursor !== undefined) recipe.cursor = { ...obj(recipe.cursor), ...(args.cursor === true ? {} : { size: args.cursor }) };
+  if (args.background !== undefined || args.background_color !== undefined || args.corner_radius !== undefined) {
+    const b = typeof recipe.background === 'string' ? { style: recipe.background } : { ...obj(recipe.background) };
+    if (args.background !== undefined) b.style = args.background;
+    if (args.background_color !== undefined) { b.color = args.background_color; if (args.background === undefined) b.style = 'custom'; }
+    if (args.corner_radius !== undefined) b.corner_radius = args.corner_radius;
+    recipe.background = b;
+  }
+  return recipe;
+}
 export async function polish({ id, recipe = {}, dryRun = false }) {
   const parsed = parseRecipe(recipe);
   const deps = await dependencies();

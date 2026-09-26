@@ -176,10 +176,10 @@ enum RecordingPolish {
         private let lock = NSLock()
         static let keystrokeLife = 1.3
 
-        init(size: CGSize, options: PolishOptions, clicks: [RecordedClick], cursor: CursorTrack? = nil, keystrokes: [RecordedKeystroke] = []) {
+        init(size: CGSize, options: PolishOptions, clicks: [RecordedClick], cursor: CursorTrack? = nil, keystrokes: [RecordedKeystroke] = [], zoomWindows: [ZoomTimeline.Window]? = nil) {
             self.frame = RecordingPolish.frame(for: size, options: options)
             self.options = options
-            self.windows = options.zoomOnClicks ? ZoomTimeline.windows(for: clicks) : []
+            self.windows = options.zoomOnClicks ? (zoomWindows ?? ZoomTimeline.windows(for: clicks)) : []
             self.cursor = options.drawCursor ? cursor : nil
             self.keystrokes = options.showKeystrokes ? keystrokes : []
             let arrow = NSCursor.arrow
@@ -297,7 +297,7 @@ enum RecordingPolish {
     /// re-rendered through `Renderer` and encoded with the Mac's hardware
     /// encoder when HEVC is available.
     static func export(source: URL, to destination: URL, options: PolishOptions, clicks: [RecordedClick],
-                       cursor: CursorTrack? = nil, keystrokes: [RecordedKeystroke] = [],
+                       cursor: CursorTrack? = nil, keystrokes: [RecordedKeystroke] = [], zoomWindows: [ZoomTimeline.Window]? = nil,
                        progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws {
         let asset = AVURLAsset(url: source)
         let duration = try await asset.load(.duration).seconds
@@ -305,7 +305,7 @@ enum RecordingPolish {
         let natural = try await track.load(.naturalSize), transform = try await track.load(.preferredTransform)
         let oriented = CGRect(origin: .zero, size: natural).applying(transform)
         let size = CGSize(width: abs(oriented.width), height: abs(oriented.height))
-        let renderer = Renderer(size: size, options: options, clicks: clicks, cursor: cursor, keystrokes: keystrokes)
+        let renderer = Renderer(size: size, options: options, clicks: clicks, cursor: cursor, keystrokes: keystrokes, zoomWindows: zoomWindows)
         let composition = AVMutableVideoComposition(asset: asset) { request in
             request.finish(with: renderer.render(request.sourceImage, at: request.compositionTime.seconds), context: nil)
         }

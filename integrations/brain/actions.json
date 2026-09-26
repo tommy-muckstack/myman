@@ -401,6 +401,10 @@
             "type": "number",
             "minimum": 1,
             "maximum": 3600
+          },
+          "hide_cursor": {
+            "type": "boolean",
+            "description": "Record without the system cursor so record polish can draw a smooth, larger one from the cursor track. Display and region recordings only."
           }
         },
         "required": [],
@@ -1992,6 +1996,73 @@
               ],
               "additionalProperties": false
             }
+          },
+          "lease_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "recording.polish",
+      "description": "Make a polished copy of a recording as a new library recording; the source is never changed. Same recipe and names as the Linux companion: zoom (auto-zoom on recorded clicks, or hand-written moments in source pixels, top-left), cursor (a smooth drawn cursor; needs a recording started with hide_cursor), and background (dusk, ocean, meadow, slate, or a custom colour, with rounded corners and a shadow like the image editor). Flags are shorthand for recipe keys. dry_run returns the filled-in recipe and output size without rendering. Music and title/end cards are not available on the Mac yet and fail as UNSUPPORTED.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "auto_zoom": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10,
+            "description": "subtle, normal, strong, or a zoom factor 1.1-4. A bare --auto-zoom means normal."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10,
+            "description": "normal, big, huge, or a size 1-3. A bare --cursor means normal."
+          },
+          "background": {
+            "type": "string",
+            "enum": [
+              "dusk",
+              "ocean",
+              "meadow",
+              "slate",
+              "custom",
+              "none"
+            ]
+          },
+          "background_color": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          },
+          "corner_radius": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 200
+          },
+          "recipe": {
+            "type": "object",
+            "description": "{zoom:{auto,level,moments:[{start,end,x,y}]}, cursor:{size,smooth}, background:{style,color,corner_radius,padding}}. Unknown keys are errors."
+          },
+          "dry_run": {
+            "type": "boolean"
           },
           "lease_id": {
             "type": "string",
