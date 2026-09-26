@@ -114,3 +114,33 @@ export async function targets({ id, query, granularity = 'line' }) {
   const matches = query ? regions.filter(r => fold(r.text).includes(fold(query))) : regions;
   return { source_id: entry.item_id, coordinates: 'image-pixels-top-left', regions: matches.slice(0, 200), total: matches.length, truncated: matches.length > 200 };
 }
+
+// Resolve target_text / target_region annotations to explicit geometry, the
+// way AgentMarkup.resolve does on the Mac. Ambiguity or no match fails before
+// anything is drawn or saved, and returns the candidates.
+export async function resolveTargets(file, annotations = [], width, height) {
+  if (!annotations.some(a => a.target_text || a.target_region)) return annotations;
+  const lines = await ocrLines(file), regions = [...targetRegions(lines), ...targetRegions(lines, 'word')];
+  return annotations.map(a => {
+    if (!a.target_text && !a.target_region) return a;
+    if (!!a.target_text === !!a.target_region || a.rect || a.to) fail('INVALID_ARGUMENTS', 'Choose target_text or target_region, without rect/to.');
+    let candidates;
+    if (a.target_region) candidates = regions.filter(r => r.id === a.target_region);
+    else {
+      const exact = regions.filter(r => r.granularity === 'word' && fold(r.text) === fold(a.target_text));
+      candidates = exact.length ? exact : regions.filter(r => r.granularity === 'line' && fold(r.text).includes(fold(a.target_text)));
+    }
+    if (candidates.length !== 1) {
+      const error = new Error('Select a region ID from capture targets; nothing was changed.');
+      error.code = candidates.length ? 'AMBIGUOUS_TARGET' : 'TARGET_NOT_FOUND'; error.details = { candidates: candidates.slice(0, 50), total: candidates.length };
+      throw error;
+    }
+    const [x, y, w, h] = candidates[0].rect, x0 = Math.max(0, x - 6), y0 = Math.max(0, y - 6), x1 = Math.min(width, x + w + 6), y1 = Math.min(height, y + h + 6);
+    const { target_text, target_region, ...rest } = a;
+    if (a.type === 'arrow') {
+      const to = [Math.min(width - 1, Math.round((x0 + x1) / 2)), Math.min(height - 1, Math.round((y0 + y1) / 2))];
+      return { ...rest, to, from: a.from ?? [Math.round(Math.max(2, x0 - Math.min(100, width / 5))), Math.round(Math.max(2, y0 - Math.min(70, height / 5)))] };
+    }
+    return { ...rest, rect: [x0, y0, x1 - x0, y1 - y0] };
+  });
+}
