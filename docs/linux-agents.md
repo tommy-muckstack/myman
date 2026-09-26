@@ -191,3 +191,17 @@ The `Linux agents` workflow runs the existing Brain suite, verifies both committ
 Output is JSON whenever stdout is a pipe or `--json` is passed, so agents and scripts always get the same structured result. A person at a terminal (no `--json`) gets plain text instead.
 
 When a command or flag is mistyped, the error keeps its code (`INVALID_ARGUMENTS`, `UNKNOWN_TOOL` or `UNKNOWN_ACTION`) and adds `suggestions`, for example `myman library serch` returns `"suggestions": ["myman library search"]`. Mac-only actions return `unsupported_on_platform` with an `alternative` field that says what to do on Linux instead. The MCP server returns the same messages.
+
+## Seeing when an agent captures your screen
+
+Every agent screenshot and every recording start, stop and cancel raises a desktop notification through `notify-send` (mako on Omarchy, dunst, GNOME and KDE all show it). The recording notice stays on screen until the recording ends, and it includes the stop command. Agents can't turn these notifications off; there is no flag or environment variable for it. Install `libnotify` (Arch) or `libnotify-bin` (Debian/Ubuntu) if `notify-send` is missing.
+
+For a status-bar light, `myman indicator` prints Waybar-style JSON. The text is empty when nothing is happening, `● SHOT` for a few seconds after a screenshot, and `● REC 0:12` while recording. `class` is `idle`, `capture` or `recording`, and the tooltip includes the stop command.
+
+On Omarchy, add this module to `bar.layout.right` in `~/.config/omarchy/shell.json`:
+
+```json
+{ "id": "myman", "type": "command", "exec": "myman indicator", "interval": 2, "tooltip": "MyMan agent capture" }
+```
+
+On Waybar, add `"custom/myman": { "exec": "myman indicator", "return-type": "json", "interval": 2, "signal": 9 }` to your config and set `MYMAN_WAYBAR_SIGNAL=9` in the agent's environment so the light updates instantly instead of on the next poll.
