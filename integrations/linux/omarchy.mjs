@@ -49,6 +49,7 @@ function menuBlock(cmd) {
     'trigger.myman.brain': { icon: '', label: 'Open MyMan Brain folder', action: `xdg-open ${quote(rootPath())}` },
     'trigger.myman.doctor': { icon: '', label: 'Check MyMan setup', action: term(`${cmd} doctor`) },
     'trigger.myman.permissions': { icon: '', label: 'Edit agent permissions', action: `omarchy-launch-editor ${quote(configPath())}` },
+    'trigger.myman.dictation': { icon: '', label: 'Save my dictations to the Brain', action: term(`${cmd} dictation connect`) },
     'trigger.myman.agents': { icon: '', label: 'List agent credentials', action: term(`${cmd} agents list`) },
   };
   return [jStart, ...Object.entries(rows).map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)},`), jEnd].join('\n');

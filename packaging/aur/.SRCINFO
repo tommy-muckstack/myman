@@ -18,6 +18,7 @@ pkgbase = myman-bin
 	optdepends = libnotify: desktop notifications for timers and myman show
 	optdepends = wf-recorder: screen recording on Wayland
 	optdepends = ffmpeg: screen recording on X11 and recording export
+	optdepends = voxtype-bin: local dictation saved to the Brain (myman dictation connect)
 	optdepends = hyprland: Omarchy key binding and menu (myman omarchy install)
 	provides = myman
 	conflicts = myman

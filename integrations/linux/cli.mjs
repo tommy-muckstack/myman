@@ -8,6 +8,7 @@ import { indicator } from './indicator.mjs';
 import * as identity from './identity.mjs';
 import * as omarchy from './omarchy.mjs';
 import { show } from './show.mjs';
+import * as dictation from './dictation.mjs';
 import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
@@ -58,11 +59,12 @@ myman handoff create --bundle-id ID --recipient AGENT-ID --instruction TEXT --js
 myman lease acquire --resource clipboard|item:ID [--seconds 60] --json; myman lease release --resource R --lease-id L --json
 myman collaboration events [--after-cursor N] --json; myman session transfer --session-id ID --recipient AGENT-ID --json
 myman show [--note TEXT] (people: drag over part of the screen to save it for your agents)
+myman dictation connect|disconnect|status (people: save each Voxtype dictation to the Brain)
 myman omarchy install|remove|status (people: SUPER+SHIFT+PRINT for show, plus a MyMan menu under Trigger)
 myman agents list|add NAME --scopes capture,markup|revoke ID|require on|off (people only, at a terminal)
 myman indicator (Waybar-style JSON: is an agent recording or capturing right now?)
 Every agent screenshot and recording shows a desktop notification.
-Meetings, dictation, Live Text, native UI and audio/webcam recording are unsupported.
+Meetings, Live Text, native UI and audio/webcam recording are unsupported. Dictation uses Voxtype (see dictation connect).
 `;
 // Person-only credential management. Never a catalog action, never reachable
 // through MCP or the app server, and refused inside an agent's environment.
@@ -88,6 +90,10 @@ export async function main(argv) {
   if (mi>=0) { const value=argv[mi].includes('=')?argv[mi].split('=')[1]:argv[mi+1]; argv=argv.filter((_,k)=>k!==mi&&!(k===mi+1&&!argv[mi].includes('='))); await identity.checkMachine(value); }
   else await identity.checkMachine(process.env.MYMAN_MACHINE_ID);
   if (argv[0]==='agents') return manageAgents(argv.slice(1));
+  if (argv[0]==='dictation' && argv[1]==='save') { await dictation.save(); process.exit(0); }
+  if (argv[0]==='dictation' && argv[1]==='store' && argv[2] && !process.env.MYMAN_AGENT_TOKEN) { await dictation.store(argv[2]); process.exit(0); }
+  if (argv[0]==='dictation' && ['connect','disconnect','status'].includes(argv[1])) return dictation[argv[1]]();
+  if (argv[0]==='dictation') unsupported('On Linux, people dictate with Voxtype (Omarchy: F9 or Super+Ctrl+X). Run myman dictation connect to save each dictation to your Brain; agents read them with myman library search --kind dictations --json.');
   if (argv[0]==='show') { const k=argv.indexOf('--note'); return show({note:k>=0?argv[k+1]:undefined}); }
   if (argv[0]==='omarchy') { const sub=argv[1]||'status'; if(!['install','remove','status'].includes(sub)) fail('INVALID_ARGUMENTS','Use myman omarchy install|remove|status.'); return omarchy[sub](); }
   // Linux has no interactive picker. The same agent capture schema is the
