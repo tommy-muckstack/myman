@@ -6,7 +6,7 @@ import { BrainError } from '../brain/brain.mjs';
 // Deliberately fixed: an agent's environment or CLI flags cannot redirect or
 // disable the administrator's ceiling. Absence preserves the user-only model.
 export const systemPolicyPath = '/etc/myman/agents.json';
-export const defaultGrants = { enabled: false, capture: false, markup: false, recording: false, library: false };
+export const defaultGrants = { enabled: false, capture: false, markup: false, recording: false, library: false, microphone: false };
 const invalid = message => { throw new BrainError('INVALID_SYSTEM_POLICY', message); };
 export function parseGrants(text, code = 'INVALID_CONFIG') {
   let data;

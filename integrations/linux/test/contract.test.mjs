@@ -50,7 +50,7 @@ for(const entry of entries) {
   const f=await fixture(t);
   const caps=await ok(entry,['actions'],f.env);
   assert.equal(caps.platform,'linux');assert.equal(caps.live,true);assert.equal(caps.actions.length,catalog.actions.length);
-  assert.deepEqual(caps.permissions,{enabled:false,capture:false,markup:false,recording:false,library:false});
+  assert.deepEqual(caps.permissions,{enabled:false,capture:false,markup:false,recording:false,library:false,microphone:false});
   assert.equal(caps.actions.find(a=>a.name==='meeting.start').supported,false);
   assert.equal(caps.actions.find(a=>a.name==='screenshot.capture').supported,true);
   assert.equal((await ok(entry,['actions','--offline'],f.env)).live,false);
@@ -58,7 +58,7 @@ for(const entry of entries) {
   for(const args of [['screenshot'],['note','create','--body','private'],['annotate','--id','shot-x','--ops','[]'],['record','start'],['capture','ocr','--id','shot-x'],['windows','list'],['clipboard','read','--format','text']]) {
    const r=await cli(entry,args,f.env);assert.equal(r.code,4);assert.equal(r.data.error.code,'AGENT_DISABLED');
   }
-  for(const args of [['meeting','start'],['dictation','start'],['live-text'],['open']]) {
+  for(const args of [['meeting','live'],['dictation','start'],['live-text'],['open']]) {
    const r=await cli(entry,args,f.env);assert.equal(r.code,6);assert.equal(r.data.error.code,'unsupported_on_platform');
   }
   const invalid=await cli(entry,['annotate','--id','a','--ops','not-json'],f.env);assert.equal(invalid.code,5);assert.equal(invalid.data.error.code,'INVALID_ARGUMENTS');

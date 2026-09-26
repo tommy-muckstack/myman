@@ -1,3 +1,4 @@
+import { activeMeeting } from './meeting.mjs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { atomic, readSafe, statePath } from './system.mjs';
@@ -52,6 +53,12 @@ export async function announce(action, result) {
 // Waybar-compatible status: {text, tooltip, class, alt}. Empty text hides it.
 export async function indicator() {
   const now = Date.now();
+  let meetingNow = null;
+  try { meetingNow = await activeMeeting(); } catch {}
+  if (meetingNow) return {
+    ok: true, text: `● MIC ${clock(meetingNow.elapsed)}`, alt: 'meeting', class: 'meeting', active: true,
+    tooltip: `MyMan is recording a meeting: ${meetingNow.title}.\nStop: myman meeting stop`, meeting_id: meetingNow.id, elapsed: meetingNow.elapsed, remaining: meetingNow.remaining,
+  };
   let active = null;
   try { active = (await recording.status()).active; } catch {}
   if (active?.state === 'paused') return {
