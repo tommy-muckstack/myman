@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Do not reuse a caller's live compositor while the synthetic one starts.
+unset WAYLAND_DISPLAY SWAYSOCK HYPRLAND_INSTANCE_SIGNATURE
 wayland_test_dir="$(mktemp -d)"
 export XDG_RUNTIME_DIR="$wayland_test_dir/runtime"
 mkdir -m 700 "$XDG_RUNTIME_DIR"

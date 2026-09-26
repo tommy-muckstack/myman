@@ -22,6 +22,8 @@ async function fixture(t) {
   await mkdir(root,{mode:0o700});await mkdir(path.join(config,'myman'),{recursive:true,mode:0o700});
   const env={...process.env,MYMAN_BRAIN_ROOT:root,XDG_CONFIG_HOME:config,XDG_STATE_HOME:state};
   delete env.MYMAN_AGENT_TOKEN;delete env.MYMAN_MACHINE_ID;
+  // Xvfb fixtures must never capture the invoking user's real Wayland desktop.
+  for(const key of ['WAYLAND_DISPLAY','XDG_SESSION_TYPE','HYPRLAND_INSTANCE_SIGNATURE','SWAYSOCK'])delete env[key];
   const grants=async values=>writeFile(path.join(config,'myman/agents.json'),JSON.stringify({version:1,grants:{enabled:false,capture:false,markup:false,recording:false,library:false,...values}}),{mode:0o600});
   await grants({});
   return {base,root,env,grants};
