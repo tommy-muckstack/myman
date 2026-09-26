@@ -42,12 +42,12 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Notes create / append / replace / open | `note create/append/update/open` | Create, append and replace (revision guard); open unsupported | Markdown, title, stdin/file input; replacement revision guard |
 | Note bold/lists/tables/link content | Markdown supplied to note create/update | Markdown body preserved | Native visual selection menus are UI chrome |
 | Drop images into notes / full-screen image viewing | `note attach --source-id/--path` | Supported; owned PNG copy with alt text (warns when missing) | Document-owned copy and Markdown; full-screen viewing remains the native UI |
-| Search / recent captures / related / kinds | `library search/recent/related`, `latest`, `collect` | `library search`: exact phrase, all words, one-typo matches, date/kind/pinned filters; no semantic or related | Search shares native fuzzy/semantic ranking; explicit offline mode retains export keywords |
+| Search / recent captures / related / kinds | `library search/recent/related`, `latest`, `collect` | `library search`: exact phrase, all words, one-typo matches, date/kind/pinned filters; `library related` by links, window, time and title words; no semantic | Search shares native fuzzy/semantic ranking; explicit offline mode retains export keywords |
 | Themes by keywords/date/descriptors | `collect` filters, `theme list` | Read existing exports | Saved themes or agent synthesis from cited evidence |
 | Pin / rename / hide / delete | `library pin/unpin/rename/hide/unhide/delete` | Supported; revision guard; delete needs `--confirm` and removes owned media | Delete requires confirmation and normal data lifecycle |
 | Clear history | `history clear --confirm` | Unsupported | Separate library consent, native deletion pipeline |
 | Theme rename / pin / dismiss / merge / membership | `theme rename/pin/unpin/dismiss/merge/add/remove` | Unsupported | Correction controls, never tasks/projects |
-| Tasks create / list / title / notes / due / done / delete | `task add/list/update/complete/reopen/delete` | Read existing task exports only | App DB then export; IDs returned |
+| Tasks create / list / title / notes / due / done / delete | `task add/list/update/complete/reopen/delete` | Supported; Mac export format, version guard, delete needs `--confirm` | App DB then export; IDs returned |
 | People / vocabulary retrieval | `collect '{"kinds":["people","vocabulary"]}'` | Supported (existing exports) | Read-only; dictation vocabulary editing remains Settings UI |
 | Font from screenshot / match / specimen / export / reopen | `font match/create/preview/file/open` | Unsupported | Limited bundled-style matching; glyph correction and installation remain human UI |
 | On-image translation | UI-only on macOS 15+ | Unsupported | Current Apple translation session is supplied by SwiftUI and may need a language-download consent sheet; no headless claim |
