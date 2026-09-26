@@ -44,6 +44,9 @@ myman windows list --json (X11, Hyprland, Sway; pass id to --window-id)
 myman clipboard read --format text|image --json; myman clipboard write --text T --json
 myman record start [--display main] [--region x,y,w,h] [--max-duration 30] --json
 myman record stop|cancel|status|pause|resume --session-id ID --json (video only; needs recording grant)
+myman timer start --seconds N [--sound-enabled false] --json; myman timer status --json (library grant)
+myman timer pause|resume|cancel --session-id ID --json; myman timer sound --session-id ID --enabled true|false --json
+myman reminder create --message TEXT --seconds N|--at ISO-WITH-OFFSET --json; myman reminder list|cancel [--id ID] --json
 myman record frames --id REC-ID [--times 0,2.5|--count 6] [--width 400] --json (temporary PNGs + contact sheet)
 myman record export --id REC-ID [--start S] [--end S] [--max-bytes N] [--edits JSON] --json (new recording; caption/step/title/zoom/redact)
 myman indicator (Waybar-style JSON: is an agent recording or capturing right now?)
