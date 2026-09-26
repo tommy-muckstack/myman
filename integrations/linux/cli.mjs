@@ -4,6 +4,7 @@ import { Brain } from '../brain/brain.mjs';
 import { execute } from '../brain/tools.mjs';
 import { capabilities, doctor, errorData, invoke, job, jobs } from './service.mjs';
 import { unsupported, fail } from './system.mjs';
+import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
 myman doctor --json
@@ -67,15 +68,31 @@ export async function main(argv) {
     default: fail('INVALID_ARGUMENTS','Unsupported command.');
   }
 }
+const argv=process.argv.slice(2);
+// JSON for agents and pipes; plain text only for a person at a terminal.
+const person=process.stdout.isTTY&&!argv.includes('--json');
+function explain(data) {
+  if(['INVALID_ARGUMENTS','UNKNOWN_ACTION','UNKNOWN_TOOL'].includes(data.code)) {
+    const flag=suggestFlag(data.message), cmd=flag?null:suggestCommand(argv);
+    if(cmd) { data.message=`Unknown command "myman ${cmd.typed}".${cmd.suggestions.length?'':' Run myman --help to list commands.'}`; }
+    const s=flag||cmd; if(s?.suggestions.length) data.suggestions=s.suggestions.map(x=>x.startsWith('--')?x:`myman ${x}`);
+  }
+  if(data.code==='unsupported_on_platform'&&!data.alternative) data.alternative=alternativeFor(argv.filter(a=>!a.startsWith('-')).slice(0,2).join(' '));
+  return data;
+}
+function write(result) {
+  if(result.help&&!argv.includes('--json')) return process.stdout.write(result.help);
+  process.stdout.write(person?human(result):JSON.stringify(result)+'\n');
+}
 try {
-  const result=await main(process.argv.slice(2));
-  if(result.help&&!process.argv.includes('--json')) process.stdout.write(result.help);
-  else process.stdout.write(JSON.stringify(result)+'\n');
+  const result=await main(argv);
   const error=result.error||result.job?.error;
+  if(error) explain(error);
+  write(result);
   if(error) process.exitCode=exitCode(error.code);
 } catch(error) {
   if(error.code?.startsWith('ERR_PARSE_ARGS')||error instanceof SyntaxError||['ENOENT','EACCES','EISDIR'].includes(error.code)) error={code:'INVALID_ARGUMENTS',message:error.message};
-  const data=errorData(error);
-  process.stdout.write(JSON.stringify({ok:false,error:data})+'\n');
+  const data=explain(errorData(error));
+  write({ok:false,error:data});
   process.exitCode=exitCode(data.code);
 }
