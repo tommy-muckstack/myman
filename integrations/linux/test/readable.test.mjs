@@ -34,7 +34,8 @@ test('saved screenshot notes embed the image with alt text and machine-readable 
  if(!im||!await command('git')) return t.skip('ImageMagick and git are required');
  const base=await mkdtemp(path.join(await realpath(tmpdir()),'myman-readable-'));t.after(()=>rm(base,{recursive:true,force:true}));
  const brain=path.join(base,'Brain'),png=path.join(base,'in.png');await mkdir(brain);
- await exec(im,['-size','300x120','xc:white','-fill','black','-pointsize','36','-annotate','+10+70','HELLO','PNG24:'+png]);
+ // No text drawn: minimal CI images (Arch) have no fonts for -annotate.
+ await exec(im,['-size','300x120','xc:white','PNG24:'+png]);
  const script=`const {saveCapture}=await import(${JSON.stringify(new URL('../library.mjs',import.meta.url).href)});process.stdout.write(JSON.stringify(await saveCapture({file:${JSON.stringify(png)}},undefined,{window:{app:'foot',title:'demo'}})));`;
  const {stdout}=await exec(process.execPath,['--input-type=module','-e',script],{env:{...process.env,MYMAN_BRAIN_ROOT:brain,XDG_STATE_HOME:path.join(base,'state'),XDG_CONFIG_HOME:path.join(base,'config')}});
  const r=JSON.parse(stdout);
