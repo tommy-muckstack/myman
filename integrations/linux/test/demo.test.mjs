@@ -60,3 +60,20 @@ test('cards render at the video size with the backdrop colours', { skip: !has('c
     assert.ok(Number(edges) < 0.6, 'the headline does not run off the left edge');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a demo needs the control grant as well as recording; a dry run needs only recording', async () => {
+  const { mkdtemp, mkdir, writeFile, realpath } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { spawnSync } = await import('node:child_process');
+  const home = await mkdtemp(path.join(await realpath(tmpdir()), 'myman-demo-grant-'));
+  const config = path.join(home, 'config/myman');
+  await mkdir(config, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(config, 'agents.json'), JSON.stringify({ version: 1, grants: { enabled: true, recording: true } }), { mode: 0o600 });
+  const env = { ...process.env, XDG_CONFIG_HOME: path.join(home, 'config'), XDG_STATE_HOME: path.join(home, 'state'), MYMAN_BRAIN_ROOT: path.join(home, 'brain') };
+  delete env.MYMAN_AGENT_TOKEN;
+  const cli = new URL('../cli.mjs', import.meta.url).pathname, script = JSON.stringify({ app: ['true'], steps: [{ wait: 0.1 }] });
+  const run = args => JSON.parse(spawnSync(process.execPath, [cli, 'demo', '--script', script, ...args, '--json'], { env }).stdout.toString());
+  const denied = run([]);
+  assert.equal(denied.error.code, 'AGENT_DISABLED'); assert.match(denied.error.message, /control/);
+  assert.equal(run(['--dry-run']).dry_run, true);
+});
