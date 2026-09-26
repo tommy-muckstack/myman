@@ -56,13 +56,16 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | On-image translation | UI-only on macOS 15+ | Unsupported | Current Apple translation session is supplied by SwiftUI and may need a language-download consent sheet; no headless claim |
 | Privacy/search settings | `settings get/set` | Unsupported | Allowlisted automatic_themes, semantic_search, window_metadata, excluded_apps |
 | Agent consent / TCC grants | Human-only Settings | Owner-only config plus optional root ceiling; all user grants default off | Cannot be enabled through CLI, URL or MCP |
+| Named agent credentials | Human-only Settings (Mac); `myman agents add/revoke/require` at an interactive terminal (Linux) | Supported; `MYMAN_AGENT_TOKEN`, scopes only narrow grants and the root ceiling; refused without a TTY or inside an agent | Credentials tell cooperating agents apart; not a same-login sandbox |
+| Identity / directory / machine | `agent whoami`, `agent list`, `machine current`, `--machine` | Supported; `WRONG_MACHINE` when the machine ID differs | Machine ID is local; remote execution is up to the host |
+| Bundles / handoffs / events | `bundle create/list/read/update/delete`, `handoff create/list/read/update`, `collaboration events` | Supported (library grant, named agents); references plus revisions, never copies; Mac transitions and limits | No agent is launched or messaged |
+| Leases / recording ownership | `lease acquire/release`, `--lease-id` on mutations, `session transfer` | Supported; clipboard and `item:ID` leases; recordings owned by their starter | Leases are cooperative; revision checks still apply |
 | Hotkey rebinding / audio model selection / destination folder / update preferences | Human-only Settings | No UI; Brain and XDG paths via environment | Machine setup; no unrestricted preference editor |
 | Permissions / setup | `doctor` | Supported; passive doctor | Passive, no OS prompts |
 | Calendar agenda | `calendar list --after ISO --before ISO` | Unsupported | Existing Calendar permission; bounded 31-day read |
 | Quick tools / calculator / time zones / palettes | `tool evaluate --input TEXT` | Unsupported | Structured local results; no side effects |
 | Reminders | `reminder create/list/cancel/sound` | Supported (library grant); `seconds` or ISO `at` with offset; overdue reminders are delivered at the next MyMan call | Saved reminders and notifications |
 | Timers | `timer start/status/pause/resume/cancel/sound` | Supported (library grant); desktop notice and optional sound when done, no on-screen widget; systemd user timer or detached waiter | Visible widget, session IDs, creating-agent controls |
-| Message reminders | `reminder create/list/cancel` | Unsupported | Local persistence, macOS notifications when permitted |
 | Chat beta / Chatterbox voice replies | Optional future phase | Unsupported | Not required for capture/recall CLI parity |
 | Pointer / click / drag / arbitrary keyboard injection | Excluded | Excluded | Structured capture/markup replaces pointer automation; no remote-control daemon |
 | Sparkle installation / TCC / Font Book | Human/app-only | Unsupported | Native installation and OS consent surfaces |
