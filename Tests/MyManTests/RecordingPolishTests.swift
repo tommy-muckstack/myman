@@ -156,3 +156,62 @@ final class RecordingPolishStudioTests: XCTestCase {
         XCTAssertLessThan(pill.blueComponent, 0.7)
     }
 }
+
+// MARK: - record polish for agents (same recipe as the Linux companion)
+
+extension RecordingPolishTests {
+    func testAgentPolishFlagsMergeIntoTheLinuxRecipe() throws {
+        let recipe = try AgentPolish.recipe(from: ["id": "x", "auto_zoom": "strong", "cursor": "big", "background": "dusk", "corner_radius": 24.0,
+                                                   "recipe": ["zoom": ["auto": false]] as [String: Any]])
+        let plan = try AgentPolish.plan(recipe)
+        XCTAssertTrue(plan.zoom); XCTAssertTrue(plan.autoZoom, "the flag overrides the recipe, like Linux")
+        XCTAssertEqual(plan.level, 2.4); XCTAssertEqual(plan.options.zoomScale, 2.4, accuracy: 0.001)
+        XCTAssertTrue(plan.cursor); XCTAssertEqual(plan.cursorSize, 2)
+        XCTAssertEqual(plan.options.backdrop, .dusk); XCTAssertEqual(plan.options.cornerRadius, 24)
+        XCTAssertFalse(plan.options.drawCursor, "drawn only once a hidden-cursor track is found")
+        XCTAssertEqual((plan.recipe["background"] as? [String: Any])?["style"] as? String, "dusk")
+    }
+
+    func testAgentPolishValidatesLikeLinux() throws {
+        func code(_ recipe: [String: Any]) -> String? {
+            do { _ = try AgentPolish.plan(recipe); return nil } catch { return (error as? AgentError)?.code }
+        }
+        XCTAssertEqual(code(["zoom": ["auto": true, "speed": 2] as [String: Any]]), "INVALID_ARGUMENTS", "unknown keys are errors")
+        XCTAssertEqual(code(["zoom": ["level": 9] as [String: Any]]), "INVALID_ARGUMENTS")
+        XCTAssertEqual(code(["background": ["style": "neon"]]), "INVALID_ARGUMENTS")
+        XCTAssertEqual(code(["background": ["style": "custom"]]), "INVALID_ARGUMENTS", "custom needs a colour")
+        XCTAssertEqual(code(["cursor": ["size": true, "smooth": 1] as [String: Any]]), nil, "a JSON true size means normal")
+        XCTAssertEqual(code(["cursor": ["size": 1] as [String: Any]]), nil, "1 is a size, not true")
+        XCTAssertEqual(code([:]), "INVALID_ARGUMENTS", "nothing to polish")
+        XCTAssertEqual(code(["music": "upbeat", "zoom": true]), "UNSUPPORTED", "music is Linux-only for now")
+        XCTAssertEqual(code(["title": "Hi", "zoom": true]), "UNSUPPORTED")
+        XCTAssertThrowsError(try AgentPolish.recipe(from: ["id": "x", "title": "Hi"]))
+        let custom = try AgentPolish.plan(try AgentPolish.recipe(from: ["id": "x", "background_color": "#1E293B"]))
+        XCTAssertEqual(custom.background, "custom"); XCTAssertEqual(AgentPolish.hex(custom.options.customColor), "#1E293B")
+    }
+
+    func testHandWrittenMomentsBecomeFractionsOfTheFrame() throws {
+        let plan = try AgentPolish.plan(["zoom": ["moments": [["start": 0.5, "end": 1.5, "x": 80, "y": 50]]] as [String: Any]])
+        XCTAssertFalse(plan.autoZoom)
+        let windows = AgentPolish.windows(plan.moments, size: CGSize(width: 320, height: 200))
+        XCTAssertEqual(windows, [ZoomTimeline.Window(start: 0.5, end: 1.5, x: 0.25, y: 0.25)])
+    }
+
+    @MainActor func testPolishRendersHandWrittenZoomWithoutClicks() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("agent-polish-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("take.mov")
+        try await fixtureVideo(source)
+        let plan = try AgentPolish.plan(try AgentPolish.recipe(from: ["id": "x", "background": "slate",
+                                                                     "recipe": ["zoom": ["level": 2, "moments": [["start": 0.2, "end": 1.6, "x": 16, "y": 10]]]] as [String: Any]]))
+        let size = try await AgentPolish.videoSize(source)
+        XCTAssertEqual(size, CGSize(width: 320, height: 200))
+        let destination = dir.appendingPathComponent("polished.mp4")
+        try await RecordingPolish.export(source: source, to: destination, options: plan.options, clicks: [],
+                                         zoomWindows: AgentPolish.windows(plan.moments, size: size))
+        let track = try await AVURLAsset(url: destination).loadTracks(withMediaType: .video).first
+        let rendered = try await track?.load(.naturalSize)
+        XCTAssertEqual(rendered, RecordingPolish.frame(for: size, options: plan.options).output, "backdrop padding grows the frame")
+    }
+}
