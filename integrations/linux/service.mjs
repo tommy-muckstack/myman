@@ -9,25 +9,26 @@ import { Brain } from '../brain/brain.mjs';
 import { execute } from '../brain/tools.mjs';
 import { annotate, capture, ocr, screens } from './images.mjs';
 import { captureEntry, saveCapture, saveNote } from './library.mjs';
+import * as recording from './recording.mjs';
 import { processIdentity, workerAlive } from './process-identity.mjs';
 import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.13.0';
-export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image']);
+export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function errorData(error) { return {code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
 export async function capabilities(name, offline=false) {
   if (name && !schemas.has(name)) fail('UNKNOWN_ACTION','Unknown action name.');
   const actions=catalog.actions.filter(a=>!name || a.name===name).map(a=>({...a,supported:supported.has(a.name),platforms:supported.has(a.name)?['darwin','linux']:['darwin']}));
-  const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,config_path:configPath(),limitations:['X11 capture only','Explicit pixel geometry; no Live Text targeting','No native UI, meetings, dictation, recording or clipboard']};
+  const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,config_path:configPath(),limitations:['X11 capture only','Explicit pixel geometry; no Live Text targeting','Video-only recording (no microphone, system audio, webcam or window capture)','No native UI, meetings, dictation or clipboard']};
   return name ? {...actions[0],...metadata,grants:await grants()} : {...metadata,permissions:await grants(),actions};
 }
 export async function doctor() {
   const deps=await dependencies();
   let desktop; try { desktop=await screens(); } catch(error) { desktop={ok:false,error:errorData(error)}; }
-  return {platform:'linux',version,permissions:await grants(),system_policy:{path:systemPolicyPath,present:(await systemGrants())!==null},config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (desktop.session==='wayland'?deps.grim:(deps.scrot||deps.import||deps.ffmpeg)) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git},note:'Owner grants are required independently of dependency readiness.'};
+  return {platform:'linux',version,permissions:await grants(),system_policy:{path:systemPolicyPath,present:(await systemGrants())!==null},config_path:configPath(),brain_root:rootPath(),dependencies:deps,desktop,ready:{capture:!!(desktop.displays && (desktop.session==='wayland'?deps.grim:(deps.scrot||deps.import||deps.ffmpeg)) && (deps.magick||deps.convert) && deps.git),markup:!!((deps.magick||deps.convert)&&deps.git),ocr:!!deps.tesseract,library:!!deps.git,recording:!!(desktop.displays && (desktop.session==='wayland'?deps['wf-recorder']:deps.ffmpeg) && deps.git)},note:'Owner grants are required independently of dependency readiness.'};
 }
 function validate(name,args) {
   if (!schemas.has(name)) fail('UNKNOWN_ACTION', 'Use actions to discover supported action names.');
@@ -44,6 +45,10 @@ export async function dispatch(name,args) {
   if (name==='screens.list') { const {displays,...desktop}=await screens(); return {result:displays,...desktop}; }
   if (name==='screenshot.image') return new Brain(rootPath()).image({path:(await captureEntry(args.id)).path});
   if (name==='note.create') return saveNote(args);
+  if (name==='recording.start') return recording.start(args);
+  if (name==='recording.stop') return recording.stop(args);
+  if (name==='recording.cancel') return recording.cancel(args);
+  if (name==='recording.status') return recording.status(args);
   const dir=await directory(path.join(statePath(),'work'),true,true);
   const work=await mkdtemp(path.join(dir,'capture-'));
   try {
