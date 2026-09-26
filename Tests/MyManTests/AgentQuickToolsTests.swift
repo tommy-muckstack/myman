@@ -18,7 +18,14 @@ final class AgentQuickToolsTests: XCTestCase {
         do { _ = try await call("timer.sound", ["session_id": id, "enabled": false], owner: "agent-b"); XCTFail("Must enforce sound owner") } catch {}
         let muted = try await call("timer.sound", ["session_id": id, "enabled": false])
         XCTAssertEqual(muted["sound_enabled"] as? Bool, false)
-        do { _ = try await call("timer.start", ["seconds": 10.0]); XCTFail("Must not replace timer") } catch {}
+        let second = try await call("timer.start", ["seconds": 10.0], owner: "agent-b")
+        let secondID = try XCTUnwrap(second["session_id"] as? String)
+        XCTAssertNotEqual(secondID, id, "A second timer runs beside the first")
+        XCTAssertEqual(timer.timers.count, 2)
+        let status = try await call("timer.status")
+        XCTAssertEqual((status["timers"] as? [[String: Any]])?.compactMap { $0["session_id"] as? String }, [id, secondID])
+        _ = try await call("timer.cancel", ["session_id": secondID], owner: "agent-b")
+        XCTAssertEqual(timer.timers.map(\.id), [id], "Cancelling one timer leaves the other running")
         do { _ = try await call("timer.cancel", ["session_id": id], owner: "agent-b"); XCTFail("Must enforce owner") } catch {}
         _ = try await call("timer.pause", ["session_id": id])
         let resumed = try await call("timer.resume", ["session_id": id])

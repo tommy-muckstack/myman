@@ -192,7 +192,7 @@ final class SpokenTimerTests: XCTestCase {
         XCTAssertEqual(store.reminders.count, 1, "Rendering must not submit twice")
     }
 
-    @MainActor func testSubmissionIsExplicitAndDoesNotReplaceExistingTimer() async throws {
+    @MainActor func testSubmissionIsExplicitAndAddsBesideExistingTimer() async throws {
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
         let store = ReminderStore(defaults: defaults, schedule: { _ in false }, cancelNotification: { _ in }, alert: {})
         let model = QuickToolsModel()
@@ -202,9 +202,11 @@ final class SpokenTimerTests: XCTestCase {
         let started = await model.startActivity(reminders: store)
         XCTAssertTrue(started)
         let deadline = model.deadline
-        let replaced = await model.startActivity(.timer(600), reminders: store)
-        XCTAssertFalse(replaced)
-        XCTAssertEqual(model.deadline, deadline)
+        let first = try XCTUnwrap(model.timerID)
+        let added = await model.startActivity(.timer(600), reminders: store)
+        XCTAssertTrue(added)
+        XCTAssertEqual(model.timers.count, 2)
+        XCTAssertEqual(model.timer(first)?.deadline, deadline, "The first timer is never replaced")
         let incomplete = await model.startActivity(.reminder(try XCTUnwrap(ReminderDraft.parse("remind me to take pizza out"))), reminders: store)
         XCTAssertFalse(incomplete)
         XCTAssertTrue(store.reminders.isEmpty)
@@ -275,5 +277,68 @@ final class SpokenTimerTests: XCTestCase {
         XCTAssertEqual(scheduledSounds, [true, false])
         XCTAssertEqual(store.reminders.first?.playsSound, false)
         XCTAssertEqual(store.reminders.first?.notificationScheduled, true)
+    }
+}
+
+final class MultipleTimerTests: XCTestCase {
+    @MainActor func testTimersRunIndependentlyAndAlarmClearsWhenLastRingingTimerIsDismissed() throws {
+        let model = QuickToolsModel()
+        var rings = 0, clears = 0
+        model.onFinish = { rings += 1 }
+        model.onAlarmCleared = { clears += 1 }
+        let now = Date(timeIntervalSince1970: 1000)
+        let short = model.addTimer(seconds: 30, now: now)
+        let long = model.addTimer(seconds: 600, now: now)
+        let muted = model.addTimer(seconds: 30, soundEnabled: false, now: now)
+        model.pause(long, now: now.addingTimeInterval(10))
+        model.tick(now: now.addingTimeInterval(31))
+        XCTAssertEqual(model.timer(short)?.finished, true)
+        XCTAssertEqual(model.timer(muted)?.finished, true)
+        XCTAssertEqual(model.timer(long)?.pausedSeconds, 590, "Pausing one timer leaves others alone")
+        XCTAssertEqual(rings, 1, "Simultaneous finishes ring once")
+        XCTAssertTrue(model.ringing)
+        model.tick(now: now.addingTimeInterval(40))
+        XCTAssertEqual(rings, 1)
+        let before = clears
+        model.stop(muted)
+        XCTAssertTrue(model.ringing, "A silent timer's dismissal keeps the audible alarm")
+        model.stop(short)
+        XCTAssertFalse(model.ringing)
+        XCTAssertGreaterThan(clears, before)
+        model.resume(long, now: now.addingTimeInterval(100))
+        XCTAssertEqual(model.timer(long)?.deadline, now.addingTimeInterval(690))
+        model.stop()
+        XCTAssertTrue(model.timers.isEmpty)
+    }
+
+    @MainActor func testWidgetStacksOnePillPerTimerWithOverflow() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let store = ReminderStore(defaults: defaults, schedule: { _ in false }, cancelNotification: { _ in }, alert: {})
+        let model = QuickToolsModel()
+        model.onFinish = {}
+        let controller = QuickActivityWidgetController(timer: model, reminders: store)
+        defer { model.stop() }
+        for seconds in [300.0, 60, 900, 120, 30, 45] { model.addTimer(seconds: seconds) }
+        XCTAssertEqual(controller.stackedTimers.map(\.duration), [30, 45, 60, 120], "Soonest first, capped")
+        XCTAssertEqual(controller.hiddenTimerCount, 2)
+        XCTAssertEqual(controller.size, NSSize(width: 178, height: 4 * 44 + 3 * 8))
+        XCTAssertEqual(QuickTimer(id: "a", duration: 600).label, "10 min")
+        guard ProcessInfo.processInfo.environment["MYMAN_ADAPTIVE_UI_REVIEW"] != nil else { return }
+        model.stop()
+        let now = Date()
+        model.addTimer(seconds: 1, now: now.addingTimeInterval(-5))
+        model.addTimer(seconds: 600); model.addTimer(seconds: 300)
+        model.tick()
+        _ = NSApplication.shared
+        MM.Fonts.registerFonts()
+        let host = NSHostingView(rootView: QuickActivityWidget(controller: controller).environment(\.colorScheme, .dark))
+        host.appearance = NSAppearance(named: .darkAqua)
+        host.frame = NSRect(origin: .zero, size: controller.size)
+        host.layoutSubtreeIfNeeded()
+        if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/private/tmp/myman-simple-review/widget-stack-dark.png"))
+        }
+        XCTAssertEqual(QuickTimer(id: "b", duration: 90).label, "1 min 30 sec")
     }
 }
