@@ -30,6 +30,13 @@ on:
     types: [published]
   workflow_dispatch:
 
+concurrency:
+  # One run per branch/PR. Superseded pull_request runs are cancelled. Every
+  # other event (pushes to main, tags, releases, manual runs) gets a unique
+  # group via run_id, so those runs are never cancelled or dropped from the queue.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
