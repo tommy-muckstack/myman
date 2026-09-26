@@ -478,16 +478,44 @@ final class AgentActions {
             }
             if plan.autoZoom && clicks.isEmpty { warnings.append("No clicks were recorded, so auto-zoom found nothing to zoom on. Add recipe.zoom.moments to zoom by hand.") }
             let windows: [ZoomTimeline.Window]? = plan.moments.isEmpty ? nil : AgentPolish.windows(plan.moments, size: size)
-            let frame = RecordingPolish.frame(for: size, options: options)
+            let frame = plan.reframes ? RecordingPolish.frame(for: size, options: options) : RecordingPolish.Frame(source: size, padding: 0, output: size)
             let zooms = plan.zoom ? (windows ?? ZoomTimeline.windows(for: clicks)).count : 0
-            let summary: [String: Any] = ["recipe": plan.recipe, "zoom_moments": zooms, "clicks": clicks.count, "cursor_drawn": options.drawCursor,
+            let voice = await DemoFinish.hasAudio(movie)
+            if let music = plan.music, voice, music.duck {
+                warnings.append("On the Mac the music plays at a lower level under the recording's audio; it does not duck while someone speaks yet.")
+            }
+            var summary: [String: Any] = ["recipe": plan.recipe, "zoom_moments": zooms, "clicks": clicks.count, "cursor_drawn": options.drawCursor,
                                           "background": plan.background.map { $0 as Any } ?? NSNull(), "source_size": [Double(size.width), Double(size.height)],
-                                          "output_size": [Double(frame.output.width), Double(frame.output.height)], "warnings": warnings]
+                                          "output_size": [Double(frame.output.width), Double(frame.output.height)], "warnings": warnings,
+                                          "audio": plan.music != nil ? (voice ? "recording audio with music" : "music") : (voice ? "recording audio" : "none")]
+            if let music = plan.music {
+                var about: [String: Any] = ["volume": DemoFinish.volume(music, recordingHasAudio: voice), "ducked_under_recording_audio": false]
+                if let name = music.track { about["track"] = name; about["license"] = "CC0-1.0 (composed by MyMan from code; no samples)" }
+                else { about["file"] = music.file; about["license"] = "your file" }
+                summary["music"] = about
+            }
+            if plan.title != nil || plan.end != nil {
+                let t = plan.title?.seconds ?? 0, e = plan.end?.seconds ?? 0
+                summary["cards"] = ["title_seconds": t, "end_seconds": e, "video_starts_at": t]
+                let length = try await AVURLAsset(url: movie).load(.duration).seconds
+                summary["duration"] = ((t + e + length) * 100).rounded() / 100
+            }
             if args["dry_run"] as? Bool == true { return summary.merging(["source_id": source.id, "dry_run": true]) { a, _ in a } }
             let url = SettingsStore.shared.screenshotFolderURL.appendingPathComponent("Polished-\(UUID().uuidString).mp4")
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let work = FileManager.default.temporaryDirectory.appendingPathComponent("myman-polish-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: work) }
             do {
-                try await RecordingPolish.export(source: movie, to: url, options: options, clicks: clicks, cursor: track, zoomWindows: windows)
+                var stage = movie
+                if plan.reframes {
+                    stage = plan.finishes ? work.appendingPathComponent("reframed.mp4") : url
+                    try await RecordingPolish.export(source: movie, to: stage, options: options, clicks: clicks, cursor: track, zoomWindows: windows)
+                }
+                if plan.finishes {
+                    let done = try await DemoFinish.finish(input: stage, to: url, title: plan.title, end: plan.end, music: plan.music, options: options, work: work)
+                    summary.merge(done) { _, new in new }
+                }
                 guard CaptureIndex.item(source.id)?.excluded == source.excluded else { throw AgentError("CONTENT_CHANGED", "Source was deleted or hidden during polish.") }
                 let attachment = try await AgentVideo.attachment(url)
                 let record = ScreenRecording(id: UUID().uuidString, path: url.path, duration: Int(ceil(attachment["duration"] as? Double ?? 0)), createdAt: Date())

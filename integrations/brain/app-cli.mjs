@@ -102,7 +102,7 @@ Wait: wait --id ID --stage ocr|indexed|transcript|notes|file|export --timeout 12
 Or wait --job-id UUID / --session-id ID. No action is started or replayed.
 Compare: capture compare --before-id ID --after-id ID [--ignore-rects JSON]
 Video: record export --id ID --edits JSON (caption/step/title/zoom/redact).
-Demo: record start --hide-cursor; record polish --id ID --auto-zoom --cursor big --background dusk [--recipe FILE|JSON] [--dry-run]
+Demo: record start --hide-cursor; record polish --id ID --auto-zoom --cursor big --background dusk [--music upbeat|calm|cinematic|FILE] [--title TEXT] [--end TEXT] [--recipe FILE|JSON] [--dry-run]
 Media: record start --window-id ID --max-duration 30; record result --session-id ID
 record frames --id ID --times 0,2,5; record export --id ID --start 1 --end 10 --max-bytes 20000000
 Markup: capture targets --id ID --query TEXT; ops accept target_text or target_region.

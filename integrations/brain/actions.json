@@ -2016,7 +2016,7 @@
     },
     {
       "name": "recording.polish",
-      "description": "Make a polished copy of a recording as a new library recording; the source is never changed. Same recipe and names as the Linux companion: zoom (auto-zoom on recorded clicks, or hand-written moments in source pixels, top-left), cursor (a smooth drawn cursor; needs a recording started with hide_cursor), and background (dusk, ocean, meadow, slate, or a custom colour, with rounded corners and a shadow like the image editor). Flags are shorthand for recipe keys. dry_run returns the filled-in recipe and output size without rendering. Music and title/end cards are not available on the Mac yet and fail as UNSUPPORTED.",
+      "description": "Make a polished copy of a recording as a new library recording; the source is never changed. Same recipe and names as the Linux companion: zoom (auto-zoom on recorded clicks, or hand-written moments in source pixels, top-left), cursor (a smooth drawn cursor; needs a recording started with hide_cursor), and background (dusk, ocean, meadow, slate, or a custom colour, with rounded corners and a shadow like the image editor). Flags are shorthand for recipe keys. dry_run returns the filled-in recipe and output size without rendering. Music (upbeat, calm or cinematic, composed by MyMan from code and CC0; or an absolute path to your own audio file) plays under the recording's audio, and title/end cards are drawn on the chosen backdrop. Built-in tracks are rendered by the myman command and MCP server; the raw app socket takes only music files.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2057,9 +2057,41 @@
             "minimum": 0,
             "maximum": 200
           },
+          "music": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "upbeat, calm, cinematic, none, or an absolute path to an audio file."
+          },
+          "music_volume": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Title card text, shown for 2.5 seconds before the video."
+          },
+          "end": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "End card text, shown for 2 seconds after the video."
+          },
+          "music_track": {
+            "type": "string",
+            "enum": [
+              "upbeat",
+              "calm",
+              "cinematic"
+            ],
+            "description": "Set by the myman command when it renders a built-in track to a file."
+          },
           "recipe": {
             "type": "object",
-            "description": "{zoom:{auto,level,moments:[{start,end,x,y}]}, cursor:{size,smooth}, background:{style,color,corner_radius,padding}}. Unknown keys are errors."
+            "description": "{zoom:{auto,level,moments:[{start,end,x,y}]}, cursor:{size,smooth}, background:{style,color,corner_radius,padding}, music:{track|file,volume,fade_in,fade_out,duck,start}, title:{text,subtitle,seconds}, end:{text,subtitle,seconds}}. Unknown keys are errors."
           },
           "dry_run": {
             "type": "boolean"

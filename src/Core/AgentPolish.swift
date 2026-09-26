@@ -14,6 +14,9 @@ enum AgentPolish {
     static let momentKeys = ["start", "end", "x", "y", "level"]
     static let cursorKeys = ["size", "smooth", "highlight", "ripple"]
     static let backgroundKeys = ["style", "color", "corner_radius", "padding", "shadow"]
+    static let musicKeys = ["track", "file", "volume", "fade_in", "fade_out", "duck", "start"]
+    static let cardKeys = ["text", "subtitle", "seconds"]
+    static let musicTracks = ["upbeat", "calm", "cinematic"]
 
     struct Moment: Equatable { var start: Double; var end: Double; var x: Double; var y: Double }
 
@@ -26,6 +29,14 @@ enum AgentPolish {
         var cursor: Bool
         var cursorSize: Double
         var background: String?
+        var music: DemoFinish.Music? = nil
+        var title: DemoFinish.Card? = nil
+        var end: DemoFinish.Card? = nil
+
+        /// Zoom, cursor or backdrop: work for the frame renderer.
+        var reframes: Bool { zoom || cursor || background != nil }
+        /// Music or cards: work for the joining step.
+        var finishes: Bool { music != nil || title != nil || end != nil }
 
         /// The recipe as it will be rendered, with defaults filled in.
         var recipe: [String: Any] {
@@ -41,6 +52,9 @@ enum AgentPolish {
                 if background == "custom" { b["color"] = AgentPolish.hex(options.customColor) }
                 out["background"] = b
             }
+            if let music { out["music"] = music.json }
+            if let title { out["title"] = title.json }
+            if let end { out["end"] = end.json }
             return out
         }
     }
@@ -126,16 +140,24 @@ enum AgentPolish {
             if let radius = args["corner_radius"] { bg["corner_radius"] = radius }
             recipe["background"] = bg
         }
-        for (flag, key) in [("music", "music"), ("music_volume", "music"), ("title", "title"), ("end", "end")] where args[flag] != nil {
-            throw unsupported(key == "music" ? "Music" : "Title and end cards")
+        if args["music"] != nil || args["music_volume"] != nil || args["music_track"] != nil {
+            var m: [String: Any]
+            if let s = recipe["music"] as? String { m = s.hasPrefix("/") ? ["file": s] : ["track": s] } else { m = recipe["music"] as? [String: Any] ?? [:] }
+            if let flag = args["music"] as? String {
+                m.removeValue(forKey: "track"); m.removeValue(forKey: "file")
+                m[flag.hasPrefix("/") ? "file" : "track"] = flag
+            }
+            if let volume = args["music_volume"] { m["volume"] = volume }
+            // The companion renders built-in tracks to a file and names the track here.
+            if let track = args["music_track"] { m["track"] = track }
+            recipe["music"] = m
         }
+        for key in ["title", "end"] { if let text = args[key] { recipe[key] = text } }
         return recipe
     }
 
     static func plan(_ input: [String: Any]) throws -> Plan {
         let recipe = try object(input, recipeKeys, "The recipe")
-        if recipe["music"] != nil { throw unsupported("Music") }
-        if recipe["title"] != nil || recipe["end"] != nil { throw unsupported("Title and end cards") }
         var options = PolishOptions()
         options.zoomOnClicks = false; options.backdrop = .none; options.drawCursor = false
         options.showKeystrokes = false
@@ -195,10 +217,58 @@ enum AgentPolish {
                 plan.background = style
             }
         }
-        guard plan.zoom || plan.cursor || plan.background != nil else {
-            throw fail("Nothing to polish. Add --auto-zoom, --cursor, --background, or a --recipe.")
+        plan.music = try music(recipe["music"])
+        plan.title = try card(recipe["title"], "title", seconds: 2.5)
+        plan.end = try card(recipe["end"], "end", seconds: 2)
+        guard plan.reframes || plan.finishes else {
+            throw fail("Nothing to polish. Add --auto-zoom, --cursor, --background, --music, --title, --end, or a --recipe.")
         }
         return plan
+    }
+
+    /// Card text: 1 to `max` characters on at most two lines, no control characters.
+    private static func cardText(_ value: Any?, _ name: String, max: Int) throws -> String {
+        guard let s = value as? String, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, s.count <= max,
+              s.components(separatedBy: "\n").count <= 2,
+              !s.unicodeScalars.contains(where: { ($0.value < 0x20 && $0 != "\n") || $0.value == 0x7F }) else {
+            throw fail("\(name) must be text of 1 to \(max) characters on at most 2 lines.")
+        }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func card(_ value: Any?, _ where_: String, seconds: Double) throws -> DemoFinish.Card? {
+        if value == nil || value is NSNull || bool(value) == false { return nil }
+        let c: [String: Any] = try (value as? String).map { ["text": $0] } ?? object(value, cardKeys, "recipe.\(where_)")
+        return DemoFinish.Card(text: try cardText(c["text"], "recipe.\(where_).text", max: 80),
+                               subtitle: try c["subtitle"].map { try cardText($0, "recipe.\(where_).subtitle", max: 120) },
+                               seconds: try c["seconds"].map { try number($0, 0.5, 10, "recipe.\(where_).seconds") } ?? seconds)
+    }
+
+    /// A built-in track arrives from the companion as `file` plus its `track`
+    /// name. A track name alone means the call skipped the companion, which is
+    /// what renders the built-in music.
+    static func music(_ value: Any?) throws -> DemoFinish.Music? {
+        if value == nil || value is NSNull || bool(value) == false || (value as? String) == "none" { return nil }
+        var m: [String: Any]
+        if bool(value) == true { m = [:] } else if let s = value as? String { m = s.hasPrefix("/") ? ["file": s] : ["track": s] } else { m = try object(value, musicKeys, "recipe.music") }
+        let track = try (m["track"]).map { raw -> String in
+            guard let name = (raw as? String)?.lowercased(), musicTracks.contains(name) else {
+                throw fail("recipe.music.track must be one of \(musicTracks.joined(separator: ", ")) (or pass file).")
+            }
+            return name
+        }
+        guard let file = m["file"] else {
+            throw AgentError("UNSUPPORTED", "Built-in music is rendered by the myman command or the myman-app MCP server. Use one of those, or pass recipe.music.file with an absolute path to an audio file.", details: ["platform": "macos"])
+        }
+        guard let path = file as? String, path.hasPrefix("/") else { throw fail("recipe.music.file must be an absolute path to an audio file.") }
+        guard FileManager.default.isReadableFile(atPath: path) else { throw AgentError("NOT_FOUND", "recipe.music.file \(path) is not a readable file.") }
+        if m["duck"] != nil && !isBool(m["duck"]) { throw fail("recipe.music.duck must be true or false.") }
+        func opt(_ key: String, _ lo: Double, _ hi: Double, _ fallback: Double?) throws -> Double? {
+            try m[key].map { try number($0, lo, hi, "recipe.music.\(key)") } ?? fallback
+        }
+        return DemoFinish.Music(file: path, track: track, volume: try opt("volume", 0, 1, nil),
+                                fadeIn: try opt("fade_in", 0, 10, 1.5)!, fadeOut: try opt("fade_out", 0, 10, 2.5)!,
+                                duck: bool(m["duck"]) != false, start: try opt("start", 0, 3600, 0)!)
     }
 
     /// Hand-written moments are in source pixels (top-left); the renderer
