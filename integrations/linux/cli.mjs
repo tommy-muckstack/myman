@@ -4,6 +4,7 @@ import { Brain } from '../brain/brain.mjs';
 import { execute } from '../brain/tools.mjs';
 import { capabilities, doctor, errorData, invoke, job, jobs } from './service.mjs';
 import { unsupported, fail } from './system.mjs';
+import { indicator } from './indicator.mjs';
 import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
@@ -37,6 +38,8 @@ myman windows list --json (X11, Hyprland, Sway; pass id to --window-id)
 myman clipboard read --format text|image --json; myman clipboard write --text T --json
 myman record start [--display main] [--region x,y,w,h] [--max-duration 30] --json
 myman record stop|cancel|status --session-id ID --json (video only; needs recording grant)
+myman indicator (Waybar-style JSON: is an agent recording or capturing right now?)
+Every agent screenshot and recording shows a desktop notification.
 Meetings, dictation, Live Text, native UI and audio/webcam recording are unsupported.
 `;
 export async function main(argv) {
@@ -46,6 +49,7 @@ export async function main(argv) {
   if (argv.includes('--mode=interactive') || argv.some((v,i)=>v==='--mode'&&argv[i+1]==='interactive')) unsupported('The Linux companion has no interactive UI.');
   if (argv[0]==='screenshot' && !argv.some(v=>v==='--mode'||v.startsWith('--mode='))) argv=[...argv,'--mode','agent'];
   if (['meeting','dictation','live-text','livetext','cancel-meeting'].includes(argv[0])) unsupported(`${argv[0]} is not supported on Linux.`);
+  if (argv[0]==='indicator') return indicator();
   const task=await plan(argv);
   switch(task.type) {
     case 'help': return {help};
