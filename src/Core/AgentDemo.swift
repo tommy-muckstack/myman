@@ -334,7 +334,7 @@ enum DemoInput {
     }
     /// Returns the app and whether this demo launched it.
     static func open(_ name: String) async throws -> (NSRunningApplication, Bool) {
-        if let app = running(name) { activate(app); return (app, false) }
+        if let app = running(name) { try refuseSelf(app); activate(app); return (app, false) }
         guard let url = appURL(name) else {
             throw AgentError("NOT_FOUND", "No app named \(name) was found in Applications. Pass its name as shown in the Dock, its bundle ID, or a path to the .app.")
         }
@@ -342,6 +342,27 @@ enum DemoInput {
         configuration.activates = true
         let app = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
         return (app, true)
+    }
+    /// My Man is never a demo target. Its own windows include Settings, where the
+    /// person turns agent grants on, so a demo must not be able to click or type there.
+    static func refuseSelf(_ app: NSRunningApplication?) throws {
+        guard app == .current else { return }
+        throw AgentError("INVALID_ARGUMENTS", "My Man can't record a demo of itself. Pick another app.")
+    }
+    /// True when a click at a top-left global point would land on a My Man window.
+    /// My Man's click-through overlays (recording frame, cursor effects) don't count.
+    static func ownsPoint(_ point: CGPoint) -> Bool {
+        let me = ProcessInfo.processInfo.processIdentifier
+        let clickThrough = Set(NSApp.windows.filter(\.ignoresMouseEvents).map(\.windowNumber))
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for info in list {
+            guard let b = info[kCGWindowBounds as String] as? [String: Any], let rect = CGRect(dictionaryRepresentation: b as CFDictionary),
+                  rect.contains(point), (info[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
+            let pid = info[kCGWindowOwnerPID as String] as? Int32
+            if pid == me, let number = info[kCGWindowNumber as String] as? Int, clickThrough.contains(number) { continue }
+            return pid == me
+        }
+        return false
     }
     static func activate(_ app: NSRunningApplication) {
         if app == .current { NSApp.activate() } else { app.activate() }
@@ -426,6 +447,7 @@ extension AgentActions {
         do {
             if let name = plan.app { let opened = try await DemoStage.open(name); target = opened.0; launched = opened.1 }
             else if plan.window != nil { target = NSWorkspace.shared.frontmostApplication }
+            try DemoStage.refuseSelf(target)
             if plan.focus { hidden = DemoStage.hideOthers(except: target ?? .current) }
             if let target { DemoStage.activate(target) }
             var area: CGRect
@@ -444,6 +466,18 @@ extension AgentActions {
             guard area.width >= 16, area.height >= 16 else { throw AgentError("INVALID_ARGUMENTS", "The recorded area is off screen.") }
             let origin = area.origin
             func global(_ p: CGPoint) -> CGPoint { CGPoint(x: origin.x + p.x, y: origin.y + p.y) }
+            func checked(_ p: CGPoint, step: Int) throws -> CGPoint {
+                guard p.x >= 0, p.y >= 0, p.x <= area.width, p.y <= area.height else {
+                    throw AgentError("INVALID_ARGUMENTS", "Step \(step + 1): [\(Int(p.x)), \(Int(p.y))] is outside the recorded area (\(Int(area.width)) × \(Int(area.height))).")
+                }
+                guard !DemoStage.ownsPoint(global(p)) else { throw AgentError("INVALID_ARGUMENTS", "Step \(step + 1) would click on My Man itself, which demos never do.") }
+                return p
+            }
+            // My Man's panels (Settings, launcher) can hold the keyboard without
+            // My Man being the active app, so any key window of ours counts.
+            func keysAllowed(step: Int) throws {
+                guard !NSApp.isActive, NSApp.keyWindow == nil else { throw AgentError("INVALID_ARGUMENTS", "Step \(step + 1) would type into My Man itself, which demos never do.") }
+            }
             try await DemoInput.glide(to: CGPoint(x: area.midX, y: area.midY), seconds: 0)
             let g = DemoStage.global(area)
             let started = try await execute("recording.start", ["region": [Double(g.minX), Double(g.minY), Double(g.width), Double(g.height)], "hide_cursor": true,
@@ -500,22 +534,28 @@ extension AgentActions {
                 switch step {
                 case .wait(let s): try await Task.sleep(for: .milliseconds(Int(s * 1000)))
                 case .move(let t, let s):
-                    let p = try await spot(t, step: i)
+                    let p = try checked(try await spot(t, step: i), step: i)
                     try await DemoInput.glide(to: global(p), seconds: s)
                 case .click(let t, let s, let button, let double):
-                    let p = try await spot(t, step: i)
+                    let p = try checked(try await spot(t, step: i), step: i)
                     try await DemoInput.glide(to: global(p), seconds: s)
                     acted.append(.init(click: (now(), p))); last = p; clicks += 1
                     try await DemoInput.click(at: global(p), button: button, double: double)
                     try await Task.sleep(for: .milliseconds(150))
                 case .type(let text, let cps, let at):
                     var focus = last
-                    if let at { focus = try await spot(at, step: i) }
+                    if let at { focus = try checked(try await spot(at, step: i), step: i) }
                     let from = now()
-                    try await DemoInput.type(text, cps: cps)
+                    // Checked before every character: a keystroke could open a My Man panel mid-string.
+                    for character in text { try keysAllowed(step: i); try await DemoInput.type(String(character), cps: cps) }
                     acted.append(.init(typing: (from, now(), focus)))
-                case .key(let k): try DemoInput.key(k); try await Task.sleep(for: .milliseconds(200))
-                case .scroll(let n): try await DemoInput.scroll(n); try await Task.sleep(for: .milliseconds(200))
+                case .key(let k): try keysAllowed(step: i); try DemoInput.key(k); try await Task.sleep(for: .milliseconds(200))
+                case .scroll(let n):
+                    // Scrolling goes to the window under the pointer, wherever it is now.
+                    if let at = CGEvent(source: nil)?.location, DemoStage.ownsPoint(at) {
+                        throw AgentError("INVALID_ARGUMENTS", "Step \(i + 1) would scroll My Man itself, which demos never do.")
+                    }
+                    try await DemoInput.scroll(n); try await Task.sleep(for: .milliseconds(200))
                 }
             }
             try await Task.sleep(for: .milliseconds(Int(DemoScript.leadOut * 1000)))
