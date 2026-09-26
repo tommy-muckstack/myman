@@ -18,6 +18,10 @@ myman note append --id NOTE-ID --body TEXT [--expected-updated-at ISO] --json
 myman note attach --id NOTE-ID --source-id SHOT-ID|--path /abs/image.png --alt TEXT --json
 myman library rename|pin|unpin|hide|unhide --id ID [--title T] [--expected-revision N] --json
 myman library delete --id ID --confirm --json (library grant; removes owned media)
+myman library related --id ID --json (links, same window, capture time, title words)
+myman task list [--state open|done|all] --json; myman task add --title T [--notes N] [--due DATE] --json
+myman task update|complete|reopen --id TASK-ID [--title T] [--notes N] [--due DATE|--clear-due] [--expected-version V] --json
+myman task delete --id TASK-ID --confirm --json
 myman actions [ACTION] [--offline] --json
 myman screens list --json; myman capture image --id SHOT-ID --json
 myman job UUID --json; myman jobs --json
