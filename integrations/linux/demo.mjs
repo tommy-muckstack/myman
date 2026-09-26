@@ -234,8 +234,12 @@ export async function demo({ script: file, app, dryRun = false }) {
     // the recording pauses while it looks and the video has no dead air.
     // Clicks noted so far are timed before the pause, against the segment they fell in.
     const area = rect ?? [0, 0, desktop.width, desktop.height];
+    const inside = (p, at) => {
+      if (p[0] < 0 || p[1] < 0 || p[0] > area[2] || p[1] > area[3]) fail('INVALID_ARGUMENTS', `Step ${at + 1}: [${p.map(Math.round).join(', ')}] is outside the recorded area (${area[2]} × ${area[3]}).`);
+      return p;
+    };
     const where = async (t, at) => {
-      if (Array.isArray(t)) return t;
+      if (Array.isArray(t)) return inside(t, at);
       timed.push(...await noteEvents(session, events)); events = [];
       await pause({ session_id: session });
       try {

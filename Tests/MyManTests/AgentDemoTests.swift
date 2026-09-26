@@ -24,6 +24,12 @@ final class AgentDemoTests: XCTestCase {
         XCTAssertFalse(quiet.focus); XCTAssertNil(quiet.polish)
     }
 
+    @MainActor func testMyManIsNeverADemoTarget() {
+        XCTAssertThrowsError(try DemoStage.refuseSelf(.current), "a demo must not drive My Man's own Settings")
+        XCTAssertNoThrow(try DemoStage.refuseSelf(nil))
+        XCTAssertEqual(DemoStage.running("MyMan"), .current)
+    }
+
     func testBadScriptsFailBeforeAnythingOpens() {
         XCTAssertEqual(code(["steps": [["click": [1, 2]]], "speed": 2] as [String: Any]), "INVALID_ARGUMENTS", "unknown keys are errors")
         XCTAssertEqual(code(["steps": []]), "INVALID_ARGUMENTS")
