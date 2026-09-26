@@ -58,7 +58,7 @@ const pairs = {
   'note create':'note.create','note append':'note.append','note update':'note.update','note open':'item.open',
   'meeting start':'meeting.start','meeting stop':'meeting.stop','meeting cancel':'meeting.discard','meeting rename':'meeting.rename','meeting notes':'meeting.notes',
   'dictation start':'dictation.start','dictation stop':'dictation.stop','dictation cancel':'dictation.cancel',
-  'record status':'recording.status','record result':'recording.status','record pause':'recording.pause','record resume':'recording.resume','record frames':'recording.frames','record export':'recording.export','record start':'recording.start','record stop':'recording.stop','record cancel':'recording.cancel','record microphone':'recording.microphone',
+  'record status':'recording.status','record result':'recording.status','record pause':'recording.pause','record resume':'recording.resume','record frames':'recording.frames','record export':'recording.export','record polish':'recording.polish','record start':'recording.start','record stop':'recording.stop','record cancel':'recording.cancel','record microphone':'recording.microphone',
   'editor open':'item.open','editor save':'screenshot.edit','capture import':'screenshot.import','capture compare':'screenshot.compare','capture targets':'screenshot.targets','capture ocr':'screenshot.ocr','capture image':'screenshot.image','capture copy':'clipboard.write','capture remove-background':'screenshot.remove_background',
   'clipboard read':'clipboard.read','clipboard write':'clipboard.write',
   'library read':'item.read','library open':'item.open','library related':'item.related','library rename':'item.rename','library pin':'item.pin','library unpin':'item.pin','library hide':'item.exclude','library unhide':'item.exclude','library delete':'item.delete',
@@ -78,7 +78,7 @@ timer sound --session-id ID --enabled off; reminder sound --id ID --enabled off
 tool evaluate --input "8am in Iceland"; calendar list --after ISO --before ISO
 screenshot --mode agent --display main --region x,y,w,h --wait --json
 annotate --id ID --ops-file ops.json [--preview|--dry-run] [--clipboard] --json
-record start|status|result|pause|resume|stop|cancel|frames|export  meeting start|status|stop|cancel|rename|notes
+record start|status|result|pause|resume|stop|cancel|frames|export|polish  meeting start|status|stop|cancel|rename|notes
 dictation start|status|stop|cancel  (stop/cancel require --session-id from start)
 note create|append|update|open --body TEXT|--body-file FILE|- [--title TITLE]
 note attach --id NOTE-ID --source-id SHOT-ID|--path FILE [--alt TEXT]
@@ -102,6 +102,7 @@ Wait: wait --id ID --stage ocr|indexed|transcript|notes|file|export --timeout 12
 Or wait --job-id UUID / --session-id ID. No action is started or replayed.
 Compare: capture compare --before-id ID --after-id ID [--ignore-rects JSON]
 Video: record export --id ID --edits JSON (caption/step/title/zoom/redact).
+Demo: record start --hide-cursor; record polish --id ID --auto-zoom --cursor big --background dusk [--recipe FILE|JSON] [--dry-run]
 Media: record start --window-id ID --max-duration 30; record result --session-id ID
 record frames --id ID --times 0,2,5; record export --id ID --start 1 --end 10 --max-bytes 20000000
 Markup: capture targets --id ID --query TEXT; ops accept target_text or target_region.
@@ -137,8 +138,10 @@ function allowed(values, keys) { for(const key of Object.keys(values))if(![...co
 
 // Pure command routing apart from bounded input-file reads, so it can be tested
 // without opening an app or reading personal captures.
+// --auto-zoom and --cursor may be given bare (meaning normal), like Linux.
+function bareFlags(argv){return argv.map((a,i)=>['--auto-zoom','--cursor'].includes(a)&&(i===argv.length-1||String(argv[i+1]).startsWith('-'))?`${a}=normal`:a);}
 export async function plan(argv) {
-  const {values:v,positionals:p}=parseArgs({args:argv,options,allowPositionals:true,strict:true});
+  const {values:v,positionals:p}=parseArgs({args:bareFlags(argv),options,allowPositionals:true,strict:true});
   if(v.help || !p.length)return {type:'help'};
   if(v.mode && !['interactive','agent'].includes(v.mode))fail('Mode must be interactive or agent.');
   if(v['no-wait'] && (v.wait || v['wait-ready']))fail('Choose wait or no-wait.');
@@ -178,7 +181,7 @@ export async function plan(argv) {
       const type=schema.properties[target].type;
       if(type==='boolean')args[target]=typeof val==='string'?onOff(val):val;
       else if(type==='number'||type==='integer')args[target]=number(val);
-      else if(type==='object')args[target]=json(val);
+      else if(type==='object')args[target]=target==='recipe'&&!String(val).trim().startsWith('{')?json(await input(val)):json(val);
       else if(type==='array')args[target]=['region','crop','times'].includes(target)?String(val).split(',').map(number):json(val);
       else args[target]=val;
     }

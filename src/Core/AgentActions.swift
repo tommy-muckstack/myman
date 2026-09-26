@@ -271,7 +271,7 @@ final class AgentActions {
         return result
     }
     func execute(_ action: String, _ args: [String: Any]) async throws -> Any {
-        let isAudio = (action.hasPrefix("recording.") && !["recording.status", "recording.frames", "recording.export"].contains(action)) || action.hasPrefix("dictation.") || ["meeting.start", "meeting.stop", "meeting.discard"].contains(action)
+        let isAudio = (action.hasPrefix("recording.") && !["recording.status", "recording.frames", "recording.export", "recording.polish"].contains(action)) || action.hasPrefix("dictation.") || ["meeting.start", "meeting.stop", "meeting.discard"].contains(action)
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
         defer { if isAudio { audioCommand = false } }
         switch action {
@@ -428,7 +428,7 @@ final class AgentActions {
             let recorder = ScreenRecorder.shared
             let windowID = args["window_id"] as? String
             guard windowID == nil || (args["display"] == nil && args["region"] == nil && args["coordinates"] == nil) else { throw AgentError("INVALID_ARGUMENTS", "Choose window-id or display/region.") }
-            try await recorder.startForAgent(region: windowID == nil ? desktopRegion(args) : nil, windowID: windowID, maximumDuration: args["max_duration"] as? Double ?? 300, microphone: args["microphone"] as? Bool ?? false, systemAudio: args["system_audio"] as? Bool ?? true, webcam: args["webcam"] as? Bool ?? false)
+            try await recorder.startForAgent(region: windowID == nil ? desktopRegion(args) : nil, windowID: windowID, maximumDuration: args["max_duration"] as? Double ?? 300, microphone: args["microphone"] as? Bool ?? false, systemAudio: args["system_audio"] as? Bool ?? true, webcam: args["webcam"] as? Bool ?? false, hideCursor: args["hide_cursor"] as? Bool ?? false)
             guard let id = recorder.agentSessionID else { throw AgentError("CAPTURE_FAILED", "Screen recording did not start.") }
             while !recorder.isRecording && recorder.isBusy { try await Task.sleep(for: .milliseconds(100)) }
             let status = try await recordingStatus(id)
@@ -461,6 +461,39 @@ final class AgentActions {
                 try await Database.shared.write { try record.insert($0) }
                 Brain.syncRecording(id: record.id, filePath: record.path, duration: record.duration, transcript: "", createdAt: record.createdAt)
                 return ["id": "recording-" + record.id, "kind": "recording", "state": "finalized", "source_id": source.id, "path": record.path, "attachment": attachment, "transcript_status": "not_generated", "edits_applied": (args["edits"] as? [Any])?.count ?? 0, "edit_time_origin": "source"] as [String: Any]
+            } catch { try? FileManager.default.removeItem(at: url); throw error }
+        case "recording.polish":
+            let source = try item(args)
+            guard source.kind == "recording" else { throw AgentError("INVALID_ARGUMENTS", "Expected a recording ID.") }
+            let movie = URL(fileURLWithPath: source.sourcePath)
+            guard FileManager.default.fileExists(atPath: movie.path) else { throw AgentError("NOT_FOUND", "Recording file is missing.") }
+            let plan = try AgentPolish.plan(AgentPolish.recipe(from: args))
+            let clicks = ClickLog.load(for: movie), track = RecordingSidecars.loadCursor(for: movie)
+            let size = try await AgentPolish.videoSize(movie)
+            var options = plan.options, warnings: [String] = []
+            if plan.cursor {
+                if let track, track.separate, !track.samples.isEmpty { options.drawCursor = true }
+                else if track == nil { warnings.append("No cursor track was saved with this recording (window recordings have none), so no cursor was drawn.") }
+                else { warnings.append("This recording already shows the system cursor, so no second cursor was drawn. Start with record start --hide-cursor to get a smooth drawn cursor.") }
+            }
+            if plan.autoZoom && clicks.isEmpty { warnings.append("No clicks were recorded, so auto-zoom found nothing to zoom on. Add recipe.zoom.moments to zoom by hand.") }
+            let windows: [ZoomTimeline.Window]? = plan.moments.isEmpty ? nil : AgentPolish.windows(plan.moments, size: size)
+            let frame = RecordingPolish.frame(for: size, options: options)
+            let zooms = plan.zoom ? (windows ?? ZoomTimeline.windows(for: clicks)).count : 0
+            let summary: [String: Any] = ["recipe": plan.recipe, "zoom_moments": zooms, "clicks": clicks.count, "cursor_drawn": options.drawCursor,
+                                          "background": plan.background.map { $0 as Any } ?? NSNull(), "source_size": [Double(size.width), Double(size.height)],
+                                          "output_size": [Double(frame.output.width), Double(frame.output.height)], "warnings": warnings]
+            if args["dry_run"] as? Bool == true { return summary.merging(["source_id": source.id, "dry_run": true]) { a, _ in a } }
+            let url = SettingsStore.shared.screenshotFolderURL.appendingPathComponent("Polished-\(UUID().uuidString).mp4")
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            do {
+                try await RecordingPolish.export(source: movie, to: url, options: options, clicks: clicks, cursor: track, zoomWindows: windows)
+                guard CaptureIndex.item(source.id)?.excluded == source.excluded else { throw AgentError("CONTENT_CHANGED", "Source was deleted or hidden during polish.") }
+                let attachment = try await AgentVideo.attachment(url)
+                let record = ScreenRecording(id: UUID().uuidString, path: url.path, duration: Int(ceil(attachment["duration"] as? Double ?? 0)), createdAt: Date())
+                try await Database.shared.write { try record.insert($0) }
+                Brain.syncRecording(id: record.id, filePath: record.path, duration: record.duration, transcript: "", createdAt: record.createdAt)
+                return summary.merging(["id": "recording-" + record.id, "kind": "recording", "state": "finalized", "source_id": source.id, "path": record.path, "attachment": attachment]) { a, _ in a }
             } catch { try? FileManager.default.removeItem(at: url); throw error }
         case "recording.cancel":
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
