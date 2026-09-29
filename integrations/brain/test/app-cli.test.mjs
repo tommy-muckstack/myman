@@ -138,3 +138,11 @@ test('calendar free routes to the strict read-only action and independent grant'
  const validate=ajv.compile(action.inputSchema);assert.ok(validate(p.args));assert.equal(validate({...p.args,path:'/tmp/calendar.ics'}),false);
  await assert.rejects(plan(['calendar','free','--path','/tmp/calendar.ics']));
 });
+
+test('calendar propose exposes a strict preview-only schema and both grants',async()=>{
+ const p=await plan(['calendar','propose','--title','Coffee','--after','2026-09-29T00:00:00Z','--before','2026-09-30T00:00:00Z','--time-zone','UTC','--duration-minutes','45','--guests','["Jilles","Harshil"]','--json']);
+ assert.equal(p.name,'calendar.propose');assert.equal(p.args.duration_minutes,45);assert.deepEqual(p.args.guests,['Jilles','Harshil']);
+ const action=describe(p.name);assert.deepEqual(action.permissions,['calendar_read','calendar_propose']);assert.equal(action.readOnly,true);assert.equal(action.destructive,false);
+ const validate=ajv.compile(action.inputSchema);assert.ok(validate(p.args));
+ for(const key of ['book','confirm','busy','now','send_invitations'])assert.equal(validate({...p.args,[key]:true}),false);
+});

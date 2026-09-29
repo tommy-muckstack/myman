@@ -105,6 +105,8 @@ The installer does not run these commands, create the system policy, or enable a
 
 ### Calendar free/busy
 
+`myman calendar propose --title TEXT --after ISO --before ISO --time-zone IANA --json` (MCP `myman_app_calendar_propose`) uses this same source and additionally requires the new default-off `calendar_propose` grant/scope. It returns candidate times and an unconfirmed preview; it does not write, book or invite. Guest availability is unknown. Without owner configuration it returns `unsupported_on_platform`. See [proposal contract](calendar-propose.md).
+
 `myman calendar free --after 2026-09-29T00:00:00-04:00 --before 2026-09-30T00:00:00-04:00 --json` and MCP `myman_app_calendar_freebusy` return merged busy intervals from a local ICS snapshot, without titles or attendees. It needs no display server and works on Omarchy. Without an owner-configured source it returns `unsupported_on_platform`.
 
 The human creates `calendar.json` next to `agents.json` with `{"version":1,"ics_path":"/absolute/path/to/calendar.ics","time_zone":"America/New_York"}` and optionally `owner_email` for declined invitations. The directory is mode `700`; config and ICS are owned, unlinked regular files with mode `600`. The human separately enables `enabled` and the new `calendar_read` grant in `agents.json` (and the root ceiling if present); named credentials also need this scope. Existing grants remain unchanged, omitted grants are off, and CLI/MCP cannot grant access or override the ICS path. `doctor.calendar` checks configuration without reading events. No live sync, online accounts or teammate availability is claimed. See [JSON contract, supported ICS forms and bounded parsing](calendar-freebusy.md).
@@ -379,7 +381,7 @@ myman agents revoke ID
 myman agents require off   # let agents without a credential work again
 ```
 
-Scopes are `capture`, `markup`, `recording`, `library`, `microphone`, `control` and `calendar_read`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
+Scopes are `capture`, `markup`, `recording`, `library`, `microphone`, `control` `calendar_read` and `calendar_propose`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
 
 The agent puts its token in `MYMAN_AGENT_TOKEN` in its host environment (never in a prompt). Then:
 

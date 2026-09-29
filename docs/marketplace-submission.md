@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-29: root/Linux **0.15.0**, Brain companion **0.14.0** add `calendar.propose`: local candidate times and an unconfirmed event preview, gated by both `calendar_read` and new default-off `calendar_propose`. Mac reads EventKit with existing human OS permission; Linux/Omarchy reads a configured local ICS snapshot. No booking, invitations, Contacts or teammate availability. Shared native/Node fixtures and source/bundled CLI/MCP grant tests cover the contract. GrokBot skill-only stays **0.12.0**. Prepared, not submitted or marketplace-host-verified. Next step for Tommy: authorize a candidate-update email to `marketplace-publishing@cursor.com` with org `@muckstack`, repo `https://github.com/tommy-muckstack/myman` and candidate `0.15.0`. No email or form was sent.
+
 > Candidate update, 2026-09-29: root plugin/Linux **0.14.0**, Brain companion **0.13.0** add `calendar.freebusy`, `myman calendar free`, and the matching MCP tool. A new default-off `calendar_read` grant protects EventKit reads on Mac and owner-configured local ICS reads on Linux/Omarchy. Own busy intervals only; no booking, invitations, Contacts or teammate accounts. GrokBot skill-only package remains **0.12.0**. Prepared, not submitted or marketplace-host-verified; the original Cursor application remains pending.
 
 > Candidate update, 2026-09-26: root plugin and Linux companion **0.13.0** add local Ubuntu/X11 and Omarchy/Hyprland capture, annotations, notes, portable Brain retrieval and permission-gated MCP. The unchanged Mac companion and GrokBot skill-only package remain **0.12.0**. Prepared, not submitted or marketplace-host-verified; the original Cursor application remains pending.
@@ -10,7 +12,7 @@
 
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.14.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.15.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -52,6 +54,8 @@ For Grok Bot, local-computer execution must target the Mac containing MyMan and 
 Keywords: myman, meetings, notes, macos, linux, local, memory, transcripts, screenshots, dictation.
 
 ## Submission status
+
+**September 29, 2026 — root/Linux 0.15.0 and Brain 0.14.0 prepared, not submitted.** The proposal candidate adds a human-only permission gate and a read-only preview action; [contract and synthetic verification](calendar-propose.md). No real-calendar or physical Omarchy test, booking UI or marketplace host activation is claimed. The original publisher application remains pending; the next step is the authorized update email described above. Grok skill remains 0.12.0.
 
 **September 29, 2026 — root/Linux 0.14.0 and Brain 0.13.0 prepared, not submitted.** Synthetic native and source/bundled CLI/MCP checks cover free/busy bounds, merging, grant enforcement and ICS edge cases; see [the contract](calendar-freebusy.md). Real EventKit data and a physical Omarchy session have not been exercised. Grok skill stays 0.12.0. The next step for Tommy is an authorized update email to `marketplace-publishing@cursor.com` with org `@muckstack`, repository `https://github.com/tommy-muckstack/myman` and candidate `0.14.0`, rather than a duplicate application. No email or form was sent.
 

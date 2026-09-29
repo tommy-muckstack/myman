@@ -1,0 +1,247 @@
+[
+  {
+    "name": "default limit counts all quarter hour starts",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T09:00:00Z",
+      "before": "2026-09-29T11:00:00Z",
+      "time_zone": "UTC"
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [],
+    "starts": [
+      "2026-09-29T09:00:00.000Z",
+      "2026-09-29T09:15:00.000Z",
+      "2026-09-29T09:30:00.000Z",
+      "2026-09-29T09:45:00.000Z",
+      "2026-09-29T10:00:00.000Z"
+    ],
+    "count": 7
+  },
+  {
+    "name": "45 minutes fits at busy boundary",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T09:00:00Z",
+      "before": "2026-09-29T11:00:00Z",
+      "time_zone": "UTC",
+      "duration_minutes": 45
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [
+      {
+        "start": "2026-09-29T08:00:00Z",
+        "end": "2026-09-29T09:30:00Z"
+      },
+      {
+        "start": "2026-09-29T09:00:00Z",
+        "end": "2026-09-29T10:00:00Z"
+      }
+    ],
+    "starts": [
+      "2026-09-29T10:00:00.000Z",
+      "2026-09-29T10:15:00.000Z"
+    ],
+    "count": 2
+  },
+  {
+    "name": "past starts omitted and clock rounded forward",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T09:00:00Z",
+      "before": "2026-09-29T11:00:00Z",
+      "time_zone": "UTC"
+    },
+    "now": "2026-09-29T10:00:00.001Z",
+    "busy": [],
+    "starts": [
+      "2026-09-29T10:15:00.000Z",
+      "2026-09-29T10:30:00.000Z"
+    ],
+    "count": 2
+  },
+  {
+    "name": "busy whole range has no complete preview",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T09:00:00Z",
+      "before": "2026-09-29T11:00:00Z",
+      "time_zone": "UTC"
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [
+      {
+        "start": "2026-09-29T09:00:00Z",
+        "end": "2026-09-29T11:00:00Z"
+      }
+    ],
+    "starts": [],
+    "count": 0
+  },
+  {
+    "name": "duration cannot extend past six",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T17:00:00Z",
+      "before": "2026-09-30T02:00:00Z",
+      "time_zone": "UTC",
+      "duration_minutes": 45
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [],
+    "starts": [
+      "2026-09-29T17:00:00.000Z",
+      "2026-09-29T17:15:00.000Z"
+    ],
+    "count": 2
+  },
+  {
+    "name": "spring DST local nine follows new offset",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-03-08T00:00:00-05:00",
+      "before": "2026-03-09T00:00:00-04:00",
+      "time_zone": "America/New_York",
+      "limit": 2
+    },
+    "now": "2026-03-01T00:00:00Z",
+    "busy": [],
+    "starts": [
+      "2026-03-08T13:00:00.000Z",
+      "2026-03-08T13:15:00.000Z"
+    ],
+    "count": 35
+  },
+  {
+    "name": "fall DST local nine follows new offset",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-11-01T00:00:00-04:00",
+      "before": "2026-11-02T00:00:00-05:00",
+      "time_zone": "America/New_York",
+      "limit": 2
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [],
+    "starts": [
+      "2026-11-01T14:00:00.000Z",
+      "2026-11-01T14:15:00.000Z"
+    ],
+    "count": 35
+  },
+  {
+    "name": "Kathmandu fractional hour zone",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T00:00:00Z",
+      "before": "2026-09-30T00:00:00Z",
+      "time_zone": "Asia/Kathmandu",
+      "limit": 2
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [],
+    "starts": [
+      "2026-09-29T03:15:00.000Z",
+      "2026-09-29T03:30:00.000Z"
+    ],
+    "count": 35
+  },
+  {
+    "name": "proposed starts can be off grid after hours and are sorted deduplicated",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T00:00:00Z",
+      "before": "2026-09-30T00:00:00Z",
+      "time_zone": "UTC",
+      "proposed_starts": [
+        "2026-09-29T20:07:00Z",
+        "2026-09-29T07:01:00Z",
+        "2026-09-29T20:07:00Z",
+        "2026-09-28T20:00:00Z",
+        "2026-09-29T23:45:00Z"
+      ]
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [],
+    "starts": [
+      "2026-09-29T07:01:00.000Z",
+      "2026-09-29T20:07:00.000Z"
+    ],
+    "count": 2
+  },
+  {
+    "name": "explicit fold instants stay distinct",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-11-01T00:00:00-04:00",
+      "before": "2026-11-02T00:00:00-05:00",
+      "time_zone": "America/New_York",
+      "proposed_starts": [
+        "2026-11-01T01:30:00-04:00",
+        "2026-11-01T01:30:00-05:00"
+      ]
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [],
+    "starts": [
+      "2026-11-01T05:30:00.000Z",
+      "2026-11-01T06:30:00.000Z"
+    ],
+    "count": 2
+  },
+  {
+    "name": "explicit slots check overlap and half open boundaries",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T09:00:00Z",
+      "before": "2026-09-29T11:00:00Z",
+      "time_zone": "UTC",
+      "proposed_starts": [
+        "2026-09-29T09:30:00Z",
+        "2026-09-29T10:00:00Z",
+        "2026-09-29T10:30:00Z"
+      ]
+    },
+    "now": "2026-09-29T00:00:00Z",
+    "busy": [
+      {
+        "start": "2026-09-29T10:00:00Z",
+        "end": "2026-09-29T10:30:00Z"
+      }
+    ],
+    "starts": [
+      "2026-09-29T09:30:00.000Z",
+      "2026-09-29T10:30:00.000Z"
+    ],
+    "count": 2
+  },
+  {
+    "name": "past range returns no slots",
+    "args": {
+      "title": "Coffee",
+      "after": "2026-09-29T09:00:00Z",
+      "before": "2026-09-29T11:00:00Z",
+      "time_zone": "UTC"
+    },
+    "now": "2026-09-30T00:00:00Z",
+    "busy": [],
+    "starts": [],
+    "count": 0
+  },
+  {
+    "name": "maximum range includes all days and counts before limit",
+    "args": {
+      "title": "Month",
+      "after": "2026-09-01T00:00:00Z",
+      "before": "2026-10-02T00:00:00Z",
+      "time_zone": "UTC",
+      "limit": 1
+    },
+    "now": "2026-09-01T00:00:00Z",
+    "busy": [],
+    "starts": [
+      "2026-09-01T09:00:00.000Z"
+    ],
+    "count": 1085
+  }
+]

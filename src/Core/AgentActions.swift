@@ -275,6 +275,7 @@ final class AgentActions {
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
         defer { if isAudio { audioCommand = false } }
         switch action {
+        case "calendar.propose": return try await CalendarProposal.readAndPropose(args)
         case "calendar.freebusy": return try await CalendarFreeBusyReader.read(args)
         case "tool.evaluate", "timer.start", "timer.status", "timer.pause", "timer.resume", "timer.cancel", "timer.sound", "reminder.create", "reminder.list", "reminder.cancel", "reminder.sound", "calendar.list":
             return try await AgentQuickTools.execute(action, args)

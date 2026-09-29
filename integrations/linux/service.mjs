@@ -15,6 +15,7 @@ import * as recording from './recording.mjs';
 import * as video from './video.mjs';
 import * as timers from './timers.mjs';
 import * as calendar from './calendar.mjs';
+import {propose} from './calendar-propose.mjs';
 import * as identity from './identity.mjs';
 import * as collab from './collab.mjs';
 import * as comparison from './compare.mjs';
@@ -25,15 +26,15 @@ import { processIdentity, workerAlive } from './process-identity.mjs';
 import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
-export const version='0.14.0';
-export const supported=new Set(['calendar.freebusy','app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','recording.polish','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound',...collab.actions,'machine.current']);
+export const version='0.15.0';
+export const supported=new Set(['calendar.propose','calendar.freebusy','app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','recording.polish','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound',...collab.actions,'machine.current']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function errorData(error) { return {...(error.alternative?{alternative:error.alternative}:{}),...(error.details&&typeof error.details==='object'?{details:error.details}:{}),code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
 export async function capabilities(name, offline=false) {
   if (name && !schemas.has(name)) fail('UNKNOWN_ACTION','Unknown action name.');
   const calendarStatus=await calendar.status();
-  const available=name=>supported.has(name) && (name!=='calendar.freebusy' || calendarStatus.configured);
+  const available=name=>supported.has(name) && (!['calendar.freebusy','calendar.propose'].includes(name) || calendarStatus.configured);
   const actions=catalog.actions.filter(a=>!name || a.name===name).map(a=>({...a,supported:available(a.name),platforms:supported.has(a.name)?['darwin','linux']:['darwin']}));
   const metadata={version,app_version:version,platform:'linux',source:offline?'bundled_cli':'linux_companion',live:!offline,verified_available:!offline,calendar:calendarStatus,config_path:configPath(),limitations:['X11 capture (Wayland via grim)','Markup takes explicit pixel geometry or on-screen text targets (target_text / target_region from Tesseract OCR); Live Text is Mac-only','Screen recording (recording.start) is video-only and records a display or region: no webcam, microphone, system audio or window_id. screenshot.capture accepts window_id, and myman demo (X11 only) records an app window. Meetings record microphone and computer audio with myman meeting start','Windows: X11, Hyprland (Omarchy) or Sway; clipboard: xclip or wl-clipboard','No native UI or live meeting notes; meeting transcripts are made on this computer with Whisper; dictation is saved from Voxtype after myman dictation connect']};
   return name ? {...actions[0],...metadata,grants:await grants()} : {...metadata,permissions:await grants(),actions};
@@ -62,7 +63,7 @@ export async function dispatch(name,args) {
 // Every action runs as the credential in MYMAN_AGENT_TOKEN (or the local
 // client). Grants and /etc policy come first; a credential only narrows them.
 async function admit(name) {
-  if (name==='calendar.freebusy') await calendar.configuration();
+  if (['calendar.freebusy','calendar.propose'].includes(name)) await calendar.configuration();
   const permissions=catalog.actions.find(a=>a.name===name).permissions;
   await authorize(permissions);
   identity.validate(await identity.authenticate(),permissions);
@@ -91,6 +92,7 @@ async function perform(name,args) {
   return result;
 }
 async function act(name,args) {
+  if (name==='calendar.propose') return propose(args);
   if (name==='calendar.freebusy') return calendar.freeBusy(args);
   if (name==='screens.list') { const {displays,...desktop}=await screens(); return {result:displays,...desktop}; }
   if (name==='screenshot.image') return new Brain(rootPath()).image({path:(await captureEntry(args.id)).path});

@@ -1,5 +1,5 @@
 {
-  "version": "0.13.0",
+  "version": "0.14.0",
   "actions": [
     {
       "name": "app.status",
@@ -4026,6 +4026,84 @@
       "destructive": false,
       "permissions": [
         "library"
+      ]
+    },
+    {
+      "name": "calendar.propose",
+      "description": "Dry run: read own-calendar busy intervals, return candidate slots and an unconfirmed event preview. Requires human-only calendar_read and calendar_propose grants; Mac also requires existing OS Calendar permission. Linux needs an owner-configured local ICS snapshot. No booking, invitations, Contacts or teammate availability.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Inclusive ISO 8601 instant with seconds and offset."
+          },
+          "before": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Exclusive ISO 8601 instant with seconds and offset; range at most 31 days."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "time_zone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "IANA zone or UTC for the 09:00\u201318:00 grid and preview."
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 480,
+            "description": "Elapsed minutes; defaults to 30."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Maximum returned slots; defaults to 5."
+          },
+          "guests": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "Display labels only. Never resolves contacts, checks guest availability or sends invitations."
+          },
+          "proposed_starts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Optional exact ISO instants with offsets, checked instead of the workday grid."
+          }
+        },
+        "required": [
+          "title",
+          "after",
+          "before",
+          "time_zone"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "calendar_read",
+        "calendar_propose"
       ]
     },
     {
