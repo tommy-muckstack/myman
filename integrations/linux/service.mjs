@@ -16,6 +16,7 @@ import * as video from './video.mjs';
 import * as timers from './timers.mjs';
 import * as calendar from './calendar.mjs';
 import {propose} from './calendar-propose.mjs';
+import * as people from './people.mjs';
 import * as identity from './identity.mjs';
 import * as collab from './collab.mjs';
 import * as comparison from './compare.mjs';
@@ -27,7 +28,7 @@ import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
 export const version='0.15.0';
-export const supported=new Set(['calendar.propose','calendar.freebusy','app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','recording.polish','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound',...collab.actions,'machine.current']);
+export const supported=new Set(['people.resolve','calendar.propose','calendar.freebusy','app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','recording.polish','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound',...collab.actions,'machine.current']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function errorData(error) { return {...(error.alternative?{alternative:error.alternative}:{}),...(error.details&&typeof error.details==='object'?{details:error.details}:{}),code:error.code || (error instanceof SyntaxError?'INVALID_ARGUMENTS':'INTERNAL_ERROR'),message:error.code?error.message:error instanceof SyntaxError?'Expected valid JSON.':'The local operation failed.'}; }
@@ -94,6 +95,7 @@ async function perform(name,args) {
 async function act(name,args) {
   if (name==='calendar.propose') return propose(args);
   if (name==='calendar.freebusy') return calendar.freeBusy(args);
+  if (name==='people.resolve') return people.resolve(args);
   if (name==='screens.list') { const {displays,...desktop}=await screens(); return {result:displays,...desktop}; }
   if (name==='screenshot.image') return new Brain(rootPath()).image({path:(await captureEntry(args.id)).path});
   if (name==='note.create') return saveNote(args);

@@ -299,3 +299,8 @@ Settings → Agents; `doctor` reports it. MCP exposes `myman_app_scheduling_pars
 There is no calendar/Contacts access, booking, invite sending or availability
 lookup. Linux/Omarchy returns `unsupported_on_platform`.
 [Full contract, model fallback and date conventions](scheduling-intent.md).
+## Resolve saved people
+
+`myman people resolve --names '["jilles","harshil"]' --limit 5 --json` invokes `people.resolve` / MCP `myman_app_people_resolve`. The new `people_read` grant and named credential scope start off and can be enabled only by the human. `doctor` reports the grant. Mac uses saved People and visible meeting-participant metadata; Linux/Omarchy uses the existing `people.md` export or returns `unsupported_on_platform` once authorized.
+
+Each input returns a status, candidate names and stored emails, source labels, total matches and a truncation flag. Present `ambiguous` or `needs_confirmation` results for human selection; ask for an address on `missing_email`. No guessed addresses, Contacts access, live calendar reads, booking or invitations. See [matching rules, limits and privacy](people-resolve.md).

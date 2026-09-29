@@ -1,6 +1,6 @@
 # Agent CLI parity
 
-Working baseline: 1.1.101 (113), plus the calendar proposal candidate (Brain companion 0.14.0, Linux/root plugin 0.15.0); the bundled action catalog now describes 128 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
+Working baseline: 1.1.102 (114), plus the calendar proposal candidate (Brain companion 0.14.0, Linux/root plugin 0.15.0); the bundled action catalog now describes 130 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
 
 ## Implementation plan
 
@@ -52,6 +52,7 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Theme rename / pin / dismiss / merge / membership | `theme rename/pin/unpin/dismiss/merge/add/remove` | Unsupported | Correction controls, never tasks/projects |
 | Tasks create / list / title / notes / due / done / delete | `task add/list/update/complete/reopen/delete` | Supported; Mac export format, version guard, delete needs `--confirm` | App DB then export; IDs returned |
 | People / vocabulary retrieval | `collect '{"kinds":["people","vocabulary"]}'` | Supported (existing exports) | Read-only; dictation vocabulary editing remains Settings UI |
+| Resolve saved names to email | `people resolve --names JSON [--limit N]`; MCP `myman_app_people_resolve` | Existing `people.md` export only; missing export returns `unsupported_on_platform` after grant checks | New default-off `people_read` grant and named scope. Mac also uses visible saved meeting participants; Linux skips that fallback to honor hidden people. No Contacts access, guessing, writes or invitations. [Contract](people-resolve.md) |
 | Font from screenshot / match / specimen / export / reopen | `font match/create/preview/file/open` | Unsupported | Limited bundled-style matching; glyph correction and installation remain human UI |
 | On-image translation | UI-only on macOS 15+ | Unsupported | Current Apple translation session is supplied by SwiftUI and may need a language-download consent sheet; no headless claim |
 | Privacy/search settings | `settings get/set` | Unsupported | Allowlisted automatic_themes, semantic_search, window_metadata, excluded_apps |

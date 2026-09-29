@@ -278,6 +278,13 @@ final class AgentActions {
         case "calendar.propose": return try await CalendarProposal.readAndPropose(args)
         case "calendar.freebusy": return try await CalendarFreeBusyReader.read(args)
         case "scheduling.parse": return try await AgentScheduling.parse(args)
+        case "people.resolve":
+            let names = args["names"] as! [String], limit = args["limit"] as? Int ?? 5
+            try PeopleResolution.validate(names: names, limit: limit)
+            let matches = try await Task.detached(priority: .userInitiated) {
+                try PeopleResolution.resolve(names: names, records: People.resolutionRecords(), limit: limit)
+            }.value
+            return ["results": try WorkflowValues.json(matches), "source": "local_people", "contacts_accessed": false, "side_effects": false] as [String: Any]
         case "tool.evaluate", "timer.start", "timer.status", "timer.pause", "timer.resume", "timer.cancel", "timer.sound", "reminder.create", "reminder.list", "reminder.cancel", "reminder.sound", "calendar.list":
             return try await AgentQuickTools.execute(action, args)
         case "workflow.templates": return ["templates": AgentWorkflowTemplates.catalog, "host_sharing_verified": false]

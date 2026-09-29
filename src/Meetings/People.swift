@@ -20,6 +20,46 @@ struct Person: Identifiable, Codable, FetchableRecord, PersistableRecord {
 }
 
 enum People {
+    /// A single read transaction over saved People and visible meeting metadata.
+    /// Do not call currentEventParticipants here: resolution never opens EventKit
+    /// or Contacts, even when the OS has previously granted access.
+    static func resolutionRecords(database: DatabaseQueue = Database.shared) throws -> [PeopleResolution.Record] {
+        try database.read { db in
+            let people = try Person.limit(PeopleResolution.maximumRecords + 1).fetchAll(db)
+            guard people.count <= PeopleResolution.maximumRecords else { throw AgentError("PEOPLE_LIMIT_EXCEEDED", "Too many saved people; no partial resolution was returned.") }
+            let hiddenNames = Set(people.filter(\.hidden).map { PeopleResolution.normalized($0.name) })
+            let hiddenEmails = Set(people.filter(\.hidden).compactMap { PeopleResolution.email($0.email) })
+            func allowed(_ name: String, _ email: String?) -> Bool {
+                !hiddenNames.contains(PeopleResolution.normalized(name)) && !hiddenEmails.contains(PeopleResolution.email(email) ?? "")
+            }
+            var records = people.filter { !$0.hidden && allowed($0.name, $0.email) }.map {
+                PeopleResolution.Record(name: $0.name, email: $0.email, source: "people")
+            }
+            // Fetch only bounded participant metadata, never transcripts/audio.
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT CASE WHEN length(CAST(m.participantsJSON AS BLOB)) <= 262144
+                  THEN m.participantsJSON ELSE NULL END AS participantsJSON
+                FROM meeting m JOIN captureItem c ON c.sourceID=m.id AND c.kind='meeting'
+                WHERE c.excluded=0 ORDER BY m.id LIMIT 10001
+                """)
+            guard rows.count <= 10_000 else { throw AgentError("PEOPLE_LIMIT_EXCEEDED", "Too many meeting records; no partial resolution was returned.") }
+            var bytes = 0
+            for row in rows {
+                guard let json: String = row["participantsJSON"] else { throw AgentError("PEOPLE_LIMIT_EXCEEDED", "Meeting participant metadata exceeds the read limit.") }
+                bytes += json.utf8.count
+                guard bytes <= 8 * 1024 * 1024 else { throw AgentError("PEOPLE_LIMIT_EXCEEDED", "Meeting participant metadata exceeds the read limit.") }
+                guard let participants = try? JSONDecoder().decode([MeetingParticipant].self, from: Data(json.utf8)) else {
+                    throw AgentError("PEOPLE_SOURCE_INVALID", "Saved meeting participants are invalid; no partial resolution was returned.")
+                }
+                records += participants.filter { !$0.isOwner && allowed($0.name, $0.email) }.map {
+                    PeopleResolution.Record(name: $0.name, email: $0.email, source: "meeting_participants")
+                }
+                guard records.count <= PeopleResolution.maximumRecords else { throw AgentError("PEOPLE_LIMIT_EXCEEDED", "Too many saved identities; no partial resolution was returned.") }
+            }
+            return records
+        }
+    }
+
     /// Learns only names a person explicitly placed in a transcript speaker
     /// label (for example `**Snehith** [12:04]:`). This is per-machine data;
     /// it never changes the bundled vocabulary for other My Man users.

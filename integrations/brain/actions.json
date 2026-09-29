@@ -4324,6 +4324,42 @@
       "permissions": [
         "scheduling_parse"
       ]
+    },
+    {
+      "name": "people.resolve",
+      "description": "Resolve names to saved emails in local People and visible meeting participants. Ambiguous or prefix matches require human selection; never guesses emails, queries Contacts, or sends invitations. Linux uses the existing people.md export only. Requires the human-controlled people_read grant.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "description": "Names or exact email addresses to look up in order."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 5,
+            "description": "Maximum candidates per input; ambiguity uses the full match count."
+          }
+        },
+        "required": [
+          "names"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "people_read"
+      ]
     }
   ]
 }
