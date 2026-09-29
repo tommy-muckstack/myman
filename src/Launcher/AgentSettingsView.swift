@@ -8,6 +8,7 @@ struct AgentSettingsView: View {
     @AppStorage("agentLibraryEnabled") private var library = false
     @AppStorage("agentSharingEnabled") private var sharing = false
     @AppStorage("agentControlEnabled") private var control = false
+    @AppStorage("agentCalendarReadEnabled") private var calendarRead = false
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("Your tools, on your terms.").font(MM.Fonts.title)
@@ -15,6 +16,8 @@ struct AgentSettingsView: View {
                 .foregroundStyle(MM.Colors.textSecondary)
             Toggle("Allow local app commands", isOn: $enabled).clickable()
             VStack(alignment: .leading, spacing: 14) {
+                Toggle("Read calendar free/busy", isOn: $calendarRead).clickable()
+                    .accessibilityHint("Also requires Calendar access granted by you in macOS. Does not book meetings or send invitations.")
                 Toggle("Capture screenshots without the picker", isOn: $capture).clickable()
                 Toggle("Edit screenshots and create fonts", isOn: $markup).clickable()
                 Toggle("Control meetings, dictation and screen recordings", isOn: $recording).clickable()

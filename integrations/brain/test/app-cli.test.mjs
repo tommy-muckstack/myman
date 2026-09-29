@@ -130,3 +130,11 @@ test('workflow CLI preserves three-part routes, integer revisions and object reg
   await assert.rejects(plan(['capture','scroll','start','--region','not-json']));
   await assert.rejects(plan(['capture','scroll','stop','extra','--session-id','fixture']));
 });
+
+test('calendar free routes to the strict read-only action and independent grant',async()=>{
+ const p=await plan(['calendar','free','--after','2026-09-29T00:00:00Z','--before','2026-09-30T00:00:00Z','--json']);
+ assert.equal(p.name,'calendar.freebusy');assert.deepEqual(p.args,{after:'2026-09-29T00:00:00Z',before:'2026-09-30T00:00:00Z'});
+ const action=describe(p.name);assert.deepEqual(action.permissions,['calendar_read']);assert.equal(action.readOnly,true);assert.equal(action.destructive,false);
+ const validate=ajv.compile(action.inputSchema);assert.ok(validate(p.args));assert.equal(validate({...p.args,path:'/tmp/calendar.ics'}),false);
+ await assert.rejects(plan(['calendar','free','--path','/tmp/calendar.ics']));
+});

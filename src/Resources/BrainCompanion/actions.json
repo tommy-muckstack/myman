@@ -1,5 +1,5 @@
 {
-  "version": "0.12.0",
+  "version": "0.13.0",
   "actions": [
     {
       "name": "app.status",
@@ -4026,6 +4026,37 @@
       "destructive": false,
       "permissions": [
         "library"
+      ]
+    },
+    {
+      "name": "calendar.freebusy",
+      "description": "Read merged busy intervals for this user only; no titles, attendees, writes or teammate availability. Requires the human-controlled calendar_read grant and OS Calendar access on Mac. Linux reads the owner-configured local ICS snapshot, otherwise unsupported_on_platform.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Inclusive ISO 8601 instant with seconds and offset."
+          },
+          "before": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Exclusive ISO 8601 instant with seconds and offset; range at most 31 days."
+          }
+        },
+        "required": [
+          "after",
+          "before"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "calendar_read"
       ]
     },
     {

@@ -20,7 +20,7 @@ const pairs = {
   'tool evaluate':'tool.evaluate', 'timer start':'timer.start', 'timer sound':'timer.sound', 'timer status':'timer.status',
   'timer pause':'timer.pause', 'timer resume':'timer.resume', 'timer cancel':'timer.cancel',
   'reminder create':'reminder.create', 'reminder sound':'reminder.sound', 'reminder list':'reminder.list', 'reminder cancel':'reminder.cancel',
-  'calendar list':'calendar.list',
+  'calendar list':'calendar.list', 'calendar free':'calendar.freebusy',
   'workflow templates':'workflow.templates',
   'dictation history':'dictation.history',
   'dictation correction':'dictation.correction',
@@ -76,6 +76,7 @@ timer start --seconds 600; timer status|pause|resume|cancel (--session-id for co
 reminder create --seconds 600 --message "Take pizza out"; reminder list|cancel
 timer sound --session-id ID --enabled off; reminder sound --id ID --enabled off
 tool evaluate --input "8am in Iceland"; calendar list --after ISO --before ISO
+calendar free --after ISO --before ISO --json (own busy blocks; calendar_read grant)
 screenshot --mode agent --display main --region x,y,w,h --wait --json
 annotate --id ID --ops-file ops.json [--preview|--dry-run] [--clipboard] --json
 record start|status|result|pause|resume|stop|cancel|frames|export|polish  meeting start|status|stop|cancel|rename|notes

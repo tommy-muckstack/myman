@@ -41,6 +41,10 @@ package() {
   for name in cli.mjs app-server.mjs app-server.mjs.LEGAL.txt worker.mjs LICENSES.txt; do
     install -m644 "integrations/linux/bundle/${name}" "${lib}/${name}"
   done
+  # The pinned released archive predates free/busy; newer archives include its worker.
+  if [[ -f integrations/linux/bundle/calendar-worker.mjs ]]; then
+    install -m644 integrations/linux/bundle/calendar-worker.mjs "${lib}/calendar-worker.mjs"
+  fi
   install -m644 src/Resources/BrainCompanion/cli.mjs "${lib}/brain-cli.mjs"
   install -m644 src/Resources/BrainCompanion/server.mjs "${lib}/server.mjs"
   install -m644 src/Resources/BrainCompanion/LICENSES.txt "${lib}/BRAIN-LICENSES.txt"

@@ -1,6 +1,6 @@
 # Linux (agents)
 
-MyMan's Linux companion runs locally on Ubuntu/X11 (including Xvfb) and Omarchy/Arch with Hyprland/Wayland, using Node.js 22+. It captures screenshots, annotates PNGs, and creates, edits, searches, pins, hides and deletes Markdown notes and captures in a local MyManBrain. It is not a Swift UI port. It uses no cloud services, model downloads or API keys. Existing macOS executables and committed Brain bundles are unchanged.
+MyMan's Linux companion runs locally on Ubuntu/X11 (including Xvfb) and Omarchy/Arch with Hyprland/Wayland, using Node.js 22+. It captures screenshots, annotates PNGs, and creates, edits, searches, pins, hides and deletes Markdown notes and captures in a local MyManBrain. It is not a Swift UI port. It uses no cloud services, model downloads or API keys. The 0.14.0 candidate adds local ICS free/busy under a new default-off grant.
 
 ## Install
 
@@ -86,7 +86,7 @@ The installer creates `${XDG_CONFIG_HOME:-~/.config}/myman/agents.json` with all
 }
 ```
 
-The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. The `recording` grant enables video-only screen recording. The `control` grant (off by default) lets `myman demo` start an app and drive the mouse and keyboard; recording alone never does. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
+The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. The `recording` grant enables video-only screen recording. The `control` grant (off by default) lets `myman demo` start an app and drive the mouse and keyboard; recording alone never does. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Named credentials and machine checks are available through the human-managed `myman agents` flow described below.
 
 ### Optional administrator ceiling
 
@@ -102,6 +102,14 @@ sudo install -o root -g root -m 0644 system-agents.json /etc/myman/agents.json
 The installer does not run these commands, create the system policy, or enable any grants. The file and its parent directories must be root-owned and not writable by group or others. This prevents an unprivileged agent from increasing grants **through the trusted companion's configuration**. It does not prevent a same-user shell from replacing user-owned executables, editing job receipts, changing its environment, or bypassing MyMan to access the desktop directly. Keep runtime code outside Brain and restrict agent tools/accounts if you need an OS-enforced boundary; agents with sudo are outside this protection.
 
 ## CLI contract
+
+### Calendar free/busy
+
+`myman calendar free --after 2026-09-29T00:00:00-04:00 --before 2026-09-30T00:00:00-04:00 --json` and MCP `myman_app_calendar_freebusy` return merged busy intervals from a local ICS snapshot, without titles or attendees. It needs no display server and works on Omarchy. Without an owner-configured source it returns `unsupported_on_platform`.
+
+The human creates `calendar.json` next to `agents.json` with `{"version":1,"ics_path":"/absolute/path/to/calendar.ics","time_zone":"America/New_York"}` and optionally `owner_email` for declined invitations. The directory is mode `700`; config and ICS are owned, unlinked regular files with mode `600`. The human separately enables `enabled` and the new `calendar_read` grant in `agents.json` (and the root ceiling if present); named credentials also need this scope. Existing grants remain unchanged, omitted grants are off, and CLI/MCP cannot grant access or override the ICS path. `doctor.calendar` checks configuration without reading events. No live sync, online accounts or teammate availability is claimed. See [JSON contract, supported ICS forms and bounded parsing](calendar-freebusy.md).
+
+### Commands and output
 
 The companion reuses the parser, JSON schemas, Brain reader, job unwrapping and exit-code rules from [agent-cli.md](agent-cli.md). Each JSON command writes exactly one object to stdout. Success exits 0; disabled grants 4, invalid arguments 5, unsupported/setup failures 6, timeout 7. Unsupported actions return `{"ok":false,"error":{"code":"unsupported_on_platform","message":"…"}}`.
 
@@ -371,7 +379,7 @@ myman agents revoke ID
 myman agents require off   # let agents without a credential work again
 ```
 
-Scopes are `capture`, `markup`, `recording`, `library`, `microphone` and `control`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
+Scopes are `capture`, `markup`, `recording`, `library`, `microphone`, `control` and `calendar_read`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
 
 The agent puts its token in `MYMAN_AGENT_TOKEN` in its host environment (never in a prompt). Then:
 

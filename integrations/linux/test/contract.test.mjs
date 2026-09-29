@@ -50,7 +50,7 @@ for(const entry of entries) {
   const f=await fixture(t);
   const caps=await ok(entry,['actions'],f.env);
   assert.equal(caps.platform,'linux');assert.equal(caps.live,true);assert.equal(caps.actions.length,catalog.actions.length);
-  assert.deepEqual(caps.permissions,{enabled:false,capture:false,markup:false,recording:false,library:false,microphone:false,control:false});
+  assert.deepEqual(caps.permissions,{enabled:false,capture:false,markup:false,recording:false,library:false,microphone:false,control:false,calendar_read:false});
   assert.equal(caps.actions.find(a=>a.name==='meeting.start').supported,false);
   assert.equal(caps.actions.find(a=>a.name==='screenshot.capture').supported,true);
   assert.equal((await ok(entry,['actions','--offline'],f.env)).live,false);
@@ -166,6 +166,12 @@ test('Linux installer is idempotent, preserves grants, and installed bundles run
  const caps=await ok(cliPath,['actions'],env);assert.equal(caps.permissions.library,true);assert.equal(caps.permissions.capture,false);
  const note=await ok(cliPath,['note','create','--body','Installed package works'],env);assert.match(note.id,/^note-/);
  await ok(path.join(env.MYMAN_INSTALL_PREFIX,'share/myman/brain-cli.mjs'),['search','--query','Installed'],env);
+ const ics=path.join(f.base,'calendar.ics');
+ await writeFile(ics,'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:installed\r\nDTSTART:20260929T100000Z\r\nDTEND:20260929T110000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n',{mode:0o600});
+ await writeFile(path.join(f.env.XDG_CONFIG_HOME,'myman/calendar.json'),JSON.stringify({version:1,ics_path:ics,time_zone:'UTC'}),{mode:0o600});
+ await f.grants({enabled:true,calendar_read:true});
+ const free=await ok(cliPath,['calendar','free','--after','2026-09-29T00:00:00Z','--before','2026-09-30T00:00:00Z'],env);
+ assert.deepEqual(free.busy,[{start:'2026-09-29T10:00:00.000Z',end:'2026-09-29T11:00:00.000Z'}]);
  await assert.rejects(stat(path.join(f.root,'tools')), {code:'ENOENT'});
  await assert.rejects(exec('bash',[path.join(repo,'scripts/install-linux.sh')],{env:{...env,MYMAN_INSTALL_PREFIX:path.join(f.root,'unsafe-install')}}),/outside MyManBrain/);
 });

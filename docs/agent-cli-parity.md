@@ -1,6 +1,6 @@
 # Agent CLI parity
 
-Working baseline: 1.1.101 (113), with the Linux companion at 0.13.0; the bundled action catalog now describes 126 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
+Working baseline: 1.1.101 (113), plus the calendar free/busy candidate (Brain companion 0.13.0, Linux/root plugin 0.14.0); the bundled action catalog now describes 127 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
 
 ## Implementation plan
 
@@ -14,7 +14,7 @@ The working matrix and verification evidence are completed alongside implementat
 
 ## Linux companion
 
-Linux 0.13.0 is a separate Node 22+/X11/Wayland capture and library companion; the Swift app is unchanged. See [installation and contract](linux-agents.md). “Unsupported” below means a structured `unsupported_on_platform` error, including when the corresponding MCP tool is called. Existing Brain export retrieval is portable. `actions` marks platform support independently of owner grants.
+Linux 0.14.0 is a separate Node 22+/X11/Wayland companion, now including owner-configured local ICS free/busy. See [installation and contract](linux-agents.md). “Unsupported” below means a structured `unsupported_on_platform` error, including when the corresponding MCP tool is called. Existing Brain export retrieval is portable. `actions` marks platform support independently of owner grants; free/busy also reports whether an ICS source is configured.
 
 ## Capability matrix
 
@@ -63,6 +63,7 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Hotkey rebinding / audio model selection / destination folder / update preferences | Human-only Settings | No UI; Brain and XDG paths via environment | Machine setup; no unrestricted preference editor |
 | Permissions / setup | `doctor` | Supported; passive doctor | Passive, no OS prompts |
 | Calendar agenda | `calendar list --after ISO --before ISO` | Unsupported | Existing Calendar permission; bounded 31-day read |
+| Own calendar free/busy | `calendar free --after ISO --before ISO`; MCP `myman_app_calendar_freebusy` | Local ICS when human-configured; otherwise `unsupported_on_platform`, including Omarchy | New default-off `calendar_read` grant and named scope; Mac also needs human OS Calendar access. Merged intervals only, at most 31 elapsed days; teammates unknown, no writes/invites. [Contract and limits](calendar-freebusy.md) |
 | Quick tools / calculator / time zones / palettes | `tool evaluate --input TEXT` | Unsupported | Structured local results; no side effects |
 | Reminders | `reminder create/list/cancel/sound` | Supported (library grant); `seconds` or ISO `at` with offset; overdue reminders are delivered at the next MyMan call | Saved reminders and notifications |
 | Timers | `timer start/status/pause/resume/cancel/sound` | Supported (library grant); desktop notice and optional sound when done, no on-screen widget; systemd user timer or detached waiter | Visible widget, session IDs, creating-agent controls |

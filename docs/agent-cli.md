@@ -267,9 +267,12 @@ myman reminder create --seconds 600 --message "Take pizza out" --json
 myman tool evaluate --input "8am in Iceland" --json
 myman tool evaluate --input "#fffffd" --json
 myman calendar list --after 2026-09-23T00:00:00-04:00 --before 2026-09-24T00:00:00-04:00 --json
+myman calendar free --after 2026-09-29T00:00:00-04:00 --before 2026-09-30T00:00:00-04:00 --json
 ```
 
-Timers and reminders appear in the same hover-expanding widget as human-created ones. Keep the returned timer `session_id` for `timer pause|resume|cancel --session-id ID`; inspect `timer status` first. Several timers can run at once; each `timer start` returns its own `session_id`, and `timer status` lists them all under `timers`. Use `reminder list` and `reminder cancel --id ID`; `reminder create --at ISO --message TEXT` accepts an absolute timestamp instead of seconds. Controls belong to the creating agent; human controls remain available. Existing library grants apply to timer/reminder/calendar actions. Calendar also requires human-granted macOS access.
+Timers and reminders appear in the same hover-expanding widget as human-created ones. Keep the returned timer `session_id` for `timer pause|resume|cancel --session-id ID`; inspect `timer status` first. Several timers can run at once; each `timer start` returns its own `session_id`, and `timer status` lists them all under `timers`. Use `reminder list` and `reminder cancel --id ID`; `reminder create --at ISO --message TEXT` accepts an absolute timestamp instead of seconds. Controls belong to the creating agent; human controls remain available. Existing library grants apply to timer/reminder actions and `calendar.list`. Calendar also requires human-granted macOS access.
+
+`calendar free` invokes `calendar.freebusy` (MCP `myman_app_calendar_freebusy`) under a separate, default-off `calendar_read` grant and named-agent scope. It returns merged busy intervals without event metadata; it never books or invites. Linux/Omarchy reads an owner-configured local ICS snapshot or returns `unsupported_on_platform`. Both bounds require explicit offsets and a positive range of at most 31 elapsed days. See [free/busy permissions, JSON and ICS configuration](calendar-freebusy.md).
 
 Timers need My Man to stay open. Reminder results report `notification_scheduled` and `requires_app_open`; do not promise delivery while closed unless scheduling succeeded. `tool evaluate` is side-effect free and returns structured arithmetic, conversions, time zones, four-color palettes, checklists, bill splits, and timer/reminder previews. Evaluation never starts a timer or saves a note. Existing note/task/library/capture/recording commands remain supported. Keep request/job IDs and never replay interrupted mutations automatically.
 

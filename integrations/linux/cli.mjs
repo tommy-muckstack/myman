@@ -18,6 +18,7 @@ import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs'
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
 myman doctor --json
+myman calendar free --after ISO --before ISO --json (calendar_read grant + owner-configured calendar.json ICS snapshot)
 myman screenshot [--display main|INDEX|id:INDEX] [--region x,y,w,h] [--window-id ID] --json
 myman annotate --id SHOT-ID --ops-file ops.json [--dry-run|--preview] --json
 myman capture-markup --mode agent [--region x,y,w,h] --ops-file ops.json --json (capture + markup grants; saves only the marked-up image)
