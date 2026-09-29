@@ -10,6 +10,7 @@ struct AgentSettingsView: View {
     @AppStorage("agentControlEnabled") private var control = false
     @AppStorage("agentCalendarReadEnabled") private var calendarRead = false
     @AppStorage("agentCalendarProposeEnabled") private var calendarPropose = false
+    @AppStorage("agentSchedulingParseEnabled") private var schedulingParse = false
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("Your tools, on your terms.").font(MM.Fonts.title)
@@ -21,6 +22,8 @@ struct AgentSettingsView: View {
                     .accessibilityHint("Also requires calendar read access. Suggests times without booking or inviting guests.")
                 Toggle("Read calendar free/busy", isOn: $calendarRead).clickable()
                     .accessibilityHint("Also requires Calendar access granted by you in macOS. Does not book meetings or send invitations.")
+                Toggle("Parse meeting requests without accessing calendars", isOn: $schedulingParse).clickable()
+                    .accessibilityHint("Only interprets supplied text. Does not read calendars, book events or invite guests.")
                 Toggle("Capture screenshots without the picker", isOn: $capture).clickable()
                 Toggle("Edit screenshots and create fonts", isOn: $markup).clickable()
                 Toggle("Control meetings, dictation and screen recordings", isOn: $recording).clickable()

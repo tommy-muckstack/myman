@@ -42,3 +42,13 @@ Key facts:
 - [Using My Man (people)](https://github.com/tommy-muckstack/myman/blob/main/docs/using-myman.md)
 - [Contributing](https://github.com/tommy-muckstack/myman/blob/main/CONTRIBUTING.md) and [AGENTS.md](https://github.com/tommy-muckstack/myman/blob/main/AGENTS.md) for coding agents
 - [Security policy](https://github.com/tommy-muckstack/myman/blob/main/SECURITY.md)
+
+## Meeting scheduling intent (step 1, candidate)
+
+- CLI: `myman scheduling parse --input "Coffee with Developer Friday at 10am for 30 min" --json`.
+- MCP: `myman_app_scheduling_parse`; action: `scheduling.parse`. Optional arguments: `reference` (ISO instant with offset), `time_zone` (IANA), `use_model` (boolean; CLI `--use-model off`).
+- Requires the new default-off `scheduling_parse` grant enabled by the owner in Settings → Agents; named agent scopes must also allow it. Agents cannot enable grants. `doctor` reports the grant.
+- Returns title, literal people mentions, day, wall time, duration_minutes, missing fields and issues. Unspecified values stay null; no defaults or email resolution. `needs_clarification` is not booking authorization.
+- Pure local rules, optional on-device Foundation Models entity extraction on supported macOS 26+; never reads calendars/Contacts or writes events, sends invites or books. Future booking must show a preview and require a human pressing Book.
+- Linux/Omarchy CLI and MCP expose the schema but return `unsupported_on_platform` for this action in step 1.
+- Details: https://github.com/tommy-muckstack/myman/blob/main/docs/scheduling-intent.md

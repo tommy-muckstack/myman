@@ -51,6 +51,10 @@ test(`app MCP discovers strict action tools, preserves permission errors and req
   const calendar=tools.find(x=>x.name==='myman_app_calendar_freebusy');assert.equal(calendar.annotations.readOnlyHint,true);assert.match(calendar.description,/calendar_read/);
   const calendarDenied=await client.callTool({name:calendar.name,arguments:{after:'2026-09-29T00:00:00Z',before:'2026-09-30T00:00:00Z'}});
   assert.equal(calendarDenied.isError,true);assert.equal(calendarDenied.structuredContent.error.code,'AGENT_DISABLED');
+  const parser=tools.find(x=>x.name==='myman_app_scheduling_parse');assert.equal(parser.annotations.readOnlyHint,true);assert.match(parser.description,/scheduling_parse/);
+  const parseDenied=await client.callTool({name:parser.name,arguments:{input:'meeting with Alex',use_model:false}});
+  assert.equal(parseDenied.isError,true);assert.equal(parseDenied.structuredContent.error.code,'AGENT_DISABLED');
+  assert.deepEqual(calls.filter(x=>x.method==='invoke').at(-1).arguments,{input:'meeting with Alex',use_model:false});
   const before=calls.length;
   const invalid=await client.callTool({name:'myman_app_note_create',arguments:{body:'Synthetic',unrecognized:true}});
   assert.equal(invalid.isError,true);assert.equal(calls.length,before,'Invalid arguments never reach the app');

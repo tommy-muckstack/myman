@@ -277,6 +277,7 @@ final class AgentActions {
         switch action {
         case "calendar.propose": return try await CalendarProposal.readAndPropose(args)
         case "calendar.freebusy": return try await CalendarFreeBusyReader.read(args)
+        case "scheduling.parse": return try await AgentScheduling.parse(args)
         case "tool.evaluate", "timer.start", "timer.status", "timer.pause", "timer.resume", "timer.cancel", "timer.sound", "reminder.create", "reminder.list", "reminder.cancel", "reminder.sound", "calendar.list":
             return try await AgentQuickTools.execute(action, args)
         case "workflow.templates": return ["templates": AgentWorkflowTemplates.catalog, "host_sharing_verified": false]

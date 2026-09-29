@@ -58,7 +58,7 @@ for(const entry of entries) {
   for(const args of [['screenshot'],['note','create','--body','private'],['annotate','--id','shot-x','--ops','[]'],['record','start'],['capture','ocr','--id','shot-x'],['windows','list'],['clipboard','read','--format','text']]) {
    const r=await cli(entry,args,f.env);assert.equal(r.code,4);assert.equal(r.data.error.code,'AGENT_DISABLED');
   }
-  for(const args of [['meeting','live'],['dictation','start'],['live-text'],['open']]) {
+  for(const args of [['meeting','live'],['dictation','start'],['live-text'],['open'],['scheduling','parse','--input','meeting with Alex']]) {
    const r=await cli(entry,args,f.env);assert.equal(r.code,6);assert.equal(r.data.error.code,'unsupported_on_platform');
   }
   const invalid=await cli(entry,['annotate','--id','a','--ops','not-json'],f.env);assert.equal(invalid.code,5);assert.equal(invalid.data.error.code,'INVALID_ARGUMENTS');
@@ -153,6 +153,8 @@ for(const entry of ['../app-server.mjs','../bundle/app-server.mjs',...(process.p
  const list=await client.listTools();assert.equal(list.tools.length,catalog.actions.length+3);
  for(const action of catalog.actions)assert.ok(list.tools.find(t=>t.name==='myman_app_'+action.name.replaceAll('.','_')));
  const caps=(await client.callTool({name:'myman_app_capabilities',arguments:{}})).structuredContent;assert.equal(caps.platform,'linux');assert.equal(caps.permissions.enabled,false);
+ const parseAction=caps.actions.find(a=>a.name==='scheduling.parse');assert.equal(parseAction.supported,false);assert.deepEqual(parseAction.permissions,['scheduling_parse']);
+ const parseResult=await client.callTool({name:'myman_app_scheduling_parse',arguments:{input:'meeting with Alex'}});assert.equal(parseResult.isError,true);assert.equal(parseResult.structuredContent.error.code,'unsupported_on_platform');
  const blocked=await client.callTool({name:'myman_app_screenshot_capture',arguments:{}});assert.equal(blocked.isError,true);assert.equal(blocked.structuredContent.error.code,'AGENT_DISABLED');
  const unsupported=await client.callTool({name:'myman_app_dictation_start',arguments:{}});assert.equal(unsupported.isError,true);assert.equal(unsupported.structuredContent.error.code,'unsupported_on_platform');
  await f.grants({enabled:true,library:true});
@@ -193,4 +195,21 @@ test('maximum-size UTF-8 note input remains readable from its durable receipt',a
  const [note,retry]=await Promise.all([ok(entries[1],args,f.env),ok(entries[1],args,f.env)]);assert.equal(note.id,retry.id);assert.equal(note.body,body);
  const receipt=await ok(entries[1],['job',note.job_id],f.env);assert.equal(receipt.job.state,'succeeded');assert.equal(receipt.job.result.id,note.id);
  const bad=await cli(entries[1],['note','create','--body','relative root'],{...f.env,MYMAN_BRAIN_ROOT:'relative'});assert.equal(bad.data.error.code,'INVALID_ROOT');
+});
+
+for(const entry of entries) test(`${entry}: scheduling parse is explicitly unsupported`, async t => {
+ const f=await fixture(t);
+ const result=await cli(entry,['scheduling','parse','--input','meeting with jilles and harshil'],f.env);
+ assert.equal(result.code,6);assert.equal(result.data.error.code,'unsupported_on_platform');
+ const action=await ok(entry,['actions','scheduling.parse'],f.env);
+ assert.equal(action.supported,false);assert.deepEqual(action.permissions,['scheduling_parse']);
+});
+for(const entry of ['../app-server.mjs','../bundle/app-server.mjs']) test(`${entry}: scheduling parse MCP is explicitly unsupported`,async t=>{
+ const f=await fixture(t),client=new Client({name:'scheduler-fixture',version:'1'});
+ await client.connect(new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL(entry,import.meta.url))],env:f.env,stderr:'pipe'}));
+ t.after(()=>client.close());
+ const tool=(await client.listTools()).tools.find(tool=>tool.name==='myman_app_scheduling_parse');
+ assert.equal(tool.annotations.readOnlyHint,true);assert.match(tool.description,/scheduling_parse/);
+ const result=await client.callTool({name:tool.name,arguments:{input:'meeting with jilles and harshil'}});
+ assert.equal(result.isError,true);assert.equal(result.structuredContent.error.code,'unsupported_on_platform');
 });

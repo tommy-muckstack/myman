@@ -289,3 +289,13 @@ myman reminder sound --id ID --enabled on --json
 ```
 
 Both status/list results include `sound_enabled`. Timer controls require the current session ID and creating agent; reminder controls require the creating agent. Human widget controls remain available. Reminder mute is persisted and updates scheduled notification sound. `tool evaluate` recognizes message-bearing timers and spoken numbers but remains side-effect free; agents must explicitly call the indicated creation action. Adaptive voice auto-submit is a human launcher behavior.
+
+## Parse a meeting request (step 1)
+
+`myman scheduling parse --input "Coffee with Developer Friday at 10am for 30 min" --json`
+returns an unsaved intent with literal people, date/time/duration and missing or
+ambiguous fields. The owner must enable the separate `scheduling_parse` grant in
+Settings → Agents; `doctor` reports it. MCP exposes `myman_app_scheduling_parse`.
+There is no calendar/Contacts access, booking, invite sending or availability
+lookup. Linux/Omarchy returns `unsupported_on_platform`.
+[Full contract, model fallback and date conventions](scheduling-intent.md).
