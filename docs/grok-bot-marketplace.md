@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-29: root/Linux **0.14.0**, Brain companion **0.13.0** add `people.resolve`, `myman people resolve` and MCP lookup of saved names/emails behind a new default-off `people_read` grant. Mac uses People and visible meeting participants; Linux/Omarchy uses the existing People export. Ambiguity stays explicit; no Contacts, live-calendar lookup, guessed emails or invitations. Grok skill remains **0.12.0**. Synthetic native and CLI/MCP checks cover matching and permissions; physical Omarchy and marketplace host activation remain unverified. Prepared, not submitted; the original application remains pending.
+
 > Candidate update, 2026-09-26: root plugin and Linux companion **0.13.0** add local Ubuntu/X11 and Omarchy/Hyprland capture, annotations, notes, portable Brain retrieval and permission-gated MCP. The unchanged Mac companion and GrokBot skill-only package remain **0.12.0**. Prepared, not submitted or marketplace-host-verified; the original Cursor application remains pending.
 
 > Candidate update, 2026-09-23: root/Grok/companion **0.12.0** adds owned timer/reminder sound controls and sound state. Prepared, not submitted or host-verified. The original Cursor application remains pending; notify Cursor instead of filing another application.
@@ -15,7 +17,7 @@ For each agent-package update, follow the [Cursor marketplace release policy](cu
 
 ## Two packages, distinct execution locations
 
-- Repository root `plugin.json`, `mcp.json`, `skills/myman-brain/`: portable Agent Plugin for a client running on the Mac or Linux host containing the Brain. Root 0.13.0 dispatches to the matching app MCP; Linux has the documented capture/library subset with all grants initially off. MCP includes separate read-only retrieval and permission-controlled app-action servers in committed standalone bundles, so installation needs Node.js 22+ but no npm install.
+- Repository root `plugin.json`, `mcp.json`, `skills/myman-brain/`: portable Agent Plugin for a client running on the Mac or Linux host containing the Brain. Root 0.14.0 dispatches to the matching app MCP; Linux has the documented capture/library subset with all grants initially off. MCP includes separate read-only retrieval and permission-controlled app-action servers in committed standalone bundles, so installation needs Node.js 22+ but no npm install.
 - `integrations/grok-bot/`: a skill-only Agent Plugin for GrokBot. It deliberately has no MCP server to start on the cloud computer. Its skill runs the installed MyMan CLI through approved local-computer execution on the registered Mac.
 
 Cursor explicitly accepts the portable root Agent Plugins manifest, so `.cursor-plugin/plugin.json` is unnecessary for this single-plugin submission. Keeping one manifest avoids divergent metadata and MCP variable conventions. [Cursor supported formats and submission checklist](https://cursor.com/docs/reference/plugins).
@@ -121,3 +123,5 @@ All 101 companion tests passed, including source/bundled MCP discovery and Unix 
 ## 0.12.0 local verification — September 23, 2026
 
 All 105 companion tests passed, including sound-control CLI/schema discovery and Unix transport; bundle freshness passed after a clean dependency install. The 422-test native suite passed (29 optional tests skipped); all 27 focused native checks passed again after making the launcher standard. Native UI tests verified the spoken 30-second pizza reminder creates once, closes the launcher, and leaves the expandable widget visible; inline Quick Tools opens Calculator without another window. Sound controls cover ownership, persistence, pause/resume, and pending notification permission. Synthetic screenshots are in `docs/verification/*1.1.96.png`. Root, Grok, and companion candidates are 0.12.0; no live GrokBot host activation or marketplace submission is claimed.
+
+Marketplace next step for Tommy after review: authorize an update email to `marketplace-publishing@cursor.com` with `@muckstack`, repo `https://github.com/tommy-muckstack/myman` and candidate `0.14.0`. No email or form was sent.

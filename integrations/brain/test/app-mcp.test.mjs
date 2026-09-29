@@ -48,6 +48,9 @@ test(`app MCP discovers strict action tools, preserves permission errors and req
   const denied=await client.callTool({name:'myman_app_note_create',arguments:{body:'Synthetic text',_request_id:id}});
   assert.equal(denied.isError,true);assert.equal(denied.structuredContent.error.code,'AGENT_DISABLED');
   const invocation=calls.find(x=>x.method==='invoke');assert.equal(invocation.id,id);assert.deepEqual(invocation.arguments,{body:'Synthetic text'});
+  const people=tools.find(x=>x.name==='myman_app_people_resolve');assert.equal(people.annotations.readOnlyHint,true);assert.match(people.description,/people_read/);
+  const peopleDenied=await client.callTool({name:people.name,arguments:{names:['Jilles']}});
+  assert.equal(peopleDenied.isError,true);assert.equal(peopleDenied.structuredContent.error.code,'AGENT_DISABLED');
   const before=calls.length;
   const invalid=await client.callTool({name:'myman_app_note_create',arguments:{body:'Synthetic',unrecognized:true}});
   assert.equal(invalid.isError,true);assert.equal(calls.length,before,'Invalid arguments never reach the app');

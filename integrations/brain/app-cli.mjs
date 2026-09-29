@@ -20,7 +20,7 @@ const pairs = {
   'tool evaluate':'tool.evaluate', 'timer start':'timer.start', 'timer sound':'timer.sound', 'timer status':'timer.status',
   'timer pause':'timer.pause', 'timer resume':'timer.resume', 'timer cancel':'timer.cancel',
   'reminder create':'reminder.create', 'reminder sound':'reminder.sound', 'reminder list':'reminder.list', 'reminder cancel':'reminder.cancel',
-  'calendar list':'calendar.list',
+  'calendar list':'calendar.list', 'people resolve':'people.resolve',
   'workflow templates':'workflow.templates',
   'dictation history':'dictation.history',
   'dictation correction':'dictation.correction',
@@ -86,6 +86,7 @@ library search|recent|read|open|related|rename|pin|unpin|hide|unhide|delete
 theme list|rename|pin|unpin|dismiss|merge|add|remove  task list|add|update|complete|reopen|delete
 capture import|compare|targets|ocr|image|copy|remove-background  editor open|save
 font match|create|preview|quality|open|file  clipboard read|write  settings get|set  history clear
+people resolve --names '["Jilles","Harshil"]' --json (people_read grant)
 screens list  windows list  doctor  workflow check|templates  latest --kind screenshots
 brief create|list|read|open|handoff|refresh|submit|review|delete|export
 brief read --id ID --include-context returns timestamped frames and untimed transcript text.

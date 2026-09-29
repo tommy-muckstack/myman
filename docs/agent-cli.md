@@ -284,3 +284,9 @@ myman reminder sound --id ID --enabled on --json
 ```
 
 Both status/list results include `sound_enabled`. Timer controls require the current session ID and creating agent; reminder controls require the creating agent. Human widget controls remain available. Reminder mute is persisted and updates scheduled notification sound. `tool evaluate` recognizes message-bearing timers and spoken numbers but remains side-effect free; agents must explicitly call the indicated creation action. Adaptive voice auto-submit is a human launcher behavior.
+
+## Resolve saved people
+
+`myman people resolve --names '["jilles","harshil"]' --limit 5 --json` invokes `people.resolve` / MCP `myman_app_people_resolve`. The new `people_read` grant and named credential scope start off and can be enabled only by the human. `doctor` reports the grant. Mac uses saved People and visible meeting-participant metadata; Linux/Omarchy uses the existing `people.md` export or returns `unsupported_on_platform` once authorized.
+
+Each input returns a status, candidate names and stored emails, source labels, total matches and a truncation flag. Present `ambiguous` or `needs_confirmation` results for human selection; ask for an address on `missing_email`. No guessed addresses, Contacts access, live calendar reads, booking or invitations. See [matching rules, limits and privacy](people-resolve.md).

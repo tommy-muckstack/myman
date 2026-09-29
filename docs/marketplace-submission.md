@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-29: root/Linux **0.14.0**, Brain companion **0.13.0** add `people.resolve`, `myman people resolve` and MCP lookup of saved names/emails behind a new default-off `people_read` grant. Mac uses People and visible meeting participants; Linux/Omarchy uses the existing People export. Ambiguity stays explicit; no Contacts, live-calendar lookup, guessed emails or invitations. Grok skill remains **0.12.0**. Synthetic native and CLI/MCP checks cover matching and permissions; physical Omarchy and marketplace host activation remain unverified. Prepared, not submitted; the original application remains pending.
+
 > Candidate update, 2026-09-26: root plugin and Linux companion **0.13.0** add local Ubuntu/X11 and Omarchy/Hyprland capture, annotations, notes, portable Brain retrieval and permission-gated MCP. The unchanged Mac companion and GrokBot skill-only package remain **0.12.0**. Prepared, not submitted or marketplace-host-verified; the original Cursor application remains pending.
 
 > Candidate update, 2026-09-23: root/Grok/companion **0.12.0** adds owned timer/reminder sound controls and sound state. Prepared, not submitted or host-verified. The original Cursor application remains pending; notify Cursor instead of filing another application.
@@ -8,7 +10,7 @@
 
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.13.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.14.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -50,6 +52,9 @@ For Grok Bot, local-computer execution must target the Mac containing MyMan and 
 Keywords: myman, meetings, notes, macos, linux, local, memory, transcripts, screenshots, dictation.
 
 ## Submission status
+
+**September 29, 2026 — root/Linux 0.14.0 and Brain 0.13.0 prepared, not submitted.** Saved people resolution is ready for review, with [matching and source limitations](people-resolve.md) documented. Tommy's next step after review is an authorized update email to `marketplace-publishing@cursor.com` with `@muckstack`, repository `https://github.com/tommy-muckstack/myman` and candidate `0.14.0`. Do not file a duplicate pending application. No email or form was sent.
+
 
 **September 26, 2026 — root/Linux 0.13.0 prepared, not submitted.** Source/bundled Linux CLI and MCP use synthetic contract fixtures; Ubuntu/Xvfb and Arch CI cover capture, OCR and installation; headless Wayland tests cover capture followed by annotation. A physical Omarchy desktop smoke test remains outstanding. This is not marketplace host activation evidence. Mac companion/Grok skill stay at 0.12.0, with Mac runtime bundles unchanged. The next step is an authorized update email to Cursor with org `@muckstack`, repository and version `0.13.0`. No email or form was sent.
 

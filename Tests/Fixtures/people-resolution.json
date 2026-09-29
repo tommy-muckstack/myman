@@ -1,0 +1,533 @@
+[
+  {
+    "name": "example names",
+    "records": [
+      {
+        "name": "Jilles Smith",
+        "email": "jilles@example.test",
+        "source": "people"
+      },
+      {
+        "name": "Harshil Patel",
+        "email": "harshil@example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "jilles",
+      "harshil"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "jilles",
+        "status": "resolved",
+        "candidates": [
+          {
+            "name": "Jilles Smith",
+            "sources": [
+              "people"
+            ],
+            "match": "name_tokens",
+            "email": "jilles@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      },
+      {
+        "input": "harshil",
+        "status": "resolved",
+        "candidates": [
+          {
+            "name": "Harshil Patel",
+            "sources": [
+              "people"
+            ],
+            "match": "name_tokens",
+            "email": "harshil@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "no guessed email",
+    "records": [
+      {
+        "name": "Developer",
+        "email": null,
+        "source": "people"
+      }
+    ],
+    "names": [
+      "Developer",
+      "Nobody",
+      "not@an-address"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "Developer",
+        "status": "missing_email",
+        "candidates": [
+          {
+            "name": "Developer",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      },
+      {
+        "input": "Nobody",
+        "status": "not_found",
+        "candidates": [],
+        "total": 0,
+        "truncated": false
+      },
+      {
+        "input": "not@an-address",
+        "status": "not_found",
+        "candidates": [],
+        "total": 0,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "unicode and case",
+    "records": [
+      {
+        "name": "José Núñez",
+        "email": "Jose@Example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "JOSE NUNEZ",
+      "jose@example.test"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "JOSE NUNEZ",
+        "status": "resolved",
+        "candidates": [
+          {
+            "name": "José Núñez",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name",
+            "email": "jose@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      },
+      {
+        "input": "jose@example.test",
+        "status": "resolved",
+        "candidates": [
+          {
+            "name": "José Núñez",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_email",
+            "email": "jose@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "ambiguous even at limit one",
+    "records": [
+      {
+        "name": "Sam Patel",
+        "email": "sam.p@example.test",
+        "source": "people"
+      },
+      {
+        "name": "Sam Jones",
+        "email": "sam.j@example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "Sam"
+    ],
+    "limit": 1,
+    "expected": [
+      {
+        "input": "Sam",
+        "status": "ambiguous",
+        "candidates": [
+          {
+            "name": "Sam Jones",
+            "sources": [
+              "people"
+            ],
+            "match": "name_tokens",
+            "email": "sam.j@example.test"
+          }
+        ],
+        "total": 2,
+        "truncated": true
+      }
+    ]
+  },
+  {
+    "name": "prefix requires confirmation",
+    "records": [
+      {
+        "name": "Jilles Smith",
+        "email": "jilles@example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "Jil",
+      "il",
+      "j"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "Jil",
+        "status": "needs_confirmation",
+        "candidates": [
+          {
+            "name": "Jilles Smith",
+            "sources": [
+              "people"
+            ],
+            "match": "name_prefix",
+            "email": "jilles@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      },
+      {
+        "input": "il",
+        "status": "not_found",
+        "candidates": [],
+        "total": 0,
+        "truncated": false
+      },
+      {
+        "input": "j",
+        "status": "not_found",
+        "candidates": [],
+        "total": 0,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "email dedup keeps aliases",
+    "records": [
+      {
+        "name": "Jilles Smith",
+        "email": "jilles@example.test",
+        "source": "people"
+      },
+      {
+        "name": "Jilles",
+        "email": "JILLES@example.test",
+        "source": "meeting_participants"
+      }
+    ],
+    "names": [
+      "Smith"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "Smith",
+        "status": "resolved",
+        "candidates": [
+          {
+            "name": "Jilles Smith",
+            "sources": [
+              "meeting_participants",
+              "people"
+            ],
+            "match": "name_tokens",
+            "email": "jilles@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "same name different emails stays ambiguous",
+    "records": [
+      {
+        "name": "Alex Kim",
+        "email": "a@example.test",
+        "source": "people"
+      },
+      {
+        "name": "Alex Kim",
+        "email": "b@example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "Alex Kim"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "Alex Kim",
+        "status": "ambiguous",
+        "candidates": [
+          {
+            "name": "Alex Kim",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name",
+            "email": "a@example.test"
+          },
+          {
+            "name": "Alex Kim",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name",
+            "email": "b@example.test"
+          }
+        ],
+        "total": 2,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "generic speakers and invalid addresses",
+    "records": [
+      {
+        "name": "You",
+        "email": "owner@example.test",
+        "source": "people"
+      },
+      {
+        "name": "Speaker 2",
+        "email": null,
+        "source": "people"
+      },
+      {
+        "name": "Ann",
+        "email": "ann..bad@example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "You",
+      "Speaker 2",
+      "Ann"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "You",
+        "status": "not_found",
+        "candidates": [],
+        "total": 0,
+        "truncated": false
+      },
+      {
+        "input": "Speaker 2",
+        "status": "not_found",
+        "candidates": [],
+        "total": 0,
+        "truncated": false
+      },
+      {
+        "input": "Ann",
+        "status": "missing_email",
+        "candidates": [
+          {
+            "name": "Ann",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "name only identity does not merge into an email identity",
+    "records": [
+      {
+        "name": "Alex Kim",
+        "email": null,
+        "source": "people"
+      },
+      {
+        "name": "Alex Kim",
+        "email": "alex@example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "Alex Kim"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "Alex Kim",
+        "status": "ambiguous",
+        "candidates": [
+          {
+            "name": "Alex Kim",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name"
+          },
+          {
+            "name": "Alex Kim",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name",
+            "email": "alex@example.test"
+          }
+        ],
+        "total": 2,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "repeat inputs preserve order",
+    "records": [
+      {
+        "name": "Developer",
+        "email": "dev@example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "Developer",
+      "Developer"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "Developer",
+        "status": "resolved",
+        "candidates": [
+          {
+            "name": "Developer",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name",
+            "email": "dev@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      },
+      {
+        "input": "Developer",
+        "status": "resolved",
+        "candidates": [
+          {
+            "name": "Developer",
+            "sources": [
+              "people"
+            ],
+            "match": "exact_name",
+            "email": "dev@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "unknown email never matches a display name",
+    "records": [
+      {
+        "name": "sam@example.test",
+        "email": null,
+        "source": "people"
+      }
+    ],
+    "names": [
+      "sam@example.test"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "sam@example.test",
+        "status": "not_found",
+        "candidates": [],
+        "total": 0,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "name": "token boundaries",
+    "records": [
+      {
+        "name": "Joanne Ann Lee",
+        "email": "ann@example.test",
+        "source": "people"
+      }
+    ],
+    "names": [
+      "Ann",
+      "anne"
+    ],
+    "limit": 5,
+    "expected": [
+      {
+        "input": "Ann",
+        "status": "resolved",
+        "candidates": [
+          {
+            "name": "Joanne Ann Lee",
+            "sources": [
+              "people"
+            ],
+            "match": "name_tokens",
+            "email": "ann@example.test"
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      },
+      {
+        "input": "anne",
+        "status": "not_found",
+        "candidates": [],
+        "total": 0,
+        "truncated": false
+      }
+    ]
+  }
+]
