@@ -5,6 +5,7 @@ on:
     paths:
       - 'integrations/brain/**'
       - 'integrations/linux/**'
+      - 'Tests/MyManTests/Fixtures/calendar-proposal.json'
       - 'integrations/app-server.mjs'
       - 'src/Resources/BrainCompanion/**'
       - 'scripts/install-linux.sh'
@@ -18,6 +19,7 @@ on:
     paths:
       - 'integrations/brain/**'
       - 'integrations/linux/**'
+      - 'Tests/MyManTests/Fixtures/calendar-proposal.json'
       - 'integrations/app-server.mjs'
       - 'src/Resources/BrainCompanion/**'
       - 'scripts/install-linux.sh'

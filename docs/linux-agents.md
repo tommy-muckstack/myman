@@ -1,6 +1,6 @@
 # Linux (agents)
 
-MyMan's Linux companion runs locally on Ubuntu/X11 (including Xvfb) and Omarchy/Arch with Hyprland/Wayland, using Node.js 22+. It captures screenshots, annotates PNGs, and creates, edits, searches, pins, hides and deletes Markdown notes and captures in a local MyManBrain. It is not a Swift UI port. It uses no cloud services, model downloads or API keys. Existing macOS executables and committed Brain bundles are unchanged.
+MyMan's Linux companion runs locally on Ubuntu/X11 (including Xvfb) and Omarchy/Arch with Hyprland/Wayland, using Node.js 22+. It captures screenshots, annotates PNGs, and creates, edits, searches, pins, hides and deletes Markdown notes and captures in a local MyManBrain. It is not a Swift UI port. It uses no cloud services, model downloads or API keys. The 0.15.0 candidate adds local ICS free/busy, calendar previews and saved people resolution under separate default-off grants.
 
 ## Install
 
@@ -86,7 +86,7 @@ The installer creates `${XDG_CONFIG_HOME:-~/.config}/myman/agents.json` with all
 }
 ```
 
-The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. The `recording` grant enables video-only screen recording. The `control` grant (off by default) lets `myman demo` start an app and drive the mouse and keyboard; recording alone never does. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Mac named-agent tokens and machine routing are not implemented.
+The `myman` config directory must be mode `700` and `agents.json` mode `600`, owned by the current login. Missing config means all grants off; malformed or linked config fails closed. Global `enabled` and the relevant action group are checked on every invocation and again in workers. The `recording` grant enables video-only screen recording. The `control` grant (off by default) lets `myman demo` start an app and drive the mouse and keyboard; recording alone never does. Brain keyword retrieval and passive diagnostics do not require mutation grants. This is a same-login consent boundary, not a sandbox against an agent that already has arbitrary shell/file access. Named credentials and machine checks are available through the human-managed `myman agents` flow described below.
 
 ### Optional administrator ceiling
 
@@ -102,6 +102,16 @@ sudo install -o root -g root -m 0644 system-agents.json /etc/myman/agents.json
 The installer does not run these commands, create the system policy, or enable any grants. The file and its parent directories must be root-owned and not writable by group or others. This prevents an unprivileged agent from increasing grants **through the trusted companion's configuration**. It does not prevent a same-user shell from replacing user-owned executables, editing job receipts, changing its environment, or bypassing MyMan to access the desktop directly. Keep runtime code outside Brain and restrict agent tools/accounts if you need an OS-enforced boundary; agents with sudo are outside this protection.
 
 ## CLI contract
+
+### Calendar free/busy
+
+`myman calendar propose --title TEXT --after ISO --before ISO --time-zone IANA --json` (MCP `myman_app_calendar_propose`) uses this same source and additionally requires the new default-off `calendar_propose` grant/scope. It returns candidate times and an unconfirmed preview; it does not write, book or invite. Guest availability is unknown. Without owner configuration it returns `unsupported_on_platform`. See [proposal contract](calendar-propose.md).
+
+`myman calendar free --after 2026-09-29T00:00:00-04:00 --before 2026-09-30T00:00:00-04:00 --json` and MCP `myman_app_calendar_freebusy` return merged busy intervals from a local ICS snapshot, without titles or attendees. It needs no display server and works on Omarchy. Without an owner-configured source it returns `unsupported_on_platform`.
+
+The human creates `calendar.json` next to `agents.json` with `{"version":1,"ics_path":"/absolute/path/to/calendar.ics","time_zone":"America/New_York"}` and optionally `owner_email` for declined invitations. The directory is mode `700`; config and ICS are owned, unlinked regular files with mode `600`. The human separately enables `enabled` and the new `calendar_read` grant in `agents.json` (and the root ceiling if present); named credentials also need this scope. Existing grants remain unchanged, omitted grants are off, and CLI/MCP cannot grant access or override the ICS path. `doctor.calendar` checks configuration without reading events. No live sync, online accounts or teammate availability is claimed. See [JSON contract, supported ICS forms and bounded parsing](calendar-freebusy.md).
+
+### Commands and output
 
 The companion reuses the parser, JSON schemas, Brain reader, job unwrapping and exit-code rules from [agent-cli.md](agent-cli.md). Each JSON command writes exactly one object to stdout. Success exits 0; disabled grants 4, invalid arguments 5, unsupported/setup failures 6, timeout 7. Unsupported actions return `{"ok":false,"error":{"code":"unsupported_on_platform","message":"…"}}`.
 
@@ -371,7 +381,7 @@ myman agents revoke ID
 myman agents require off   # let agents without a credential work again
 ```
 
-Scopes are `capture`, `markup`, `recording`, `library`, `microphone` and `control`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
+Scopes are `capture`, `markup`, `recording`, `library`, `microphone`, `control`, `people_read`, `calendar_read` and `calendar_propose`. They only narrow access: the grants in `agents.json` and the optional `/etc/myman/agents.json` ceiling still apply to every agent. As on the Mac, issuing the first credential makes credentials required, so an agent without one gets `IDENTITY_REQUIRED`. The registry lives next to the grants file as `identities.json` (mode 600) and stores only a SHA-256 digest of each token. Like the Mac, credentials tell cooperating agents apart; they do not sandbox programs running under the same login.
 
 The agent puts its token in `MYMAN_AGENT_TOKEN` in its host environment (never in a prompt). Then:
 
@@ -414,3 +424,9 @@ Agents read dictations with `myman library search --kind dictations --json` (lib
 `myman meeting stop` saves the meeting to `meetings/` in the Brain right away, in the same format the Mac app exports (`started`, `ended`, `participants`, `transcript_status`, and a `## Transcript` of `**You** [m:ss]: …` lines). The transcript is then written on this computer in the background. Each track is split at pauses and transcribed with Whisper, and the note is updated from `transcript_status: processing` to `ready`. Nothing is uploaded, and MyMan never downloads a model. It uses, in order, the command in `MYMAN_TRANSCRIBE_COMMAND` (given a WAV path, it prints text), `whisper-cli` from whisper.cpp with the model in `MYMAN_WHISPER_MODEL` or the first `ggml-*.bin` in Voxtype's or whisper.cpp's model folder, or `voxtype transcribe`. On Omarchy, if you set up Voxtype dictation, meetings already work with no other install. If no engine is found, the note says so (`transcript_status: unavailable`), the audio is kept, and `myman meeting transcribe ID` retries later. Otherwise the audio is deleted once the transcript is saved, unless you pass `--keep-audio`. `myman meeting cancel` stops and saves nothing.
 
 The person at the computer can always record their own meeting from a terminal or the Omarchy menu (Trigger, then MyMan). Agents need both the `recording` grant and the new `microphone` grant, which is off by default and capped by `/etc/myman/agents.json` like the others, and a named credential must include both scopes. An agent must pass the `--id` returned by `meeting start` to stop or cancel. Agents read meetings with `myman library search --kind meetings --json`. The microphone and system audio devices can be changed with `MYMAN_AUDIO_FORMAT`, `MYMAN_MIC_DEVICE` and `MYMAN_SYSTEM_DEVICE` (defaults `pulse`, `default` and `@DEFAULT_MONITOR@`).
+
+## Resolve saved People (0.14.0 candidate)
+
+`myman people resolve --names '["jilles","harshil"]' --json` and MCP `myman_app_people_resolve` read the existing `people.md` export in the configured Brain. The human must enable `enabled` and the new `people_read` grant in `agents.json`; missing grants stay off, the root ceiling still applies, and a named credential needs the same scope. Installation never enables access. `doctor` reports effective grants without opening People data.
+
+This works on Omarchy without a display server or extra dependency. Missing Brain/people export returns `unsupported_on_platform` after permission checks. No arbitrary source path, Contacts backend, network lookup or automatic sync is provided. Meeting exports are intentionally not used as a fallback because they lack hidden-person state. Linux-native recordings do not populate People emails in this step. Refresh the export to reflect current People on Mac. Ambiguous and prefix matches require human selection; missing emails are never guessed. See [the shared matching and JSON contract](people-resolve.md).

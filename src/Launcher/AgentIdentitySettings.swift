@@ -27,9 +27,9 @@ struct AgentIdentitySettings: View {
                 }
             }
             TextField("Agent name, e.g. Capture Agent", text: $name).textFieldStyle(.roundedBorder)
-            HStack {
-                ForEach(["capture", "markup", "recording", "library", "sharing", "control"], id: \.self) { scope in
-                    Toggle(scope.capitalized, isOn: Binding(get: { scopes.contains(scope) }, set: { if $0 { scopes.insert(scope) } else { scopes.remove(scope) } })).clickable()
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: MM.Layout.spacing * 12), alignment: .leading)], alignment: .leading, spacing: MM.Layout.spacing) {
+                ForEach(["capture", "markup", "recording", "library", "sharing", "scheduling_parse", "people_read", "control", "calendar_read", "calendar_propose"], id: \.self) { scope in
+                    Toggle(scope == "calendar_read" ? "Calendar read" : scope == "calendar_propose" ? "Calendar previews" : scope == "scheduling_parse" ? "Parse meetings" : scope == "people_read" ? "Saved people" : scope.capitalized, isOn: Binding(get: { scopes.contains(scope) }, set: { if $0 { scopes.insert(scope) } else { scopes.remove(scope) } })).clickable()
                 }
             }
             Button("Add agent") {

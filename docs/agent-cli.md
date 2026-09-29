@@ -267,9 +267,14 @@ myman reminder create --seconds 600 --message "Take pizza out" --json
 myman tool evaluate --input "8am in Iceland" --json
 myman tool evaluate --input "#fffffd" --json
 myman calendar list --after 2026-09-23T00:00:00-04:00 --before 2026-09-24T00:00:00-04:00 --json
+myman calendar free --after 2026-09-29T00:00:00-04:00 --before 2026-09-30T00:00:00-04:00 --json
 ```
 
-Timers and reminders appear in the same hover-expanding widget as human-created ones. Keep the returned timer `session_id` for `timer pause|resume|cancel --session-id ID`; inspect `timer status` first. Several timers can run at once; each `timer start` returns its own `session_id`, and `timer status` lists them all under `timers`. Use `reminder list` and `reminder cancel --id ID`; `reminder create --at ISO --message TEXT` accepts an absolute timestamp instead of seconds. Controls belong to the creating agent; human controls remain available. Existing library grants apply to timer/reminder/calendar actions. Calendar also requires human-granted macOS access.
+Timers and reminders appear in the same hover-expanding widget as human-created ones. Keep the returned timer `session_id` for `timer pause|resume|cancel --session-id ID`; inspect `timer status` first. Several timers can run at once; each `timer start` returns its own `session_id`, and `timer status` lists them all under `timers`. Use `reminder list` and `reminder cancel --id ID`; `reminder create --at ISO --message TEXT` accepts an absolute timestamp instead of seconds. Controls belong to the creating agent; human controls remain available. Existing library grants apply to timer/reminder actions and `calendar.list`. Calendar also requires human-granted macOS access.
+
+`calendar propose --title TEXT --after ISO --before ISO --time-zone IANA --json` invokes `calendar.propose` / MCP `myman_app_calendar_propose`. It needs both human-only `calendar_read` and new default-off `calendar_propose` grants/scopes. It returns own-calendar candidate slots and an unconfirmed preview, with no booking or invitations. Guest labels do not imply guest availability. Linux/Omarchy needs the owner-configured ICS source; otherwise it returns `unsupported_on_platform`. See [proposal arguments, slot rules and result JSON](calendar-propose.md).
+
+`calendar free` invokes `calendar.freebusy` (MCP `myman_app_calendar_freebusy`) under a separate, default-off `calendar_read` grant and named-agent scope. It returns merged busy intervals without event metadata; it never books or invites. Linux/Omarchy reads an owner-configured local ICS snapshot or returns `unsupported_on_platform`. Both bounds require explicit offsets and a positive range of at most 31 elapsed days. See [free/busy permissions, JSON and ICS configuration](calendar-freebusy.md).
 
 Timers need My Man to stay open. Reminder results report `notification_scheduled` and `requires_app_open`; do not promise delivery while closed unless scheduling succeeded. `tool evaluate` is side-effect free and returns structured arithmetic, conversions, time zones, four-color palettes, checklists, bill splits, and timer/reminder previews. Evaluation never starts a timer or saves a note. Existing note/task/library/capture/recording commands remain supported. Keep request/job IDs and never replay interrupted mutations automatically.
 
@@ -284,3 +289,18 @@ myman reminder sound --id ID --enabled on --json
 ```
 
 Both status/list results include `sound_enabled`. Timer controls require the current session ID and creating agent; reminder controls require the creating agent. Human widget controls remain available. Reminder mute is persisted and updates scheduled notification sound. `tool evaluate` recognizes message-bearing timers and spoken numbers but remains side-effect free; agents must explicitly call the indicated creation action. Adaptive voice auto-submit is a human launcher behavior.
+
+## Parse a meeting request (step 1)
+
+`myman scheduling parse --input "Coffee with Developer Friday at 10am for 30 min" --json`
+returns an unsaved intent with literal people, date/time/duration and missing or
+ambiguous fields. The owner must enable the separate `scheduling_parse` grant in
+Settings → Agents; `doctor` reports it. MCP exposes `myman_app_scheduling_parse`.
+There is no calendar/Contacts access, booking, invite sending or availability
+lookup. Linux/Omarchy returns `unsupported_on_platform`.
+[Full contract, model fallback and date conventions](scheduling-intent.md).
+## Resolve saved people
+
+`myman people resolve --names '["jilles","harshil"]' --limit 5 --json` invokes `people.resolve` / MCP `myman_app_people_resolve`. The new `people_read` grant and named credential scope start off and can be enabled only by the human. `doctor` reports the grant. Mac uses saved People and visible meeting-participant metadata; Linux/Omarchy uses the existing `people.md` export or returns `unsupported_on_platform` once authorized.
+
+Each input returns a status, candidate names and stored emails, source labels, total matches and a truncation flag. Present `ambiguous` or `needs_confirmation` results for human selection; ask for an address on `missing_email`. No guessed addresses, Contacts access, live calendar reads, booking or invitations. See [matching rules, limits and privacy](people-resolve.md).

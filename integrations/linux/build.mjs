@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const here=path.dirname(fileURLToPath(import.meta.url)), out=path.join(here,'bundle');
-const result=await build({absWorkingDir:here,entryPoints:['cli.mjs','app-server.mjs','worker.mjs'],outdir:out,outExtension:{'.js':'.mjs'},bundle:true,platform:'node',target:'node22',format:'esm',minify:true,legalComments:'linked',write:false,metafile:true,banner:{js:"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);"}});
+const result=await build({absWorkingDir:here,entryPoints:['cli.mjs','app-server.mjs','worker.mjs','calendar-worker.mjs'],outdir:out,outExtension:{'.js':'.mjs'},bundle:true,platform:'node',target:'node22',format:'esm',minify:true,legalComments:'linked',write:false,metafile:true,banner:{js:"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);"}});
 let notices=await readFile(path.join(here,'../../LICENSE'),'utf8');
 const packageRoots=new Set();
 for(const input of Object.keys(result.metafile.inputs)) {

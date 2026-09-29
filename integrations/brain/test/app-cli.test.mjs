@@ -130,3 +130,36 @@ test('workflow CLI preserves three-part routes, integer revisions and object reg
   await assert.rejects(plan(['capture','scroll','start','--region','not-json']));
   await assert.rejects(plan(['capture','scroll','stop','extra','--session-id','fixture']));
 });
+
+test('calendar free routes to the strict read-only action and independent grant',async()=>{
+ const p=await plan(['calendar','free','--after','2026-09-29T00:00:00Z','--before','2026-09-30T00:00:00Z','--json']);
+ assert.equal(p.name,'calendar.freebusy');assert.deepEqual(p.args,{after:'2026-09-29T00:00:00Z',before:'2026-09-30T00:00:00Z'});
+ const action=describe(p.name);assert.deepEqual(action.permissions,['calendar_read']);assert.equal(action.readOnly,true);assert.equal(action.destructive,false);
+ const validate=ajv.compile(action.inputSchema);assert.ok(validate(p.args));assert.equal(validate({...p.args,path:'/tmp/calendar.ics'}),false);
+ await assert.rejects(plan(['calendar','free','--path','/tmp/calendar.ics']));
+});
+
+test('calendar propose exposes a strict preview-only schema and both grants',async()=>{
+ const p=await plan(['calendar','propose','--title','Coffee','--after','2026-09-29T00:00:00Z','--before','2026-09-30T00:00:00Z','--time-zone','UTC','--duration-minutes','45','--guests','["Jilles","Harshil"]','--json']);
+ assert.equal(p.name,'calendar.propose');assert.equal(p.args.duration_minutes,45);assert.deepEqual(p.args.guests,['Jilles','Harshil']);
+ const action=describe(p.name);assert.deepEqual(action.permissions,['calendar_read','calendar_propose']);assert.equal(action.readOnly,true);assert.equal(action.destructive,false);
+ const validate=ajv.compile(action.inputSchema);assert.ok(validate(p.args));
+ for(const key of ['book','confirm','busy','now','send_invitations'])assert.equal(validate({...p.args,[key]:true}),false);
+});
+
+test('scheduling parser shares CLI/MCP schema, bounded input and explicit grant', async () => {
+ const input = 'Coffee with Developer Friday at 10am for 30 min';
+ const parsed = await plan(['scheduling','parse','--input',input,'--reference','2026-09-29T16:00:00Z','--time-zone','America/New_York','--use-model','off','--json']);
+ assert.equal(parsed.name,'scheduling.parse');
+ assert.deepEqual(parsed.args,{input,reference:'2026-09-29T16:00:00Z',time_zone:'America/New_York',use_model:false});
+ const action = describe(parsed.name);
+ assert.deepEqual(action.permissions,['scheduling_parse']); assert.equal(action.readOnly,true); assert.equal(action.destructive,false);
+ const validate = ajv.compile(action.inputSchema);
+ assert.ok(validate(parsed.args)); assert.ok(validate({input:''}));
+ for (const args of [{input:'x'.repeat(2001)},{input:'review',confirm:true},{input:'review',calendar_write:true},{input:'review',use_model:'yes'}]) assert.equal(validate(args),false);
+ const result = await run(['scheduling','parse','--input',input],{invoke: async (name,args) => {
+   assert.equal(name,'scheduling.parse'); assert.equal(args.input,input);
+   return {ok:true,job:{id:'parse-fixture',state:'succeeded',result:{title:'Coffee',people:['Developer'],day:'2026-10-02',time:'10:00',duration_minutes:30,side_effects:false,requires_human_booking:true}}};
+ }});
+ assert.equal(result.ok,true); assert.equal(result.side_effects,false); assert.equal(result.requires_human_booking,true);
+});

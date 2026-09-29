@@ -8,7 +8,7 @@ import { Brain, BrainError } from './brain.mjs';
 import { execute } from './tools.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
-const strings = ['sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
+const strings = ['use-model','sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
 const booleans = ['help','json','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only'];
 const options = Object.fromEntries([...strings.map(key=>[key,{type:'string'}]),...booleans.map(key=>[key,{type:'boolean'}]),...['tag','exclude-tag','participant'].map(key=>[key,{type:'string',multiple:true}])]);
 for(const action of catalog.actions)for(const [key,schema]of Object.entries(action.inputSchema.properties)){
@@ -20,7 +20,7 @@ const pairs = {
   'tool evaluate':'tool.evaluate', 'timer start':'timer.start', 'timer sound':'timer.sound', 'timer status':'timer.status',
   'timer pause':'timer.pause', 'timer resume':'timer.resume', 'timer cancel':'timer.cancel',
   'reminder create':'reminder.create', 'reminder sound':'reminder.sound', 'reminder list':'reminder.list', 'reminder cancel':'reminder.cancel',
-  'calendar list':'calendar.list',
+  'calendar list':'calendar.list', 'calendar free':'calendar.freebusy', 'calendar propose':'calendar.propose', 'scheduling parse':'scheduling.parse', 'people resolve':'people.resolve',
   'workflow templates':'workflow.templates',
   'dictation history':'dictation.history',
   'dictation correction':'dictation.correction',
@@ -76,6 +76,9 @@ timer start --seconds 600; timer status|pause|resume|cancel (--session-id for co
 reminder create --seconds 600 --message "Take pizza out"; reminder list|cancel
 timer sound --session-id ID --enabled off; reminder sound --id ID --enabled off
 tool evaluate --input "8am in Iceland"; calendar list --after ISO --before ISO
+calendar propose --title TEXT --after ISO --before ISO --time-zone IANA --json (preview only; calendar_read + calendar_propose grants)
+calendar free --after ISO --before ISO --json (own busy blocks; calendar_read grant)
+scheduling parse --input "Coffee with Developer Friday at 10am for 30 min" [--reference ISO --time-zone IANA --use-model off] --json
 screenshot --mode agent --display main --region x,y,w,h --wait --json
 annotate --id ID --ops-file ops.json [--preview|--dry-run] [--clipboard] --json
 record start|status|result|pause|resume|stop|cancel|frames|export|polish  meeting start|status|stop|cancel|rename|notes
@@ -86,6 +89,7 @@ library search|recent|read|open|related|rename|pin|unpin|hide|unhide|delete
 theme list|rename|pin|unpin|dismiss|merge|add|remove  task list|add|update|complete|reopen|delete
 capture import|compare|targets|ocr|image|copy|remove-background  editor open|save
 font match|create|preview|quality|open|file  clipboard read|write  settings get|set  history clear
+people resolve --names '["Jilles","Harshil"]' --json (people_read grant)
 screens list  windows list  doctor  workflow check|templates  latest --kind screenshots
 brief create|list|read|open|handoff|refresh|submit|review|delete|export
 brief read --id ID --include-context returns timestamped frames and untimed transcript text.

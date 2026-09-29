@@ -34,11 +34,11 @@ for(const dir of [config,state])await safeDirectory(dir,true);
 const configFile=path.join(config,'agents.json');
 try {
  const handle=await open(configFile,'wx',0o600);
- try {await handle.writeFile(JSON.stringify({version:1,grants:{enabled:false,capture:false,markup:false,recording:false,library:false,microphone:false,control:false}},null,2)+'\n');}finally{await handle.close();}
+ try {await handle.writeFile(JSON.stringify({version:1,grants:{enabled:false,capture:false,markup:false,recording:false,library:false,microphone:false,control:false,people_read:false,calendar_read:false,calendar_propose:false}},null,2)+'\n');}finally{await handle.close();}
 } catch(error){if(error.code!=='EEXIST')throw error;const info=await lstat(configFile);if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.uid!==process.getuid()||(info.mode&0o077))throw new Error(`Unsafe config: ${configFile}`);}
 const launcher=path.join(prefix,'bin/myman');
 if(!setupOnly){
-for(const name of ['cli.mjs','app-server.mjs','app-server.mjs.LEGAL.txt','worker.mjs','LICENSES.txt']) {
+for(const name of ['cli.mjs','app-server.mjs','app-server.mjs.LEGAL.txt','worker.mjs','calendar-worker.mjs','LICENSES.txt']) {
  await copy(path.join(source,'integrations/linux/bundle',name),path.join(install,name));
 }
 await copy(path.join(source,'src/Resources/BrainCompanion/cli.mjs'),path.join(install,'brain-cli.mjs'));

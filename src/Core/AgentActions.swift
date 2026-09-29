@@ -275,6 +275,16 @@ final class AgentActions {
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
         defer { if isAudio { audioCommand = false } }
         switch action {
+        case "calendar.propose": return try await CalendarProposal.readAndPropose(args)
+        case "calendar.freebusy": return try await CalendarFreeBusyReader.read(args)
+        case "scheduling.parse": return try await AgentScheduling.parse(args)
+        case "people.resolve":
+            let names = args["names"] as! [String], limit = args["limit"] as? Int ?? 5
+            try PeopleResolution.validate(names: names, limit: limit)
+            let matches = try await Task.detached(priority: .userInitiated) {
+                try PeopleResolution.resolve(names: names, records: People.resolutionRecords(), limit: limit)
+            }.value
+            return ["results": try WorkflowValues.json(matches), "source": "local_people", "contacts_accessed": false, "side_effects": false] as [String: Any]
         case "tool.evaluate", "timer.start", "timer.status", "timer.pause", "timer.resume", "timer.cancel", "timer.sound", "reminder.create", "reminder.list", "reminder.cancel", "reminder.sound", "calendar.list":
             return try await AgentQuickTools.execute(action, args)
         case "workflow.templates": return ["templates": AgentWorkflowTemplates.catalog, "host_sharing_verified": false]
@@ -619,7 +629,7 @@ final class AgentActions {
         case "item.related": return try RelatedItems.items(for: item(args).id).map { ["item": Self.json($0.item), "score": $0.score, "reason": $0.reason] as [String: Any] }
         case "theme.rename", "theme.pin", "theme.dismiss", "theme.assign", "theme.merge":
             let id = args["id"] as! String
-            guard try Database.shared.read({ try Row.fetchOne($0, sql: "SELECT id FROM captureTheme WHERE id = ?", arguments: [id]) }) != nil else { throw AgentError("NOT_FOUND", "Theme not found.") }
+            guard try await Database.shared.read({ try Row.fetchOne($0, sql: "SELECT id FROM captureTheme WHERE id = ?", arguments: [id]) }) != nil else { throw AgentError("NOT_FOUND", "Theme not found.") }
             switch action {
             case "theme.rename": try ThemeStore.rename(id, title: args["title"] as! String, expectedVersion: args["expected_version"] as? String)
             case "theme.pin": try ThemeStore.pin(id, pinned: args["pinned"] as! Bool, expectedVersion: args["expected_version"] as? String)
@@ -627,7 +637,7 @@ final class AgentActions {
             case "theme.assign": _ = try item(["id": args["item_id"]!]); try ThemeStore.assign(args["item_id"] as! String, to: id, remove: args["remove"] as? Bool ?? false, expectedVersion: args["expected_version"] as? String)
             default:
                 let target = args["target_id"] as! String
-                guard try Database.shared.read({ try Row.fetchOne($0, sql: "SELECT id FROM captureTheme WHERE id = ? AND dismissed = 0", arguments: [target]) }) != nil else { throw AgentError("NOT_FOUND", "Target theme not found.") }
+                guard try await Database.shared.read({ try Row.fetchOne($0, sql: "SELECT id FROM captureTheme WHERE id = ? AND dismissed = 0", arguments: [target]) }) != nil else { throw AgentError("NOT_FOUND", "Target theme not found.") }
                 try ThemeStore.merge(id, into: target, expectedVersion: args["expected_version"] as? String, targetVersion: args["target_version"] as? String)
             }; return ["id": id]
         case "task.create", "task.update", "task.delete":
