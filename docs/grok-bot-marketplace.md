@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-29: root plugin **0.14.0**, Mac companion **0.13.0** add `scheduling.parse` through CLI/MCP with a separate default-off owner-controlled `scheduling_parse` grant. It interprets supplied text only; no calendar/Contacts access, events or invites. Linux companion **0.14.0** refreshes discovery bundles with explicit unsupported results. GrokBot skill-only package stays **0.12.0**. Prepared, not submitted or marketplace-host-verified. [Contract and local verification](scheduling-intent.md).
+
 > Candidate update, 2026-09-26: root plugin and Linux companion **0.13.0** add local Ubuntu/X11 and Omarchy/Hyprland capture, annotations, notes, portable Brain retrieval and permission-gated MCP. The unchanged Mac companion and GrokBot skill-only package remain **0.12.0**. Prepared, not submitted or marketplace-host-verified; the original Cursor application remains pending.
 
 > Candidate update, 2026-09-23: root/Grok/companion **0.12.0** adds owned timer/reminder sound controls and sound state. Prepared, not submitted or host-verified. The original Cursor application remains pending; notify Cursor instead of filing another application.

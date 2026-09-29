@@ -1,6 +1,6 @@
 # Agent CLI parity
 
-Working baseline: 1.1.101 (113), with the Linux companion at 0.13.0; the bundled action catalog now describes 126 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
+Working baseline: 1.1.101 (113), with the Linux companion at 0.13.0; the bundled action catalog now describes 127 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
 
 ## Implementation plan
 
@@ -62,6 +62,7 @@ The macOS first-class rows are implemented. Linux support is intentionally limit
 | Leases / recording ownership | `lease acquire/release`, `--lease-id` on mutations, `session transfer` | Supported; clipboard and `item:ID` leases; recordings owned by their starter | Leases are cooperative; revision checks still apply |
 | Hotkey rebinding / audio model selection / destination folder / update preferences | Human-only Settings | No UI; Brain and XDG paths via environment | Machine setup; no unrestricted preference editor |
 | Permissions / setup | `doctor` | Supported; passive doctor | Passive, no OS prompts |
+| Scheduling text (step 1) | `scheduling parse --input TEXT`; MCP `myman_app_scheduling_parse` | `unsupported_on_platform` | Pure interpretation; default-off owner-controlled `scheduling_parse` grant; no calendar/Contacts access, booking or invites. [Contract](scheduling-intent.md) |
 | Calendar agenda | `calendar list --after ISO --before ISO` | Unsupported | Existing Calendar permission; bounded 31-day read |
 | Quick tools / calculator / time zones / palettes | `tool evaluate --input TEXT` | Unsupported | Structured local results; no side effects |
 | Reminders | `reminder create/list/cancel/sound` | Supported (library grant); `seconds` or ISO `at` with offset; overdue reminders are delivered at the next MyMan call | Saved reminders and notifications |

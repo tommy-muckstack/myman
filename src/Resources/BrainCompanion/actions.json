@@ -1,5 +1,5 @@
 {
-  "version": "0.12.0",
+  "version": "0.13.0",
   "actions": [
     {
       "name": "app.status",
@@ -4026,6 +4026,42 @@
       "destructive": false,
       "permissions": [
         "library"
+      ]
+    },
+    {
+      "name": "scheduling.parse",
+      "description": "Parse an unsaved meeting intent from English text. No calendar or Contacts access, writes, invites or booking. Requires the human-controlled scheduling_parse grant. Linux returns unsupported_on_platform.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "reference": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "ISO 8601 timestamp with offset; defaults to now."
+          },
+          "time_zone": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "IANA time zone; defaults to the Mac zone."
+          },
+          "use_model": {
+            "type": "boolean",
+            "description": "Use on-device entity extraction when available; false forces deterministic rules."
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "scheduling_parse"
       ]
     },
     {

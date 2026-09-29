@@ -24,7 +24,7 @@ import { processIdentity, workerAlive } from './process-identity.mjs';
 import { systemGrants, systemPolicyPath } from './policy.mjs';
 import { atomic, authorize, pngSize, configPath, dependencies, directory, fail, grants, readSafe, rootPath, statePath, unsupported } from './system.mjs';
 
-export const version='0.13.0';
+export const version='0.14.0';
 export const supported=new Set(['app.doctor','screens.list','screenshot.capture','screenshot.edit','note.create','screenshot.image','recording.start','recording.stop','recording.cancel','recording.status','screenshot.ocr','windows.list','clipboard.read','clipboard.write','item.read','capture.search','note.update','note.append','note.attach','item.rename','item.pin','item.exclude','item.delete','item.related','task.create','task.update','task.delete','screenshot.compare','screenshot.targets','screenshot.capture_markup','screenshot.import','recording.pause','recording.resume','recording.frames','recording.export','recording.polish','timer.start','timer.status','timer.pause','timer.resume','timer.cancel','timer.sound','reminder.create','reminder.list','reminder.cancel','reminder.sound',...collab.actions,'machine.current']);
 const schemas=new Map(catalog.actions.map(a=>[a.name,z.fromJSONSchema(a.inputSchema)]));
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

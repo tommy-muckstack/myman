@@ -8,6 +8,7 @@ struct AgentSettingsView: View {
     @AppStorage("agentLibraryEnabled") private var library = false
     @AppStorage("agentSharingEnabled") private var sharing = false
     @AppStorage("agentControlEnabled") private var control = false
+    @AppStorage("agentSchedulingParseEnabled") private var schedulingParse = false
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("Your tools, on your terms.").font(MM.Fonts.title)
@@ -15,6 +16,8 @@ struct AgentSettingsView: View {
                 .foregroundStyle(MM.Colors.textSecondary)
             Toggle("Allow local app commands", isOn: $enabled).clickable()
             VStack(alignment: .leading, spacing: 14) {
+                Toggle("Parse meeting requests without accessing calendars", isOn: $schedulingParse).clickable()
+                    .accessibilityHint("Only interprets supplied text. Does not read calendars, book events or invite guests.")
                 Toggle("Capture screenshots without the picker", isOn: $capture).clickable()
                 Toggle("Edit screenshots and create fonts", isOn: $markup).clickable()
                 Toggle("Control meetings, dictation and screen recordings", isOn: $recording).clickable()
