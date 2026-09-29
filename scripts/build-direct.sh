@@ -92,10 +92,12 @@ if [[ -f "$SCRIPT_DIR/secrets.env" ]]; then
 fi
 
 echo "==> Building $EXEC_NAME (release, universal)..."
-# Universal so Intel Macs can run it; --arch flags move output to .build/apple/.
+# Universal so Intel Macs can run it. Ask SwiftPM for the products directory;
+# its layout differs between Xcode/SwiftPM versions.
 swift build -c release --arch arm64 --arch x86_64
 
-BINARY=".build/apple/Products/Release/$EXEC_NAME"
+PRODUCTS_DIR="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+BINARY="$PRODUCTS_DIR/$EXEC_NAME"
 if [[ ! -f "$BINARY" ]]; then
     echo "ERROR: Binary not found at $BINARY"
     exit 1
@@ -110,7 +112,7 @@ fi
 # MM_SENTRY_AUTH_TOKEN=..., or export SENTRY_AUTH_TOKEN in CI.
 upload_sentry_debug_symbols() {
     local token="${SENTRY_AUTH_TOKEN:-${MM_SENTRY_AUTH_TOKEN:-}}"
-    local products_dir="$SCRIPT_DIR/.build/apple/Products/Release"
+    local products_dir="$PRODUCTS_DIR"
     if [[ -z "$token" ]]; then
         echo "WARNING: MM_SENTRY_AUTH_TOKEN not set — skipping Sentry dSYM upload"
         return 0
@@ -152,7 +154,7 @@ while IFS= read -r slice; do
     done
 done < <(find "$SCRIPT_DIR/.build/artifacts" -type d -name "macos-arm64_x86_64" 2>/dev/null)
 
-BUNDLE_DIR=".build/apple/Products/Release/MyMan_MyMan.bundle"
+BUNDLE_DIR="$PRODUCTS_DIR/MyMan_MyMan.bundle"
 if [[ -d "$BUNDLE_DIR" ]]; then
     cp -R "$BUNDLE_DIR" "$APP_DIR/Contents/Resources/"
 fi
