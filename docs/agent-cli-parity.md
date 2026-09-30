@@ -1,6 +1,6 @@
 # Agent CLI parity
 
-Working baseline: 1.1.102 (114), plus the Launcher and human-confirmed booking candidates (Brain companion 0.16.0, Linux/root plugin 0.17.0); the bundled action catalog now describes 132 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
+Working baseline: 1.1.103 (115), including the Launcher and human-confirmed booking (Brain companion 0.16.0, Linux/root plugin 0.17.0); the bundled action catalog now describes 132 actions. This plan was first written against 1.1.59 (71), when the supplied GrokBot feedback had inspected an older checkout: the released app already had 45 schema-described actions, a same-login Unix socket, capture/edit/OCR, recording/meeting/dictation sessions, note/task/theme mutations, fonts, and bounded jobs. This work extends those controllers and schemas.
 
 ## Implementation plan
 
