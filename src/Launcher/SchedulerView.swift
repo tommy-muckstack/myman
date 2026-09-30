@@ -224,10 +224,29 @@ struct SchedulerView: View {
                 Label("\(model.people.count) guest\(model.people.count == 1 ? "" : "s") · no invitations", systemImage: "person.2")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                 Spacer()
-                Text("Nothing booked yet").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                Button { review() } label: {
+                    HStack(spacing: MM.Layout.spacing / 2) { Text("Review event"); Image(systemName: "arrow.right") }
+                        .font(MM.Fonts.secondary).foregroundStyle(model.canReview ? MM.Colors.onAccent : MM.Colors.textSecondary)
+                        .padding(.horizontal, MM.Layout.spacing).padding(.vertical, MM.Layout.spacing * 0.75)
+                        .background(model.canReview ? MM.Colors.accent : MM.Colors.border, in: Capsule()).clickable()
+                }.buttonStyle(.plain).disabled(!model.canReview)
+                    .accessibilityHint("Opens the final confirmation. No event is created until you press Book there.")
             }
         }.padding(MM.Layout.padding).background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radius))
             .overlay(RoundedRectangle(cornerRadius: MM.Layout.radius).strokeBorder(MM.Colors.border))
+    }
+    private func review() {
+        guard model.canReview, let start = model.selected else { return }
+        let args: [String: Any] = ["title":model.title, "start":ISO8601DateFormatter().string(from:start),
+            "duration_minutes":model.duration, "time_zone":model.zone.identifier == "GMT" ? "UTC" : model.zone.identifier, "guests":model.people]
+        Task {
+            do { _ = try await CalendarBookingCenter.shared.present(args, owner:nil) }
+            catch {
+                model.message = (error as? AgentError)?.message ?? "Couldn’t open the event preview. Try again."
+                model.needsGrants = (error as? AgentError)?.code == "AGENT_DISABLED"
+                model.needsOSPermission = (error as? AgentError)?.code == "PERMISSION_REQUIRED"
+            }
+        }
     }
     private func refresh() { model.invalidate(); Task { await model.refresh() } }
     private func move(_ minutes: Int, known: Bool) -> KeyPress.Result {

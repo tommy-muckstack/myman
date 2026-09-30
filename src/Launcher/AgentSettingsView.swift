@@ -12,6 +12,7 @@ struct AgentSettingsView: View {
     @AppStorage("agentCalendarProposeEnabled") private var calendarPropose = false
     @AppStorage("agentSchedulingParseEnabled") private var schedulingParse = false
     @AppStorage("agentPeopleReadEnabled") private var peopleRead = false
+    @AppStorage("agentCalendarWriteEnabled") private var calendarWrite = false
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("Your tools, on your terms.").font(MM.Fonts.title)
@@ -19,6 +20,8 @@ struct AgentSettingsView: View {
                 .foregroundStyle(MM.Colors.textSecondary)
             Toggle("Allow local app commands", isOn: $enabled).clickable()
             VStack(alignment: .leading, spacing: 14) {
+                Toggle("Book events after I review and press Book", isOn: $calendarWrite).clickable()
+                    .accessibilityHint("Also requires calendar read and macOS Calendar access. Agents can only open a preview. No invitations are sent.")
                 Toggle("Prepare calendar event previews", isOn: $calendarPropose).clickable()
                     .accessibilityHint("Also requires calendar read access. Suggests times without booking or inviting guests.")
                 Toggle("Read calendar free/busy", isOn: $calendarRead).clickable()

@@ -169,3 +169,13 @@ test('the scheduling surface opens through the existing app action',async()=>{
  assert.equal(p.name,'app.open');assert.deepEqual(p.args,{surface:'schedule'});
  assert.ok(ajv.compile(describe('app.open').inputSchema)(p.args));
 });
+
+test('calendar book can only request human preview; booking polling has its own ID flag',async()=>{
+ const p=await plan(['calendar','book','--title','Coffee','--start','2026-10-01T10:00:00Z','--time-zone','UTC','--duration-minutes','30','--json']);
+ assert.equal(p.name,'calendar.book');assert.equal(p.args.start,'2026-10-01T10:00:00Z');
+ const action=describe(p.name);assert.deepEqual(action.permissions,['calendar_read','calendar_write']);
+ const validate=ajv.compile(action.inputSchema);assert.ok(validate(p.args));
+ for(const key of ['confirm','approved','token','send_invitations','calendar_id','attendees'])assert.equal(validate({...p.args,[key]:true}),false);
+ const poll=await plan(['calendar','booking','--booking-id','fixture','--json']);assert.deepEqual(poll.args,{booking_id:'fixture'});assert.equal(poll.name,'calendar.booking');
+ assert.equal(describe(poll.name).readOnly,true);
+});

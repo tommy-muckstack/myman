@@ -19,7 +19,7 @@ for slice in (root/'.build/artifacts').rglob('macos-arm64_x86_64'):
         if not dest.exists(): shutil.copytree(framework, dest, symlinks=True)
 subprocess.run(['install_name_tool','-add_rpath','@executable_path/../Frameworks',str(app/'Contents/MacOS/MyMan')], capture_output=True)
 info = dict(CFBundleExecutable='MyMan', CFBundleIdentifier='com.muckstack.myman.preview', CFBundleName='My Man Preview', CFBundlePackageType='APPL', CFBundleShortVersionString='1.1.65-preview', CFBundleVersion='77', LSMinimumSystemVersion='14.2', NSHighResolutionCapable=True, NSMicrophoneUsageDescription='Record audio when you start dictation or a recording.', NSCameraUsageDescription='Show your camera when explicitly enabled.', NSScreenCaptureUsageDescription='Capture the screen when you request a screenshot or recording.')
-info.update(NSAudioCaptureUsageDescription='Record system audio for requested meeting notes.', NSCalendarsFullAccessUsageDescription='Show your calendar when you grant access.', NSAppleEventsUsageDescription='Control music while you record a meeting.')
+info.update(NSAudioCaptureUsageDescription='Record system audio for requested meeting notes.', NSCalendarsFullAccessUsageDescription='Read your calendar for availability and save events only after you review them and press Book.', NSAppleEventsUsageDescription='Control music while you record a meeting.')
 (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
 subprocess.run(['codesign','--force','--deep','--sign','-',str(app)],check=True)
 print(app)

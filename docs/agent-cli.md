@@ -51,6 +51,10 @@ Stop/cancel and screen-recording pause commands remain available after revocatio
 
 macOS prompts remain real. A refusal returns `PERMISSION_REQUIRED` with the relevant permission; grant it in System Settings. The CLI never changes TCC settings. The `myman-brain` MCP remains read-only; `myman-app` exposes the CLI’s app actions through the same native permission checks. CLI operations are local; requesting agents may send returned excerpts or pixels to their model provider. MyMan does not automatically upload the Brain or send attachments/messages.
 
+## Calendar booking
+
+`calendar book --title TEXT --start ISO --time-zone IANA --duration-minutes 30 --json` opens a native preview; it does not create the event. Only the human’s Book button saves it. Both `calendar_read` and new default-off `calendar_write`, corresponding named scopes and existing OS Calendar access are required. `calendar booking --booking-id RETURNED_REQUEST_ID --json` polls the credential-scoped receipt. Guests are notes only; no invitations or video links. Linux/Omarchy returns `unsupported_on_platform`. See the [strict booking contract and failure/retry rules](calendar-book.md).
+
 ## Capture, annotate, and return an image
 
 ```sh

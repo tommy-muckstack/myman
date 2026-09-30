@@ -20,7 +20,7 @@ const pairs = {
   'tool evaluate':'tool.evaluate', 'timer start':'timer.start', 'timer sound':'timer.sound', 'timer status':'timer.status',
   'timer pause':'timer.pause', 'timer resume':'timer.resume', 'timer cancel':'timer.cancel',
   'reminder create':'reminder.create', 'reminder sound':'reminder.sound', 'reminder list':'reminder.list', 'reminder cancel':'reminder.cancel',
-  'calendar list':'calendar.list', 'calendar free':'calendar.freebusy', 'calendar propose':'calendar.propose', 'scheduling parse':'scheduling.parse', 'people resolve':'people.resolve',
+  'calendar list':'calendar.list', 'calendar free':'calendar.freebusy', 'calendar propose':'calendar.propose', 'calendar book':'calendar.book', 'calendar booking':'calendar.booking', 'scheduling parse':'scheduling.parse', 'people resolve':'people.resolve',
   'workflow templates':'workflow.templates',
   'dictation history':'dictation.history',
   'dictation correction':'dictation.correction',
@@ -76,6 +76,8 @@ timer start --seconds 600; timer status|pause|resume|cancel (--session-id for co
 reminder create --seconds 600 --message "Take pizza out"; reminder list|cancel
 timer sound --session-id ID --enabled off; reminder sound --id ID --enabled off
 tool evaluate --input "8am in Iceland"; calendar list --after ISO --before ISO
+calendar book --title TEXT --start ISO --time-zone IANA --duration-minutes 30 --json (opens human Book confirmation; never books autonomously)
+calendar booking --booking-id ID --json (status of your preview)
 calendar propose --title TEXT --after ISO --before ISO --time-zone IANA --json (preview only; calendar_read + calendar_propose grants)
 calendar free --after ISO --before ISO --json (own busy blocks; calendar_read grant)
 scheduling parse --input "Coffee with Developer Friday at 10am for 30 min" [--reference ISO --time-zone IANA --use-model off] --json

@@ -97,6 +97,8 @@ enum MM {
         static var secondary: Font { gellix(13 * interfaceScale) }
         static var metadata: Font { gellix(11.5 * interfaceScale) }
         static var hint: Font { gellix(11 * interfaceScale) }
+        /// Platform controls keep the macOS system face and standard sizing.
+        static var systemControl: Font { .system(size: NSFont.systemFontSize * interfaceScale) }
     }
 
     enum Document {
@@ -121,6 +123,8 @@ enum MM {
         static let radiusSmall: CGFloat = 8
         static let spacing: CGFloat = 12
         static let panelWidth: CGFloat = 620
+        static let bookingWidth: CGFloat = 500
+        static let bookingHeight: CGFloat = 540
         static let schedulerHeight: CGFloat = 650
         static let schedulerLabelWidth: CGFloat = 80
         static let settingsContentHeight: CGFloat = 440

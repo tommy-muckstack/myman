@@ -66,7 +66,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>NSScreenCaptureUsageDescription</key>
     <string>My Man captures your screen for screenshots.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
-    <string>My Man watches your calendar to offer meeting notes at the right time.</string>
+    <string>My Man reads your calendar for meeting notes and availability, and saves events only after you review them and press Book.</string>
     <key>NSCameraUsageDescription</key>
     <string>My Man shows your webcam bubble in screen recordings.</string>
     <key>NSAppleEventsUsageDescription</key>

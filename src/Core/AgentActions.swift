@@ -275,6 +275,8 @@ final class AgentActions {
         if isAudio { guard !audioCommand else { throw AgentError("BUSY", "An audio control command is in progress.") }; audioCommand = true }
         defer { if isAudio { audioCommand = false } }
         switch action {
+        case "calendar.book": return try await CalendarBookingCenter.shared.present(args, owner: AgentContext.principal)
+        case "calendar.booking": return try CalendarBookingCenter.shared.status(args["booking_id"] as! String, owner: AgentContext.principal)
         case "calendar.propose": return try await CalendarProposal.readAndPropose(args)
         case "calendar.freebusy": return try await CalendarFreeBusyReader.read(args)
         case "scheduling.parse": return try await AgentScheduling.parse(args)

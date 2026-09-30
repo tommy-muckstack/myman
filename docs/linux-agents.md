@@ -103,6 +103,8 @@ The installer does not run these commands, create the system policy, or enable a
 
 ## CLI contract
 
+`calendar book` and `calendar booking` expose the shared schemas but return `unsupported_on_platform` on Linux/Omarchy, even with ICS configured. The native human confirmation and EventKit writer are Mac-only; Linux has no `calendar_write` grant or write backend. See [booking contract](calendar-book.md).
+
 ### Calendar free/busy
 
 `myman calendar propose --title TEXT --after ISO --before ISO --time-zone IANA --json` (MCP `myman_app_calendar_propose`) uses this same source and additionally requires the new default-off `calendar_propose` grant/scope. It returns candidate times and an unconfirmed preview; it does not write, book or invite. Guest availability is unknown. Without owner configuration it returns `unsupported_on_platform`. See [proposal contract](calendar-propose.md).
