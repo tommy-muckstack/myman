@@ -121,6 +121,8 @@ enum MM {
         static let radiusSmall: CGFloat = 8
         static let spacing: CGFloat = 12
         static let panelWidth: CGFloat = 620
+        static let schedulerHeight: CGFloat = 650
+        static let schedulerLabelWidth: CGFloat = 80
         static let settingsContentHeight: CGFloat = 440
     }
 

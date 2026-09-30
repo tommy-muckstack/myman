@@ -163,3 +163,9 @@ test('scheduling parser shares CLI/MCP schema, bounded input and explicit grant'
  }});
  assert.equal(result.ok,true); assert.equal(result.side_effects,false); assert.equal(result.requires_human_booking,true);
 });
+
+test('the scheduling surface opens through the existing app action',async()=>{
+ const p=await plan(['invoke','app.open','{"surface":"schedule"}','--json']);
+ assert.equal(p.name,'app.open');assert.deepEqual(p.args,{surface:'schedule'});
+ assert.ok(ajv.compile(describe('app.open').inputSchema)(p.args));
+});

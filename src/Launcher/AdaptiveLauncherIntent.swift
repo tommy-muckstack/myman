@@ -17,7 +17,7 @@ struct AdaptiveLauncherRouting {
 }
 
 enum AdaptiveLauncherIntent: Equatable {
-    case search, create, action(String), tasks, calendar, choose, commands
+    case search, create, action(String), tasks, calendar, schedule, choose, commands
 
     static func resolve(_ input: String) -> Self {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -28,6 +28,7 @@ enum AdaptiveLauncherIntent: Equatable {
             "what do i need to do", "what's on my to-do list", "show me my tasks"].contains(text) { return .tasks }
         // Retrieval wins even when the rest contains a creation or capture verb.
         if ["find ", "search ", "look for ", "look up ", "where is ", "where's ", "where did ", "show me "].contains(where: text.hasPrefix) { return .search }
+        if SchedulerModel.recognizes(text) { return .schedule }
         if ["new ", "create ", "make ", "note: ", "write a note "].contains(where: text.hasPrefix) { return .create }
         switch text {
         case "screenshot", "take a screenshot", "take screenshot", "capture screen": return .action("screenshot")

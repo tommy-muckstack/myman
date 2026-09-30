@@ -29,7 +29,9 @@ final class LauncherPanelController {
         if !isVisible { show() }
     }
 
-    private func show() {
+    func openScheduler() { show(initialQuery: "schedule meeting") }
+
+    private func show(initialQuery: String = "") {
         Analytics.track("launcher_opened")
         panel?.dismiss()
         adaptiveVoice?.stop()
@@ -39,6 +41,7 @@ final class LauncherPanelController {
         let quickTools = LauncherAction(id: "quick_tools", icon: .agent, title: "Quick Tools", hint: nil, enabled: true) {}
         let content = AdaptiveLauncherView(
             actions: makeActions() + [quickTools],
+            initialQuery: initialQuery,
             voice: voice,
             onSaveQueryAsNote: { [weak self] text in self?.saveQueryAsNote(text) },
             onDismiss: { [weak self] in self?.panel?.dismiss() },

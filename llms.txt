@@ -59,3 +59,5 @@ Key facts:
 - Pure local rules, optional on-device Foundation Models entity extraction on supported macOS 26+; never reads calendars/Contacts or writes events, sends invites or books. Future booking must show a preview and require a human pressing Book.
 - Linux/Omarchy CLI and MCP expose the schema but return `unsupported_on_platform` for this action in step 1.
 - Details: https://github.com/tommy-muckstack/myman/blob/main/docs/scheduling-intent.md
+
+Launcher scheduling (step 5): `myman invoke app.open '{"surface":"schedule"}' --json` / MCP `myman_app_app_open` opens an empty native scheduling view on Mac. Type a meeting request to show guest chips, own availability, time pills and an editable preview. Existing human-only parsing/calendar/people grants still apply. No event is created in this step. Linux returns `unsupported_on_platform` for this surface. See docs/launcher-scheduling.md.

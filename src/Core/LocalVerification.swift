@@ -62,7 +62,7 @@ import GRDB
             capture.meetingIDProvider = { meetings.activeCaptureMeetingID }
             let launcher = LauncherPanelController(actions: { [] }, saveQueryAsNote: { _ in })
             actions.openSurface = { surface in
-                switch surface { case "settings": SettingsController.shared.show(); case "note": NoteDocumentController.shared.open(Note(body: "Verification draft")); case "briefs": AgentBriefWindow.shared.open(); case "workflows": WorkflowCenter.shared.open(); default: launcher.open() }
+                switch surface { case "schedule": launcher.openScheduler(); case "settings": SettingsController.shared.show(); case "note": NoteDocumentController.shared.open(Note(body: "Verification draft")); case "briefs": AgentBriefWindow.shared.open(); case "workflows": WorkflowCenter.shared.open(); default: launcher.open() }
             }
             self.actions = actions
             let bridge = AgentBridge { actions.receive($0) }; try bridge.start(); self.bridge = bridge
@@ -80,6 +80,21 @@ import GRDB
                 settings.title = "My Man · agent settings verification"; settings.isReleasedWhenClosed = false
                 settings.contentView = NSHostingView(rootView: AgentSettingsView().preferredColorScheme(.dark))
                 settings.makeKeyAndOrderFront(nil); agentSettingsWindow = settings
+            }
+            if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_SCHEDULER"] == "enabled" {
+                let fixtureModel = SchedulerModel(authorize: { _ in }, read: { args in
+                    let range = try CalendarFreeBusy.range(args)
+                    let start = range.start
+                    return try CalendarFreeBusy.result([
+                        .init(start: start.addingTimeInterval(9 * 3600), end: start.addingTimeInterval(10.5 * 3600)),
+                        .init(start: start.addingTimeInterval(12 * 3600), end: start.addingTimeInterval(13 * 3600)),
+                        .init(start: start.addingTimeInterval(14 * 3600), end: start.addingTimeInterval(15 * 3600))
+                    ], in: range)
+                }, resolve: { _ in [] })
+                let scheduler = NSWindow(contentRect: NSRect(x: 200, y: 180, width: MM.Layout.panelWidth, height: MM.Layout.schedulerHeight), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                scheduler.title = "My Man · scheduling verification"; scheduler.isReleasedWhenClosed = false
+                scheduler.contentView = NSHostingView(rootView: SchedulerView(input: "Coffee with Jilles and Harshil tomorrow at 11am for 30 min", model: fixtureModel).preferredColorScheme(.dark))
+                scheduler.makeKeyAndOrderFront(nil); agentSettingsWindow = scheduler
             }
             let ready: [String: Any] = ["root": root.path, "fixture": url.path, "region": [100,100,900,600], "socket": AgentBridge.path, "theme_a": themeA, "theme_b": themeB, "meeting_id": "meeting-" + meetingID]
             if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_BRIEFS"] == "enabled" {

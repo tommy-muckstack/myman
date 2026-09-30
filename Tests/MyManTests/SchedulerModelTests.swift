@@ -1,0 +1,49 @@
+import XCTest
+@testable import MyMan
+
+final class SchedulerModelTests: XCTestCase {
+    func testSchedulingRoutingPreservesCalendarAndSearch() {
+        for text in ["schedule with mary", "meeting with jilles and harshil", "Coffee with Developer Friday at 10am for 30 min", "book a meeting tomorrow"] {
+            XCTAssertEqual(AdaptiveLauncherIntent.resolve(text), .schedule, text)
+        }
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("my schedule"), .calendar)
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("schedule tomorrow"), .calendar)
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("find meeting with Mary"), .search)
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("record meeting"), .action("meeting"))
+    }
+    @MainActor func testPreviewSelectionBoundariesAndInvalidation() async throws {
+        let now = CalendarFreeBusy.instant("2026-09-30T08:00:00Z")!
+        let model = SchedulerModel(zone:TimeZone(identifier:"UTC")!, now:{ now }, authorize:{ _ in }, read:{ args in
+            let range = try CalendarFreeBusy.range(args)
+            return try CalendarFreeBusy.result([.init(start:now.addingTimeInterval(3600),end:now.addingTimeInterval(7200))],in:range)
+        },resolve:{ _ in [] })
+        await model.load("Coffee with Mary today at 10am for 30 min")
+        XCTAssertEqual(model.people,["Mary"]); XCTAssertEqual(model.title,"Coffee")
+        XCTAssertEqual(model.selected,now.addingTimeInterval(7200));XCTAssertTrue(model.canReview)
+        model.select(now.addingTimeInterval(5400));XCTAssertNil(model.selected)
+        model.select(now.addingTimeInterval(7200));XCTAssertTrue(model.canReview)
+        model.invalidate();XCTAssertFalse(model.hasAvailability);XCTAssertNil(model.selected)
+    }
+    @MainActor func testGrantsPreventCalendarAndPeopleReads() async {
+        var reads = 0
+        let model = SchedulerModel(authorize:{ _ in throw AgentError("AGENT_DISABLED","Denied") },read:{ _ in reads += 1;return [:] },resolve:{ _ in XCTFail("No people read");return [] })
+        await model.load("schedule with mary")
+        XCTAssertEqual(reads,0);XCTAssertTrue(model.needsGrants);XCTAssertFalse(model.canReview)
+    }
+    @MainActor func testInvalidationDiscardsInFlightAvailability() async {
+        var continuation: CheckedContinuation<[String:Any],Error>?
+        let model = SchedulerModel(authorize:{ _ in },read:{ _ in try await withCheckedThrowingContinuation { continuation = $0 } },resolve:{ _ in [] })
+        let task = Task { await model.refresh() }
+        while continuation == nil { await Task.yield() }
+        model.invalidate();continuation?.resume(returning:["complete":true,"scope":"own_calendar","busy":[]])
+        await task.value
+        XCTAssertFalse(model.hasAvailability);XCTAssertNil(model.selected);XCTAssertTrue(model.slots.isEmpty)
+    }
+    @MainActor func testRevocationDuringReadDiscardsAvailability() async {
+        var allowed = true
+        let model = SchedulerModel(authorize:{ _ in if !allowed { throw AgentError("AGENT_DISABLED","Denied") } },read:{ _ in
+            allowed = false;return ["complete":true,"scope":"own_calendar","busy":[]]
+        },resolve:{ _ in [] })
+        await model.refresh();XCTAssertFalse(model.canReview);XCTAssertTrue(model.needsGrants)
+    }
+}

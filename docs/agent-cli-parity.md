@@ -113,3 +113,5 @@ Verification: [media workflow evidence](verification/agent-media-2026-09-12.md).
 ## Workflow completion in 1.1.62
 
 Live discovery reports installed app support; bundled fallback is marked unverified. Agents can attach screenshot copies to notes, use native search, inspect font match evidence/specimens and recover bounded durable job/session receipts after restart. The skills include [complete recipes](agent-workflows.md). Privacy grants remain user-controlled; recovery never replays interrupted actions.
+
+| Scheduling Launcher | `app.open` with `surface: "schedule"`; existing parsing/people/proposal actions | `unsupported_on_platform` for native UI; local ICS/People CLI supported | Keyboard/VoiceOver preview with unknown guest availability; [contract](launcher-scheduling.md). |
