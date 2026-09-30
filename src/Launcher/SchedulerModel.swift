@@ -49,8 +49,19 @@ import Combine
     }
     nonisolated static func recognizes(_ input: String) -> Bool {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.range(of: #"^(?:(?:please\s+)?(?:schedule|book|arrange|set up)\b|(?:meeting|coffee|lunch|catch up|catch-up|call|dinner)\s+with\b)"#, options: [.regularExpression, .caseInsensitive]) != nil
+        return (recognizesCreation(text) || text.range(of: #"^(?:(?:please\s+)?(?:schedule|book|arrange|set up)\b|(?:meeting|coffee|lunch|catch up|catch-up|call|dinner)\s+with\b)"#, options: [.regularExpression, .caseInsensitive]) != nil)
             && LauncherCalendarRequest.parse(text) == nil
+    }
+    private nonisolated static func recognizesCreation(_ input: String) -> Bool {
+        // Creation verbs alone still belong to notes. Match a calendar object,
+        // while keeping requests for meeting notes, call scripts, etc. as notes.
+        input.range(of: #"^\s*(?:please\s+)?(?:create|make|new)\s+(?:an?\s+)?(?:new\s+)?(?:(?:(?:video|phone|conference)\s+)?call|meeting|appointment|(?:calendar\s+)?event|calendar\s+(?:invite|invitation))\b(?!\s+(?:(?:invite|invitation)\s+)?(?:notes?|checklist|summary|transcript|recording|agenda|template|log|script)\b)"#,
+                    options: [.regularExpression, .caseInsensitive]) != nil
+    }
+    nonisolated static func schedulingText(_ input: String) -> String {
+        guard recognizesCreation(input) else { return input }
+        return input.replacingOccurrences(of: #"^\s*(?:please\s+)?(?:create|make|new)\s+(?:an?\s+)?(?:new\s+)?"#,
+                                          with: "", options: [.regularExpression, .caseInsensitive])
     }
     func invalidate() {
         revision += 1; loading = false; hasAvailability = false; selected = nil; slots = []; busy = []; message = nil
@@ -61,7 +72,7 @@ import Combine
         do {
             try authorize("scheduling.parse")
             guard input.count <= SchedulingIntentParser.maximumInputLength else { throw AgentError("INVALID_ARGUMENTS", "Keep the meeting request under 2,000 characters.") }
-            let parsed = await SchedulingIntentService.parse(input, reference: now(), timeZone: zone)
+            let parsed = await SchedulingIntentService.parse(Self.schedulingText(input), reference: now(), timeZone: zone)
             guard version == revision, !Task.isCancelled else { return }
             let intent = parsed.intent
             title = intent.title ?? "Meeting"; people = Array(intent.people.prefix(20)); duration = intent.durationMinutes ?? 30

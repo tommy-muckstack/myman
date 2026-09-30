@@ -81,6 +81,13 @@ import GRDB
                 settings.contentView = NSHostingView(rootView: AgentSettingsView().preferredColorScheme(.dark))
                 settings.makeKeyAndOrderFront(nil); agentSettingsWindow = settings
             }
+            if let query = ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_LAUNCHER_QUERY"], query.count <= SchedulingIntentParser.maximumInputLength {
+                let preview = NSWindow(contentRect: NSRect(x: 200, y: 100, width: MM.Layout.panelWidth, height: MM.Layout.schedulerHeight + MM.Layout.paddingLarge * 4), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                preview.title = "My Man · launcher routing verification"; preview.isReleasedWhenClosed = false
+                preview.contentView = NSHostingView(rootView: AdaptiveLauncherView(actions: [], initialQuery: query,
+                    onSaveQueryAsNote: { _ in }, onDismiss: {}, onSizeChange: { _ in }).preferredColorScheme(.dark))
+                preview.makeKeyAndOrderFront(nil); agentSettingsWindow = preview
+            }
             if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_SCHEDULER"] == "enabled" {
                 let fixtureModel = SchedulerModel(authorize: { _ in }, read: { args in
                     let range = try CalendarFreeBusy.range(args)

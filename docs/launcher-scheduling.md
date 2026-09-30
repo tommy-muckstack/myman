@@ -2,6 +2,8 @@
 
 Type “schedule with Mary”, “meeting with Jilles and Harshil” or “Coffee with Developer Friday at 10am for 30 min” into the Launcher. Search requests (for example “find meeting with Mary”) remain searches; “my schedule” remains the read-only agenda.
 
+“Create call invite”, “create a meeting invitation”, “make a calendar invite” and “new meeting” also open the scheduler. Add people, date, time or duration in the same sentence, or review the visible defaults in the form. Requests for meeting notes, call scripts or invitation templates remain note creation. “Invite” here opens an event preview; it never sends guest invitations or skips the human Book confirmation.
+
 The scheduling view shows guest labels, an editable title/date, 15-minute duration controls, a 9–6 timeline and candidate time pills. Click/drag your row or focus it and use left/right arrows to adjust by 15 minutes. A native time picker provides another keyboard and VoiceOver path. Every guest row explicitly says availability is not shared; only the owner's calendar contributes free/busy. Resolved saved people can be chosen in each chip menu; unresolved names stay labels, never guessed identities or invitation addresses. No Contacts or teammate account access occurs.
 
 Date/time defaults are visible and editable. The view preserves parser warnings, discards stale asynchronous reads, and clears selections when the date/duration/request changes. Permission/read errors remain visible; unknown availability is never displayed as free. Controls use native focus behavior, VoiceOver names, semantic contrast tokens and reduced-motion preferences. The Launcher keeps its deferred, explicit window sizing and scrolls on smaller screens.
