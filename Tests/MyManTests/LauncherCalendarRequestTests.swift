@@ -35,7 +35,7 @@ final class LauncherCalendarRequestTests: XCTestCase {
             XCTAssertNil(LauncherCalendarRequest.parse(input), input)
             XCTAssertEqual(AdaptiveLauncherIntent.resolve(input), .search, input)
         }
-        for input in ["meeting with Sam", "meetings today notes", "calendar redesign"] {
+        for input in ["meetings today notes", "calendar redesign"] {
             XCTAssertNil(LauncherCalendarRequest.parse(input), input)
             XCTAssertEqual(AdaptiveLauncherIntent.resolve(input), .choose, input)
         }

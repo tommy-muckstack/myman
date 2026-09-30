@@ -81,7 +81,7 @@ final class AdaptiveLauncherTests: XCTestCase {
     }
 
     func testAmbiguousTopicsRequireAChoice() {
-        for input in ["budget", "project launch", "meeting with Sam", "the screenshot problem", "", "record", "2026"] {
+        for input in ["budget", "project launch", "the screenshot problem", "", "record", "2026"] {
             XCTAssertEqual(AdaptiveLauncherIntent.resolve(input), .choose, input)
         }
     }

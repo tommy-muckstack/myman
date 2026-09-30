@@ -1,3 +1,5 @@
+> Candidate update, 2026-09-30: root/Linux 0.16.0, Brain 0.15.0, Grok skill unchanged at 0.12.0. Adds the native scheduling Launcher through existing `app.open` (`surface: "schedule"`), retaining all default-off data grants; Linux reports unsupported UI. Prepared, not submitted. Next authorized step: notify marketplace-publishing@cursor.com with @muckstack, this repository and candidate 0.16.0. No email sent.
+
 > Release candidate 1.1.102 (114), 2026-09-29: combines scheduling intent parsing, own-calendar free/busy, saved people resolution and dry-run calendar proposals. Root/Linux 0.15.0, Brain 0.14.0, unchanged Grok skill 0.12.0. All new grants remain human-only and default-off. Launcher scheduling UI and booking are not included. Marketplace update is prepared, not submitted; the pending application still needs an authorized update email to `marketplace-publishing@cursor.com` with `@muckstack`, this repository and candidate 0.15.0. No email sent.
 
 > Candidate update, 2026-09-29: root/Linux **0.15.0**, Brain companion **0.14.0** add `calendar.propose`: local candidate times and an unconfirmed event preview, gated by both `calendar_read` and new default-off `calendar_propose`. Mac reads EventKit with existing human OS permission; Linux/Omarchy reads a configured local ICS snapshot. No booking, invitations, Contacts or teammate availability. Shared native/Node fixtures and source/bundled CLI/MCP grant tests cover the contract. GrokBot skill-only stays **0.12.0**. Prepared, not submitted or marketplace-host-verified. Next step for Tommy: authorize a candidate-update email to `marketplace-publishing@cursor.com` with org `@muckstack`, repo `https://github.com/tommy-muckstack/myman` and candidate `0.15.0`. No email or form was sent.
@@ -16,7 +18,7 @@
 
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.15.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.16.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 

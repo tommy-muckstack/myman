@@ -89,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         let actions = AgentActions(capture: capture, meetings: meetings, voice: voice)
         actions.openSurface = { [weak self] surface in
-            switch surface { case "note": self?.notesPanel.show(); case "settings": SettingsController.shared.show(); case "briefs": AgentBriefWindow.shared.open(); case "workflows": WorkflowCenter.shared.open(); default: self?.launcher.open() }
+            switch surface { case "schedule": self?.launcher.openScheduler(); case "note": self?.notesPanel.show(); case "settings": SettingsController.shared.show(); case "briefs": AgentBriefWindow.shared.open(); case "workflows": WorkflowCenter.shared.open(); default: self?.launcher.open() }
         }
         agentActions = actions
         let bridge = AgentBridge { [weak self] request in

@@ -153,6 +153,7 @@ struct AdaptiveLauncherView: View {
         .onAppear {
             showingCommands = initialQuery.hasPrefix("/")
             query = showingCommands ? String(initialQuery.dropFirst()) : initialQuery
+            routing.update(query)
             focused = true
         }
         .onDisappear { voice.stop(); correctionLearner.cancel() }
@@ -207,6 +208,7 @@ struct AdaptiveLauncherView: View {
                 Text("This action isn’t available on this Mac.").font(MM.Fonts.body).padding(MM.Layout.padding)
             }
         case .tasks: TasksPanelView(inline: true)
+        case .schedule: SchedulerView(input: query, onExample: { query = $0 })
         case .calendar: CalendarPanelView(inline: true, request: LauncherCalendarRequest.parse(query) ?? .today)
         case .commands:
             AdaptiveResultScroll {
