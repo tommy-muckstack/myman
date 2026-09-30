@@ -18,6 +18,7 @@ import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs'
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
 myman doctor --json
+myman calendar book / calendar booking: unsupported_on_platform (no calendar writes on Linux)
 myman calendar propose --title TEXT --after ISO --before ISO --time-zone IANA --json (preview only; calendar_read + calendar_propose grants)
 myman calendar free --after ISO --before ISO --json (calendar_read grant + owner-configured calendar.json ICS snapshot)
 myman people resolve --names '["Jilles","Harshil"]' --json (people_read grant; local people.md export)

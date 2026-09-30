@@ -1,5 +1,5 @@
 {
-  "version": "0.15.0",
+  "version": "0.16.0",
   "actions": [
     {
       "name": "app.status",
@@ -4360,6 +4360,85 @@
       "destructive": false,
       "permissions": [
         "people_read"
+      ]
+    },
+    {
+      "name": "calendar.book",
+      "description": "Open an immutable event preview for the human to review and press Book in My Man. Returns awaiting_human_confirmation, never autonomous booking. Requires default-off calendar_write plus calendar_read and existing OS Calendar access. No invitations or video links. Linux returns unsupported_on_platform. Poll calendar.booking with booking_id set to the returned request_id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "time_zone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "IANA zone or UTC for the event preview."
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 480,
+            "description": "Required elapsed minutes."
+          },
+          "guests": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "Display labels only. Never resolves contacts, checks guest availability or sends invitations."
+          },
+          "start": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Future ISO 8601 instant with seconds and UTC offset."
+          }
+        },
+        "required": [
+          "title",
+          "start",
+          "time_zone",
+          "duration_minutes"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "calendar_read",
+        "calendar_write"
+      ]
+    },
+    {
+      "name": "calendar.booking",
+      "description": "Read this credential\u2019s in-memory booking preview status. No confirmation or write occurs. NOT_FOUND after app restart or receipt eviction; never automatically replay an unknown booking. Linux returns unsupported_on_platform.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "booking_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "booking_id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "calendar_read",
+        "calendar_write"
       ]
     }
   ]

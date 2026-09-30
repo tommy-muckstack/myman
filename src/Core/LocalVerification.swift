@@ -97,6 +97,14 @@ import GRDB
                 scheduler.makeKeyAndOrderFront(nil); agentSettingsWindow = scheduler
             }
             let ready: [String: Any] = ["root": root.path, "fixture": url.path, "region": [100,100,900,600], "socket": AgentBridge.path, "theme_a": themeA, "theme_b": themeB, "meeting_id": "meeting-" + meetingID]
+            if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_BOOKING"] == "enabled" {
+                let start = Calendar.current.date(bySettingHour: 11, minute: 0, second: 0, of: Date().addingTimeInterval(86400))!
+                let draft = try CalendarBookingDraft(["title": "Coffee with Mary", "start": ISO8601DateFormatter().string(from: start),
+                    "time_zone": "America/New_York", "duration_minutes": 30, "guests": ["Mary"]])
+                let fixture = CalendarBookingSession(draft: draft, owner: nil, calendars: [("fixture", "Personal")], defaultID: "fixture",
+                    authorize: {}, save: { _, _ in "synthetic-event-only" })
+                CalendarBookingWindow.shared.show(fixture)
+            }
             if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_BRIEFS"] == "enabled" {
                 let movie = root.appendingPathComponent("brief-source.mov")
                 if FileManager.default.fileExists(atPath: movie.path) {

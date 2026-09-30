@@ -9,6 +9,13 @@ Key facts:
 - Check permissions before acting with `myman doctor --json` or the `myman_app_capabilities` MCP tool. Agents cannot grant themselves permissions.
 - No cloud relay, account, or API key. Requires macOS 14.2+ (screen recording needs macOS 15+).
 
+## Calendar booking and Launcher (candidate)
+
+- Root/Linux candidate 0.17.0, Brain 0.16.0: type “schedule with Mary” in the native Launcher, select a time, then Review event. `app.open` with `surface: "schedule"` opens it without granting data access.
+- `myman calendar book --title TEXT --start ISO --time-zone IANA --duration-minutes 30 --json` / action `calendar.book` / MCP `myman_app_calendar_book` opens an immutable native preview. Requires human-enabled `calendar_read` AND new default-off `calendar_write`, both named scopes and existing OS Calendar access. Returns `awaiting_human_confirmation`, not a created event. Only the human presses Book; agents must never automate confirmation. No invite recipients or video links are accepted; guest labels are saved as notes only.
+- Poll `myman calendar booking --booking-id RETURNED_REQUEST_ID --json` / `calendar.booking` / `myman_app_calendar_booking`. Receipts are credential-scoped, in-memory and lost on restart; pending previews expire after ten minutes. Cancel/expiry/revocation prevent writes; double presses cannot replay a save. Availability is checked again before saving. Never automatically retry uncertain saves; inspect Calendar first. Linux/Omarchy returns `unsupported_on_platform` for both actions, even with ICS configured; no Linux write grant is claimed.
+- Full contract: https://github.com/tommy-muckstack/myman/blob/main/docs/calendar-book.md. These candidates are not in the 1.1.102 installer.
+
 ## Saved people resolution (candidate)
 
 - CLI: `myman people resolve --names '["jilles","harshil"]' --limit 5 --json`. Action `people.resolve`; MCP `myman_app_people_resolve`. Requires a new human-enabled, default-off `people_read` grant and named-agent scope. `doctor` reports the grant; agents cannot enable it.
