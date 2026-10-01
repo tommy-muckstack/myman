@@ -309,7 +309,10 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     config.height = max(2, Int(filter.contentRect.height * scale) & ~1)
                 }
                 if resuming, let previous = self.streamConfiguration { config.width = previous.width; config.height = previous.height }
-                config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+                // 60 fps: scrolling, cursor motion and the webcam bubble read
+                // as video rather than a flipbook. SCK only delivers frames
+                // that changed, so a static screen costs nothing extra.
+                config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
                 // Preserve the display's real pixels. Automatic capture can
                 // choose a nominal surface on some Retina displays, which
                 // looks soft after sharing or re-encoding.
@@ -341,12 +344,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
                 let recordingConfig = SCRecordingOutputConfiguration()
                 recordingConfig.outputURL = url
-                recordingConfig.outputFileType = .mov
-                // HEVC delivers materially cleaner text/UI at the same (or
-                // smaller) file size. Fall back only when a Mac cannot write
-                // it, preserving a universally playable H.264 recording.
-                if recordingConfig.availableVideoCodecTypes.contains(.hevc) {
-                    recordingConfig.videoCodecType = .hevc
+                recordingConfig.outputFileType = .mov // the capture; ShareReadyMovie turns it into the saved .mp4
+                // H.264, deliberately: the saved file is meant to be dropped
+                // into Slack, a browser, or a Windows machine as-is, and
+                // HEVC does not play in any of those without hardware
+                // support. The capture runs at full Retina resolution, so
+                // text stays crisp; the codec is the compatibility choice.
+                if recordingConfig.availableVideoCodecTypes.contains(.h264) {
+                    recordingConfig.videoCodecType = .h264
                 }
                 let output = SCRecordingOutput(configuration: recordingConfig, delegate: self)
                 startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
@@ -461,13 +466,37 @@ final class ScreenRecorder: NSObject, ObservableObject {
         try await stream.stopCapture()
         self.stream = nil
         try await waitForOutput(output, finished: true)
-        guard await narration.finish(into: url) else { throw AgentError("AUDIO_FINALIZATION_FAILED", "Narration could not be merged. Recover the video and narration sidecar from recovery_paths.") }
-        let metadata = try await AgentVideo.attachment(url, preview: false)
+        let final = try await finalizeSegment(url)
+        let metadata = try await AgentVideo.attachment(final, preview: false)
         completedSeconds += metadata["duration"] as? Double ?? 0
         segmentStartedAt = nil
-        segmentURLs.append(url)
+        segmentURLs.append(final)
         startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
         recordingOutput = nil; outputURL = nil
+    }
+
+    /// The captured .mov (+ narration WAV) becomes the share-ready .mp4 —
+    /// one video track, one mixed AAC track — and the inputs are removed.
+    /// With narration, a failure keeps every input beside the movie and
+    /// throws (the voice must never vanish silently); without it, the raw
+    /// capture is still a complete recording, so it is kept as the segment.
+    private func finalizeSegment(_ url: URL) async throws -> URL {
+        let take = narration.close()
+        do {
+            let final = try await ShareReadyMovie.finalize(
+                movie: url, narration: take?.wavURL, narrationOffsetSeconds: take?.offsetSeconds ?? 0)
+            try? FileManager.default.removeItem(at: url)
+            if let take { try? FileManager.default.removeItem(at: take.wavURL) }
+            return final
+        } catch {
+            NSLog("My Man [Record] share-ready finalize failed: \(error)")
+            if take != nil {
+                Analytics.track("recording_narration_mux_failed")
+                throw AgentError("AUDIO_FINALIZATION_FAILED", "Narration could not be merged. Recover the video and narration sidecar from recovery_paths.")
+            }
+            Analytics.track("recording_share_finalize_failed")
+            return url
+        }
     }
 
     func statusForAgent(sessionID: String? = nil) throws -> [String: Any] {
@@ -486,7 +515,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
     private func recoveryError(_ error: Error) -> [String: Any] {
         var result = AgentActions.error(error)
-        let files = segmentURLs + (outputURL.map { [$0, $0.deletingPathExtension().appendingPathExtension("narration.wav")] } ?? [])
+        let files = segmentURLs + (outputURL.map { [$0, ShareReadyMovie.shareURL(for: $0), $0.deletingPathExtension().appendingPathExtension("narration.wav")] } ?? [])
         result["recovery_paths"] = files.filter { FileManager.default.fileExists(atPath: $0.path) }.map(\.path)
         return result
     }
@@ -534,7 +563,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         } catch {
             sessionError = AgentActions.error(error)
             if stream == nil {
-                if let outputURL { _ = await narration.finish(into: outputURL) }
+                if let outputURL { _ = try? await finalizeSegment(outputURL) }
                 finishSession(state: "failed", error: recoveryError(error)); clearCaptureControls()
                 await AudioCapture.shared.setSuppressVoiceProcessing(false); isBusy = false
             } else { sessionState = "recording" }
@@ -565,7 +594,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 let final: URL
                 if segmentURLs.count == 1 { final = first }
                 else {
-                    final = first.deletingLastPathComponent().appendingPathComponent("Recording-\(UUID().uuidString).mov")
+                    final = first.deletingLastPathComponent().appendingPathComponent("Recording-\(UUID().uuidString).mp4")
                     try await AgentVideo.join(segmentURLs, to: final)
                 }
                 let metadata = try await AgentVideo.attachment(final, preview: false)
@@ -588,7 +617,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     isRecording = true; sessionState = "recording"; sessionError = AgentActions.error(error)
                     return
                 }
-                if let outputURL { _ = await narration.finish(into: outputURL) }
+                if let outputURL { _ = try? await finalizeSegment(outputURL) }
                 finishSession(state: "failed", error: recoveryError(error))
                 Toast.show("Recording could not be finalized", systemImage: "exclamationmark.triangle")
             }
@@ -1049,7 +1078,10 @@ final class WebcamBubble: ObservableObject {
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device) else { return }
         let session = AVCaptureSession()
-        session.sessionPreset = .medium
+        // The bubble is filmed off the screen at Retina scale, so the feed
+        // behind it has to carry real pixels: 1080p when the camera can,
+        // 720p otherwise. (.medium was 480×360 — visibly soft once shared.)
+        session.sessionPreset = Self.bestPreset(for: session)
         guard session.canAddInput(input) else { return }
         session.addInput(input)
 
@@ -1057,8 +1089,8 @@ final class WebcamBubble: ObservableObject {
         // small regions); screen corner otherwise.
         let region = preferredRegion
         let diameter: CGFloat = region.map {
-            max(80, min(180, min($0.width, $0.height) * 0.35))
-        } ?? 180
+            max(96, min(Self.fullDiameter, min($0.width, $0.height) * 0.4))
+        } ?? Self.fullDiameter
         let view = WebcamBubbleView(diameter: diameter, session: session)
 
         let panel = NSPanel(
@@ -1112,6 +1144,15 @@ final class WebcamBubble: ObservableObject {
     /// Reset only for a new selected recording region. Camera on/off during a
     /// take deliberately keeps the user's dragged position.
     func resetPosition() { lastFrame = nil }
+
+    /// Bubble size on a full-screen recording (points; captured at 2× on Retina).
+    static let fullDiameter: CGFloat = 240
+
+    static func bestPreset(for session: AVCaptureSession) -> AVCaptureSession.Preset {
+        for preset in [AVCaptureSession.Preset.hd1920x1080, .hd1280x720, .high]
+        where session.canSetSessionPreset(preset) { return preset }
+        return .medium
+    }
 }
 
 /// A recognizable, camera-first signature for My Man recordings. The shape is
@@ -1145,6 +1186,15 @@ private final class WebcamBubbleView: NSView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    /// Manually added sublayers do not pick up the window's backing scale;
+    /// without this the preview composites at 1× and is then upscaled.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        layer?.contentsScale = scale
+        previewLayer.contentsScale = scale
+    }
 
     func playEntrance() {
         guard let layer else { return }

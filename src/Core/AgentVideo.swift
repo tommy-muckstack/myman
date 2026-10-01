@@ -134,7 +134,7 @@ import AVFoundation
             cursor = CMTimeAdd(cursor, duration)
         }
         guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else { throw AgentError("EXPORT_FAILED", "Cannot join recording segments.") }
-        exporter.outputURL = destination; exporter.outputFileType = .mov
+        exporter.outputURL = destination; exporter.outputFileType = destination.pathExtension.lowercased() == "mp4" ? .mp4 : .mov
         await exporter.export()
         guard exporter.status == .completed else { try? FileManager.default.removeItem(at: destination); throw AgentError("EXPORT_FAILED", exporter.error?.localizedDescription ?? "Segment assembly failed.") }
     }

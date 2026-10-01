@@ -94,7 +94,7 @@ If `myman` isn't on the PATH, it lives at `"/Applications/My Man.app/Contents/Re
 - **Dictation** — hold Left ⌘, speak, release; text types into any app. On-device speech models, whisper-friendly, AI cleanup, a vocabulary that learns your proper nouns
 - **Meetings** — detects Zoom / Meet / Teams / Webex / Slack huddles / Discord / FaceTime; starts listening 45s before calendar meetings but saves nothing without your explicit click; auto-stops on hang-up; named speakers, timestamps, slide snapshots, on-device summaries
 - **Screenshots** — region capture, annotation editor (arrows, boxes, highlight, text, pixelate, crop, background removal), Photos-grade text selection, in-place translation
-- **Screen recording** — drag any region (persistent frame outline), optional webcam bubble, mic + system audio, local `.mov` files; narration transcribed into the brain
+- **Screen recording** — drag any region (persistent frame outline), optional webcam bubble, mic + system audio, share-ready `.mp4` files (H.264 + one mixed AAC track, so the audio plays in Slack and browsers); narration transcribed into the brain
 - **Notes** — WYSIWYG markdown, instant capture
 
 Day-to-day details (launcher, search, notes, checklists, meeting transcripts) are in [Using My Man](docs/using-myman.md).
