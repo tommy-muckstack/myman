@@ -11,7 +11,7 @@ work in this checkout is separate from the human-facing product changes.
 | Meetings | `MeetingController`, CoreAudio process taps, calendar/app detection, provisional recordings that are discarded unless retained (or explicit auto-record setting), serialized transcription, diarization, slide captures, local summaries. Editable title/summary/transcript in `MeetingDocumentView`. |
 | Screenshots | `CaptureController` freezes displays, opens region picker, saves PNG/clipboard, shows thumbnail and editor. Vision OCR/classification runs after capture. |
 | Screenshot manipulation | Existing annotation, crop, pixelation, background removal, image overlays, translation, and VisionKit Live Text selection/data detectors. Extend these instead of replacing them. |
-| Screen recordings | `ScreenRecorder`, region selection, optional webcam/cursor effects, microphone/system audio, local MOV and narration transcript. |
+| Screen recordings | `ScreenRecorder`, region selection, optional webcam/cursor effects, microphone/system audio, local share-ready MP4 (single mixed audio track) and narration transcript. |
 | Notes | `Note`/`NotesStore`, quick capture and autosaving rich Markdown documents. |
 | Other existing surfaces | Tasks/calendar side panels, people/vocabulary learning, a hidden local chat beta. These are not new organizational abstractions and will not become Themes. |
 

@@ -6,7 +6,8 @@ import Foundation
 // leaves narration watery, muffled, and quiet no matter which device it
 // uses. Our own raw AudioCapture session (the dictation pipeline's engine,
 // minus voice processing) hears the mic exactly; the take is peak-normalized
-// once at the end and muxed into the movie as its own PCM track.
+// once at the end and mixed into the movie's single shareable audio track
+// by `ShareReadyMovie`.
 
 @MainActor
 final class NarrationTrack {
@@ -76,12 +77,18 @@ final class NarrationTrack {
                        : native.samples)
     }
 
-    /// Close out the take: final drain, whole-take peak normalization, then
-    /// mux into the movie as a second audio track. Returns when the movie is
-    /// final. The sidecar WAV is deleted on success and kept beside the
-    /// movie on mux failure — narration must never be silently lost.
-    @discardableResult func finish(into movieURL: URL) async -> Bool {
-        guard let session else { return true }
+    /// A closed, peak-normalized take and where it starts on the video's timeline.
+    struct Take {
+        var wavURL: URL
+        var offsetSeconds: Double
+    }
+
+    /// Close out the take: final drain + whole-take peak normalization.
+    /// Returns nil when the mic was never on for this segment. The WAV is
+    /// the caller's to mix in (see `ShareReadyMovie`) and delete; it stays
+    /// beside the movie if that fails — narration must never be silently lost.
+    func close() -> Take? {
+        guard let session else { return nil }
         drain()
         _ = AudioCapture.shared.end(session)
         self.session = nil
@@ -89,19 +96,11 @@ final class NarrationTrack {
         drainTimer = nil
         guard let wavURL = writer?.close() else {
             writer = nil
-            return false
+            return nil
         }
         writer = nil
         Self.normalize(wavURL: wavURL)
-        if await Self.mux(narration: wavURL, into: movieURL,
-                          atOffsetSeconds: startOffsetSeconds) {
-            try? FileManager.default.removeItem(at: wavURL)
-            return true
-        } else {
-            NSLog("My Man [Record] narration mux failed — WAV kept at \(wavURL.path)")
-            Analytics.track("recording_narration_mux_failed")
-            return false
-        }
+        return Take(wavURL: wavURL, offsetSeconds: startOffsetSeconds)
     }
 
     /// Abandon the take (restart/discard): stop capturing, delete the WAV.
@@ -153,54 +152,6 @@ final class NarrationTrack {
             try? handle.write(contentsOf: data)
             offset += UInt64(data.count)
             if data.count < sliceBytes { break }
-        }
-    }
-
-    /// Passthrough remux: all of the movie's tracks plus the narration WAV
-    /// as an additional PCM audio track. No video re-encode.
-    private static func mux(narration wavURL: URL, into movieURL: URL,
-                            atOffsetSeconds offset: Double) async -> Bool {
-        let movie = AVURLAsset(url: movieURL)
-        let wav = AVURLAsset(url: wavURL)
-        let composition = AVMutableComposition()
-        do {
-            let movieDuration = try await movie.load(.duration)
-            for track in try await movie.load(.tracks) {
-                guard let target = composition.addMutableTrack(
-                    withMediaType: track.mediaType,
-                    preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
-                try target.insertTimeRange(
-                    CMTimeRange(start: .zero, duration: movieDuration),
-                    of: track, at: .zero)
-            }
-            guard let narrationSource = try await wav.loadTracks(withMediaType: .audio).first,
-                  let narrationTarget = composition.addMutableTrack(
-                      withMediaType: .audio,
-                      preferredTrackID: kCMPersistentTrackID_Invalid) else { return false }
-            let wavDuration = try await wav.load(.duration)
-            let start = CMTime(seconds: offset, preferredTimescale: 600)
-            let available = CMTimeSubtract(movieDuration, start)
-            try narrationTarget.insertTimeRange(
-                CMTimeRange(start: .zero,
-                            duration: CMTimeMinimum(wavDuration, available)),
-                of: narrationSource, at: start)
-
-            guard let export = AVAssetExportSession(
-                asset: composition, presetName: AVAssetExportPresetPassthrough) else { return false }
-            let temp = movieURL.deletingLastPathComponent()
-                .appendingPathComponent(".mux-\(UUID().uuidString).mov")
-            export.outputURL = temp
-            export.outputFileType = .mov
-            await export.export()
-            guard export.status == .completed else {
-                try? FileManager.default.removeItem(at: temp)
-                return false
-            }
-            _ = try FileManager.default.replaceItemAt(movieURL, withItemAt: temp)
-            return true
-        } catch {
-            NSLog("My Man [Record] mux error: \(error)")
-            return false
         }
     }
 }

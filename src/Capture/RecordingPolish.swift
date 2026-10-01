@@ -300,8 +300,8 @@ enum RecordingPolish {
     }
 
     /// Writes the polished copy. Audio passes through untouched; video is
-    /// re-rendered through `Renderer` and encoded with the Mac's hardware
-    /// encoder when HEVC is available.
+    /// re-rendered through `Renderer` and encoded as H.264 (the format every
+    /// player accepts) with the Mac's hardware encoder.
     static func export(source: URL, to destination: URL, options: PolishOptions, clicks: [RecordedClick],
                        cursor: CursorTrack? = nil, keystrokes: [RecordedKeystroke] = [], zoomWindows: [ZoomTimeline.Window]? = nil,
                        progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws {
@@ -319,7 +319,9 @@ enum RecordingPolish {
         let start = min(max(0, options.trimStart), max(0, duration - 0.1))
         let end = min(options.trimEnd ?? duration, duration)
         guard end - start >= 0.1 else { throw AgentError("INVALID_ARGUMENTS", "Keep at least a tenth of a second of the recording.") }
-        let presets = [AVAssetExportPresetHEVCHighestQuality, AVAssetExportPresetHighestQuality]
+        // H.264 first: a polished recording exists to be shared, and HEVC
+        // will not play in Slack or a browser on most non-Apple machines.
+        let presets = [AVAssetExportPresetHighestQuality, AVAssetExportPresetHEVCHighestQuality]
         guard let preset = presets.first(where: { AVAssetExportSession.exportPresets(compatibleWith: asset).contains($0) }),
               let exporter = AVAssetExportSession(asset: asset, presetName: preset) else {
             throw AgentError("EXPORT_FAILED", "No export preset is available for this recording.")
