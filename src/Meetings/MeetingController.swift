@@ -159,7 +159,7 @@ final class MeetingController: ObservableObject {
     private var meeting: Meeting?
     var recordingSummary: String { meeting?.summary ?? "" }
     private var panel: FloatingPanel?
-    private var pausedMusic = false
+    private let musicPlayback = MeetingMusicPlayback()
     /// Set by the calendar nudge before starting — the event's real name.
     var pendingTitle: String?
     /// Attendees captured at recording start; counted only if it's KEPT.
@@ -1981,27 +1981,11 @@ final class MeetingController: ObservableObject {
     // MARK: Music pause (Do Not Disturb comes later — needs a Shortcuts hook)
 
     private func pauseMusicIfPlaying() {
-        pausedMusic = runAppleScript(
-            "tell application \"Music\" to if it is running and player state is playing then\npause\nreturn \"paused\"\nend if"
-        ) == "paused"
-        if runAppleScript(
-            "tell application \"Spotify\" to if it is running and player state is playing then\npause\nreturn \"paused\"\nend if"
-        ) == "paused" {
-            pausedMusic = true
-        }
+        musicPlayback.pause()
     }
 
     private func resumeMusicIfPaused() {
-        guard pausedMusic else { return }
-        pausedMusic = false
-        _ = runAppleScript("tell application \"Music\" to if it is running then play")
-    }
-
-    @discardableResult
-    private func runAppleScript(_ source: String) -> String? {
-        var error: NSDictionary?
-        let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
-        return result?.stringValue
+        musicPlayback.resume()
     }
 
     // MARK: Pill

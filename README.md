@@ -208,6 +208,15 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## Reliability update (1.1.104)
+
+- Meeting startup stays responsive when music automation is slow or unavailable.
+- Stop resumes only the music players My Man successfully paused.
+- Retired microphone engines release their hardware-change observers.
+- Updated macOS exception reporting preserves the original AppKit exception for diagnosis.
+
+See the [Sentry investigation](docs/sentry-investigation-2026-10-01.md) for evidence, verification, and remaining crash-diagnosis limits.
+
 ## Human and agent workflows (1.1.103 / companion 0.16.0)
 
 Workflows and Recovery brings connection checks, selected context handoff, source-backed meeting decisions, dictation delivery history and safe continuation into My Man. Scrolling capture and floating references join keyboard/VoiceOver capture controls and scalable interface text. [Workflow guide](https://github.com/tommy-muckstack/myman/blob/main/docs/human-agent-workflows.md).

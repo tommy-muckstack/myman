@@ -22,6 +22,9 @@ enum CrashReporting {
             // "Not responding" is as bad as crashing for a hotkey app.
             options.enableAppHangTracking = true
             options.appHangTimeoutInterval = 3
+            // Preserve the original NSException and throwing stack before
+            // AppKit terminates in +[NSApplication _crashOnException:].
+            options.enableUncaughtNSExceptionReporting = true
             // Crashes and hangs only — no tracing/session-replay payloads.
             options.tracesSampleRate = 0
         }
