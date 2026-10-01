@@ -17,6 +17,7 @@ final class AudioCapture: @unchecked Sendable {
     enum Mode { case voiceProcessed, raw }
 
     private var engine: AVAudioEngine?
+    private var configurationObservation: AudioEngineConfigurationObservation?
     private var vpEnabled = false
     private var requestedVoiceProcessing = false
     private var tapInstalled = false
@@ -124,11 +125,9 @@ final class AudioCapture: @unchecked Sendable {
     /// ahead of the clock — and the microphone would go silent for the rest
     /// of the meeting.
     private func observeConfigurationChanges(of eng: AVAudioEngine) {
-        NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: eng, queue: nil
-        ) { [weak self] _ in
-            Self.engineQueue.async {
-                guard let self, self.engine === eng else { return }
+        configurationObservation = AudioEngineConfigurationObservation(engine: eng) { [weak self, weak eng] in
+            Self.engineQueue.async { [weak self, weak eng] in
+                guard let self, let eng, self.engine === eng else { return }
                 self.lock.lock()
                 let active = !self.buffers.isEmpty
                 self.lock.unlock()
@@ -224,6 +223,10 @@ final class AudioCapture: @unchecked Sendable {
 
     /// Engine-queue only. A failed graph must never be reused on a later take.
     private func discardEngine() {
+        // Remove the registration BEFORE stopping the graph. NotificationCenter
+        // retains block observers; capturing the engine there kept every retired
+        // graph alive and listening to hardware changes (MYMAN-V).
+        configurationObservation = nil
         if tapInstalled {
             engine?.inputNode.removeTap(onBus: 0)
             tapInstalled = false

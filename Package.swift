@@ -9,7 +9,8 @@ let package = Package(
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.1"),
         .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.0"),
-        .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "8.36.0"),
+        // 9.7 fixes macOS 26 class-method AppKit exception capture (MYMAN-W).
+        .package(url: "https://github.com/getsentry/sentry-cocoa.git", exact: "9.7.0"),
         .package(url: "https://github.com/amplitude/Amplitude-Swift.git", from: "1.9.0"),
     ],
     targets: [
