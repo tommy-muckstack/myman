@@ -36,6 +36,54 @@ struct CompositeCapture {
             size: CGSize(width: clamped.width / scaleFactor, height: clamped.height / scaleFactor)
         )
     }
+
+    /// One display's pixels plus the desktop frame they cover.
+    struct Layer {
+        let image: CGImage
+        /// Points, bottom-left origin (NSScreen.frame).
+        let frame: CGRect
+        let scaleFactor: CGFloat
+    }
+
+    /// Paste per-display captures into one canvas covering `combinedFrame`.
+    /// Kept free of ScreenCaptureKit so the placement math is unit-testable.
+    static func compose(_ layers: [Layer], combinedFrame: CGRect, scaleFactor maxScale: CGFloat) -> CompositeCapture? {
+        let pixelWidth = Int(combinedFrame.width * maxScale)
+        let pixelHeight = Int(combinedFrame.height * maxScale)
+        guard pixelWidth > 0, pixelHeight > 0, let context = CGContext(
+            data: nil, width: pixelWidth, height: pixelHeight,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else { return nil }
+
+        // Transparent base handles gaps between monitors.
+        context.clear(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
+
+        for layer in layers {
+            // CGContext shares the virtual desktop's bottom-left origin, so
+            // no y-flip here; only crop(to:) flips, because it reads the
+            // finished (top-left origin) image. Flipping on both sides
+            // mirrors any display that doesn't touch both the top and bottom
+            // of the combined frame, e.g. a laptop beside a taller monitor.
+            let relativeX = (layer.frame.origin.x - combinedFrame.origin.x) * maxScale
+            let relativeY = (layer.frame.origin.y - combinedFrame.origin.y) * maxScale
+            // Each display captures at its own scale; normalize into the composite's.
+            let ratio = maxScale / layer.scaleFactor
+            context.draw(layer.image, in: CGRect(
+                x: relativeX, y: relativeY,
+                width: CGFloat(layer.image.width) * ratio,
+                height: CGFloat(layer.image.height) * ratio
+            ))
+        }
+
+        guard let composite = context.makeImage() else { return nil }
+        return CompositeCapture(
+            image: NSImage(cgImage: composite, size: combinedFrame.size),
+            combinedFrame: combinedFrame,
+            scaleFactor: maxScale
+        )
+    }
 }
 
 @MainActor
@@ -126,7 +174,7 @@ final class CaptureEngine: ObservableObject {
         // crop math assumes, or selections on lower-DPI displays land wrong.
         let maxScale = displays.map(\.scaleFactor).max() ?? 2.0
 
-        var captured: [(CGImage, DisplayInfo)] = []
+        var layers: [CompositeCapture.Layer] = []
         for display in displays {
             let filter = SCContentFilter(display: display.scDisplay, excludingWindows: [])
             let config = SCStreamConfiguration()
@@ -135,41 +183,12 @@ final class CaptureEngine: ObservableObject {
             let image = try await SCScreenshotManager.captureImage(
                 contentFilter: filter, configuration: config
             )
-            captured.append((image, display))
+            layers.append(.init(image: image, frame: display.frame, scaleFactor: display.scaleFactor))
         }
 
-        let pixelWidth = Int(combinedFrame.width * maxScale)
-        let pixelHeight = Int(combinedFrame.height * maxScale)
-        guard let context = CGContext(
-            data: nil, width: pixelWidth, height: pixelHeight,
-            bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-        ) else { throw CaptureError.captureFailure }
-
-        // Transparent base handles gaps between monitors.
-        context.clear(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
-
-        for (image, display) in captured {
-            let relativeX = (display.frame.origin.x - combinedFrame.origin.x) * maxScale
-            // Flip: distance from the combined frame's top to this display's top.
-            let distanceFromTop = (combinedFrame.origin.y + combinedFrame.height)
-                - (display.frame.origin.y + display.frame.height)
-            let relativeY = distanceFromTop * maxScale
-            // Each display captures at its own scale; normalize into the composite's.
-            let ratio = maxScale / display.scaleFactor
-            context.draw(image, in: CGRect(
-                x: relativeX, y: relativeY,
-                width: CGFloat(image.width) * ratio,
-                height: CGFloat(image.height) * ratio
-            ))
+        guard let composite = CompositeCapture.compose(layers, combinedFrame: combinedFrame, scaleFactor: maxScale) else {
+            throw CaptureError.captureFailure
         }
-
-        guard let composite = context.makeImage() else { throw CaptureError.captureFailure }
-        return CompositeCapture(
-            image: NSImage(cgImage: composite, size: combinedFrame.size),
-            combinedFrame: combinedFrame,
-            scaleFactor: maxScale
-        )
+        return composite
     }
 }
