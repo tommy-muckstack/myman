@@ -11,6 +11,32 @@ final class SchedulerModelTests: XCTestCase {
         XCTAssertEqual(AdaptiveLauncherIntent.resolve("find meeting with Mary"), .search)
         XCTAssertEqual(AdaptiveLauncherIntent.resolve("record meeting"), .action("meeting"))
     }
+    func testCalendarCreationPhrasesOpenSchedulerInsteadOfCreatingNotes() {
+        for text in ["create call invite", "create a call invite", "create a new call invite", "Create a meeting invitation with Mary tomorrow at 10am",
+                     "please make a calendar invite", "new meeting", "create an appointment Friday",
+                     "make a phone call with Mary", "create a video call", "new calendar event", "create an event tomorrow"] {
+            XCTAssertEqual(AdaptiveLauncherIntent.resolve(text), .schedule, text)
+        }
+        for text in ["create meeting notes", "create call notes", "create a call script", "new meeting agenda",
+                     "create a meeting invite template", "create call invite checklist", "create a checklist",
+                     "create calligraphy", "make a note about a call invite"] {
+            XCTAssertEqual(AdaptiveLauncherIntent.resolve(text), .create, text)
+        }
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("find call invite"), .search)
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("show me meeting invitations"), .search)
+        XCTAssertEqual(AdaptiveLauncherIntent.resolve("record a meeting"), .action("meeting"))
+    }
+    func testCreationWordingIsRemovedBeforeSchedulingParse() {
+        let now = CalendarFreeBusy.instant("2026-09-30T08:00:00Z")!
+        let intent = SchedulingIntentParser.parse(SchedulerModel.schedulingText("Please create a call invite with Mary tomorrow at 10am for 30 min"),
+                                                 reference: now, timeZone: TimeZone(identifier: "UTC")!)
+        XCTAssertEqual(intent.title, "call invite"); XCTAssertEqual(intent.people, ["Mary"])
+        XCTAssertEqual(intent.day, "2026-10-01"); XCTAssertEqual(intent.time, "10:00"); XCTAssertEqual(intent.durationMinutes, 30)
+        let bare = SchedulingIntentParser.parse(SchedulerModel.schedulingText("create call invite"), reference: now, timeZone: TimeZone(identifier: "UTC")!)
+        XCTAssertEqual(bare.title, "call invite"); XCTAssertTrue(bare.people.isEmpty)
+        XCTAssertNil(bare.day); XCTAssertNil(bare.time)
+        XCTAssertEqual(SchedulerModel.schedulingText("create meeting notes"), "create meeting notes")
+    }
     @MainActor func testPreviewSelectionBoundariesAndInvalidation() async throws {
         let now = CalendarFreeBusy.instant("2026-09-30T08:00:00Z")!
         let model = SchedulerModel(zone:TimeZone(identifier:"UTC")!, now:{ now }, authorize:{ _ in }, read:{ args in
