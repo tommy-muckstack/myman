@@ -35,7 +35,7 @@ My Man gives an AI agent working on a Mac (or Linux) eyes, hands, and memory, al
 
 There are over 120 app actions. Every result is JSON with a stable error shape, every action has a strict schema (`myman actions`), and long work returns a job ID you can poll. It runs with no cloud relay, account, or API key.
 
-**Permissions stay with the person.** Capture, markup, recording, and library access are separate grants in **Settings → Agents**, and they all start off. An agent can check what it's allowed to do with `myman doctor --json` or the `myman_app_capabilities` tool. It cannot turn grants on itself.
+**Permissions stay with the person.** Capture, markup, recording, and library access are separate grants in **Settings → Agents**, and they all start off. An agent can check what it's allowed to do with `myman doctor --json` or the `myman_app_capabilities` tool. It cannot turn grants on itself: no CLI action, MCP tool, or flag can. A person turns them on in Settings → Agents, or by running `myman agents grant capture` at an interactive Terminal (it refuses inside an agent or without a TTY, and asks for a typed confirmation). `myman doctor` prints the exact command for each disabled capability. See [Enabling agent access](docs/agent-cli.md#enabling-agent-access-headless-macs-and-troubleshooting).
 
 ### Connect in about a minute
 
@@ -71,7 +71,7 @@ node ~/MyManBrain/tools/cli.mjs meetings --participant Jordan --after 2026-09-01
 myman screenshot --mode agent --display main --json   # returns the image path
 ```
 
-If `myman` isn't on the PATH, it lives at `"/Applications/My Man.app/Contents/Resources/myman"`. The full reference is in [CLI setup, commands, and JSON contract](docs/agent-cli.md) and the [Mac and Linux capability matrix](docs/agent-cli-parity.md). A plain-text summary for language models is in [`llms.txt`](llms.txt).
+If `myman` isn't on the PATH, it lives at `"/Applications/My Man.app/Contents/Resources/myman"`; run that path with `install-cli` to link it into `~/.local/bin`. If the app isn't running, start it with `open -a "My Man"`. The full reference is in [CLI setup, commands, and JSON contract](docs/agent-cli.md) and the [Mac and Linux capability matrix](docs/agent-cli-parity.md). A plain-text summary for language models is in [`llms.txt`](llms.txt).
 
 ### Questions agents and people ask
 

@@ -202,11 +202,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// confirmation UI.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme?.lowercased() == "myman" {
-            performAutomationCommand(url.host?.lowercased() ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased())
+            // myman://settings/agents opens the Agents page; the page path only
+            // selects what to show and never changes a setting.
+            let page = url.host == nil ? "" : url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+            performAutomationCommand(url.host?.lowercased() ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased(), page: page)
         }
     }
 
-    private func performAutomationCommand(_ command: String) {
+    private func performAutomationCommand(_ command: String, page: String = "") {
         switch command {
         case "open", "launcher": launcher.open()
         case "screenshot": capture.beginRegionCapture()
@@ -215,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "meeting": meetings.toggle()
         case "cancel-meeting": meetings.discardRecording()
         case "record": ScreenRecorder.shared.toggle()
-        case "settings": SettingsController.shared.show()
+        case "settings": SettingsController.shared.show(page: page)
         default:
             NSLog("My Man: ignored unknown automation command: \(command)")
         }

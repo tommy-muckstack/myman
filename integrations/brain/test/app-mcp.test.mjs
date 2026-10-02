@@ -42,6 +42,7 @@ test(`app MCP discovers strict action tools, preserves permission errors and req
   assert.equal(tools.find(x=>x.name==='myman_app_item_delete').annotations.destructiveHint,true);
   assert.equal(tools.find(x=>x.name==='myman_app_note_create').annotations.readOnlyHint,false);
   assert.ok(!tools.some(x=>/shell|exec|permission_grant/.test(x.name)));
+  assert.ok(!tools.some(x=>/grant|install_cli|myman_app_agents_/.test(x.name)),'no MCP tool can change agent access');
   const live=await client.callTool({name:'myman_app_capabilities',arguments:{}});
   assert.equal(live.structuredContent.live,true);
   const id='12345678-1234-4234-9234-123456789012';

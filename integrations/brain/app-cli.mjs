@@ -6,10 +6,11 @@ import { catalog, describe, discover, invoke, request } from './actions.mjs';
 import { checkWorkflow } from './workflows.mjs';
 import { Brain, BrainError } from './brain.mjs';
 import { execute } from './tools.mjs';
+import * as access from './agent-access.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
 const strings = ['use-model','sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
-const booleans = ['help','json','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only'];
+const booleans = ['help','json','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only','plain'];
 const options = Object.fromEntries([...strings.map(key=>[key,{type:'string'}]),...booleans.map(key=>[key,{type:'boolean'}]),...['tag','exclude-tag','participant'].map(key=>[key,{type:'string',multiple:true}])]);
 for(const action of catalog.actions)for(const [key,schema]of Object.entries(action.inputSchema.properties)){
   const flag=key.replaceAll('_','-');if(!options[flag])options[flag]={type:schema.type==='boolean'?'boolean':'string'};
@@ -123,7 +124,12 @@ Matching compares bundled styles, not an exact font identity. Saved results incl
 Jobs: --no-wait returns a job ID; job UUID polls it; jobs lists recent durable receipts.
 --request-id UUID deduplicates retries. After interruption inspect receipts; never replay unknown work.
 Deletion: enable library access in Settings → Agents AND pass --confirm.
-Capture/markup/recording/library grants start off; the CLI cannot enable them.
+Capture/markup/recording/library grants start off. No agent command, MCP tool or --flag can enable them.
+Setup: doctor [--plain] lists each disabled capability with the exact command a person runs. agents status|open
+agents grant|revoke capture|markup|recording|library|sharing|all  (grant: a PERSON at an interactive Terminal only,
+  refused when MYMAN_AGENT_TOKEN/agent env is set or there is no TTY; asks you to type the confirmation; no --yes)
+agents open  (opens Settings → Agents; grants nothing)  install-cli  (links myman into ~/.local/bin; never overwrites)
+Path: "/Applications/My Man.app/Contents/Resources/myman". Launch the app: open -a "My Man"
 Geometry: --display + --region uses display-local points, top-left. Region alone uses
 AppKit global points, bottom-left. Markup uses original image pixels, top-left.
 --window-id selects a real window; windows list discovers IDs. No pointer automation.
@@ -164,7 +170,18 @@ export async function plan(argv) {
   if(p.length===1 && legacy[p[0]] && (!v.mode || v.mode==='interactive') && !Object.keys(v).some(k=>!['json','mode'].includes(k)))return {type:'interactive',host:legacy[p[0]]};
   if(v.mode==='interactive')fail('Use the legacy single command for interactive UI, or --mode agent.');
   if(p[0]==='workflow'&&p[1]==='check'){allowed(v,[]);if(p.length!==2)fail('Use workflow check.');return {type:'workflow-check',control};}
-  if(p[0]==='doctor'){allowed(v,[]);if(p.length!==1)fail('Use doctor.');return {type:'doctor',root:v.root,control};}
+  if(p[0]==='doctor'){allowed(v,['plain']);if(p.length!==1)fail('Use doctor.');return {type:'doctor',root:v.root,control,plain:!!v.plain};}
+  // Person-only access management. These are local CLI commands, never catalog actions,
+  // so MCP, invoke and the app socket cannot reach them. There is deliberately no --yes/--confirm.
+  if(p[0]==='agents'){
+    allowed(v,[]);
+    const sub=p[1];
+    if(!['status','grant','revoke','open'].includes(sub))fail('INVALID_ARGUMENTS','Use agents status | agents grant GROUP... | agents revoke GROUP... | agents open. Groups: capture markup recording library sharing, or all.');
+    if(['status','open'].includes(sub)&&p.length!==2)fail('INVALID_ARGUMENTS',`agents ${sub} takes no arguments.`);
+    if(['grant','revoke'].includes(sub)&&p.length<3)fail('INVALID_ARGUMENTS',`Name what to ${sub}: capture markup recording library sharing, or all.`);
+    return {type:'agents',sub,names:p.slice(2)};
+  }
+  if(p[0]==='install-cli'){allowed(v,[]);if(p.length!==1)fail('INVALID_ARGUMENTS','Use install-cli.');return {type:'install-cli'};}
   if(p[0]==='meeting'&&p[1]==='config'){
     if(p.length!==3||!['get','set'].includes(p[2]))fail('Use meeting config get|set.');
     allowed(v,p[2]==='set'?['auto-record-meetings']:[]);
@@ -243,9 +260,9 @@ export function exitCode(code){
   if(/TIMEOUT/.test(code))return 7;
   return 6;
 }
-export function unwrap(reply, selection){
+export function unwrap(reply, selection, options){
   const job=reply.job;
-  if(['failed','interrupted'].includes(job?.state))return {ok:false,job_id:job.id,error:job.error,launch_id:reply.launch_id,recovered:reply.recovered??false};
+  if(['failed','interrupted'].includes(job?.state))return {ok:false,job_id:job.id,error:access.annotateError(job.error,options),launch_id:reply.launch_id,recovered:reply.recovered??false};
   if(job?.state==='running')return {ok:true,pending:true,job_id:job.id,launch_id:reply.launch_id};
   const result=selection?job?.result?.[selection]:job?.result;
   return {ok:true,...(result&&typeof result==='object'&&!Array.isArray(result)?result:{result}),job_id:job?.id,launch_id:reply.launch_id};
@@ -264,12 +281,37 @@ export async function run(argv, deps={}){
   if(task.type==='interactive'){await (deps.open??((host)=>promisify(execFile)('/usr/bin/open',['-g',`myman://${host}`])))(task.host);return {ok:true,interactive:true,dispatched:task.host};}
   if(task.type==='job')return transport({method:'job',id:task.id});
   if(task.type==='read')return execute(new Brain(task.root),task.name,task.args);
+  // Person-only access management (see agent-access.mjs): local commands, never app actions.
+  if(task.type==='agents'){
+    const a=deps.access??access;
+    if(task.sub==='status')return a.status(deps.accessDeps);
+    if(task.sub==='open')return a.openSettings({deps:deps.accessDeps,open:deps.openUrl});
+    return a.change(task.sub,task.names,{deps:deps.accessDeps,...(deps.humanIo??{})});
+  }
+  if(task.type==='install-cli')return (deps.access??access).installCli(deps.installCli??{});
   if(task.type==='doctor'){
+    const a=deps.access??access,env=deps.env??process.env,platform=deps.platform;
     let brain,app;try{brain=await execute(new Brain(task.root),'status',{});}catch(error){brain={ok:false,error:{code:error.code??'BRAIN_UNAVAILABLE',message:error.message}};}
-    try{app=unwrap(await call('app.doctor',{},task.control));}catch(error){app={ok:false,error:{code:error.code??'APP_UNAVAILABLE',message:error.message}};}
-    return {ok:app.ok && brain.ok!==false,app,brain,node:process.versions.node,...(!app.ok?{error:app.error}:brain.ok===false?{error:brain.error}:{})};
+    try{app=unwrap(await call('app.doctor',{},task.control),undefined,{platform});}catch(error){app={ok:false,error:a.annotateError({code:error.code??'APP_UNAVAILABLE',message:error.message},{env,platform})};}
+    const cli=a.cliStatus(env);
+    // The app answered, or we fall back to the preferences (read-only) so a closed app still reports grants.
+    let grants=app.ok?app.agents:undefined,source='running_app',processRunning;
+    if(!app.ok){
+      processRunning=await a.appRunning(deps.accessDeps);
+      app={...app,running:false,process_running:processRunning,launch_command:a.LAUNCH_COMMAND};
+      if(processRunning&&app.error?.code==='APP_NOT_RUNNING')app.error={...app.error,hint:`My Man is running but the CLI cannot reach its command socket. Restart it (quit, then ${a.LAUNCH_COMMAND}) and re-run ${a.cli(env)} doctor --json. If it persists, update My Man and make sure the CLI runs as the same macOS user.`};
+      try{grants=await a.readGrants(deps.accessDeps);source='preferences';}catch{grants=undefined;}
+    }
+    const steps=a.nextSteps({grants,appRunning:app.ok?true:processRunning,unreachable:!app.ok&&processRunning===true,permissions:app.permissions,cli},env);
+    const report={ok:app.ok && brain.ok!==false,app,brain,node:process.versions.node,cli,
+      ...(grants?{agent_access:{source,grants,disabled:Object.keys(a.GRANTABLE).filter(g=>!grants[g]),agents_can_self_grant:false,
+        ...(Object.keys(a.GRANTABLE).some(g=>!grants[g])?{human_command:`${a.cli(env)} agents grant ${Object.keys(a.GRANTABLE).filter(g=>!grants[g]).join(' ')}`}:{}),
+        note:'Only a person can turn these on: in Terminal, or in Settings → Agents. No CLI action, MCP tool or flag can.'}}:{}),
+      next_steps:steps,
+      ...(!app.ok?{error:app.error}:brain.ok===false?{error:brain.error}:{})};
+    return task.plain?{...report,plain:a.renderDoctor(report)}:report;
   }
   const reply=await call(task.name,task.args,task.control);
   if(reply.job?.state==='running'&&task.control.wait)return {ok:false,pending:true,job_id:reply.job.id,error:{code:'PROCESSING_TIMEOUT',message:'Job continues in My Man. Poll this job_id; do not repeat the action.'}};
-  return task.raw?reply:unwrap(reply,task.select);
+  return task.raw?access.decorateReply(reply,{platform:deps.platform}):unwrap(reply,task.select,{platform:deps.platform});
 }

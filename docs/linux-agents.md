@@ -71,7 +71,7 @@ This captures the virtual desktop; start the application you want to capture on 
 
 ## Owner-controlled permissions
 
-The installer creates `${XDG_CONFIG_HOME:-~/.config}/myman/agents.json` with all grants off. The owner edits this file; neither CLI nor MCP exposes an enable-grant action. For example, to allow screenshots, annotation and note creation:
+The installer creates `${XDG_CONFIG_HOME:-~/.config}/myman/agents.json` with all grants off. The owner edits this file; neither CLI nor MCP exposes an enable-grant action. (The Mac's terminal-only `myman agents grant` has no Linux twin: `myman agents grant|status|open` and `install-cli` return `unsupported_on_platform`. A disabled grant returns `AGENT_DISABLED` with a `hint`, and `myman doctor --json` lists `next_steps` with the exact JSON to add.) For example, to allow screenshots, annotation and note creation:
 
 ```json
 {

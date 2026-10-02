@@ -6,7 +6,7 @@ Key facts:
 - Install: download the Mac app from https://muckstack.com/download/myman, open it once, and install Node.js 22+. Both MCP servers are then at `~/MyManBrain/tools/server.mjs` and `~/MyManBrain/tools/app-server.mjs`.
 - Claude Code: `claude mcp add myman-brain -- node ~/MyManBrain/tools/server.mjs` and `claude mcp add myman-app -- node ~/MyManBrain/tools/app-server.mjs`.
 - CLI: `/Applications/My Man.app/Contents/Resources/myman` (`myman doctor --json`, `myman actions`, `myman screenshot --mode agent --json`). Results are JSON; long work returns a job ID.
-- Check permissions before acting with `myman doctor --json` or the `myman_app_capabilities` MCP tool. Agents cannot grant themselves permissions.
+- Check permissions before acting with `myman doctor --json` (or `--plain`) or the `myman_app_capabilities` MCP tool. Agents cannot grant themselves permissions. Disabled capabilities return the stable error `AGENT_DISABLED` with a `hint` and `human_command` naming what a PERSON can run; relay it and stop. `doctor.next_steps` lists the exact steps (launch the app with `open -a "My Man"`, `myman agents grant capture`, `myman agents open`, `install-cli`). `agents grant` works only for a person at an interactive Terminal (refused when `MYMAN_AGENT_TOKEN`/agent env is present or there is no TTY; no `--yes`); it is not an MCP tool or catalog action. Linux/Omarchy: `agents grant|status|open` and `install-cli` return `unsupported_on_platform`; the owner edits `agents.json`.
 - No cloud relay, account, or API key. Requires macOS 14.2+ (screen recording needs macOS 15+).
 
 ## Calendar booking and Launcher (1.1.103)
