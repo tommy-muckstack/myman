@@ -208,6 +208,12 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## Agent access on headless Macs (1.1.106)
+
+- `myman agents grant | revoke | status | open` and `myman install-cli`: the person at the Mac can allow agent capabilities from an interactive Terminal (confirmation phrase required; refuses from agents, pipes and CI). Master switch, control, calendar and people grants stay in Settings → Agents.
+- `myman doctor` reports whether the app is running, whether the CLI is on PATH, current grants, and exact next-step commands; `AGENT_DISABLED` errors carry the command to run.
+- `myman://settings/agents` opens the Agents settings page directly.
+
 ## Recording and screenshot fixes (1.1.105)
 
 - Screen recordings save as share-ready `.mp4` files: H.264 video plus one mixed AAC audio track, so your voice and system audio play in Slack, browsers and on Windows (the old `.mov` carried narration on a second PCM track that most players ignored).
