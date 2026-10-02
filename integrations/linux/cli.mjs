@@ -3,7 +3,7 @@ import { plan, unwrap, exitCode } from '../brain/app-cli.mjs';
 import { Brain } from '../brain/brain.mjs';
 import { execute } from '../brain/tools.mjs';
 import { capabilities, doctor, errorData, invoke, job, jobs } from './service.mjs';
-import { authorize, unsupported, fail } from './system.mjs';
+import { authorize, configPath, unsupported, fail } from './system.mjs';
 import { indicator } from './indicator.mjs';
 import * as identity from './identity.mjs';
 import * as omarchy from './omarchy.mjs';
@@ -15,6 +15,7 @@ import * as cursor from './cursor.mjs';
 import * as studio from './studio.mjs';
 import * as demoRunner from './demo.mjs';
 import { alternativeFor, human, suggestCommand, suggestFlag } from './guide.mjs';
+import { linuxNextSteps } from '../brain/agent-access.mjs';
 
 const help=`MyMan Linux (agents), Node 22+, X11, Hyprland (Omarchy) or Sway
 myman doctor --json
@@ -75,6 +76,7 @@ myman show [--note TEXT] (people: drag over part of the screen to save it for yo
 myman dictation connect|disconnect|status (people: save each Voxtype dictation to the Brain)
 myman omarchy install|remove|status (people: SUPER+SHIFT+PRINT for show, plus a MyMan menu under Trigger)
 myman agents list|add NAME --scopes capture,markup|revoke ID|require on|off (people only, at a terminal)
+Grants: edit agents.json by hand (macOS-only: myman agents grant|status|open, install-cli return unsupported_on_platform); doctor lists next_steps.
 myman meeting start [--title TEXT] [--no-system-audio] [--keep-audio] [--max-minutes 240] --json (mic as You, computer audio as Others)
 myman meeting stop|cancel [--id ID] [--keep-audio] --json; myman meeting status --json; myman meeting transcribe ID (retry)
   Transcribed on this computer with Whisper (voxtype or whisper.cpp). Agents need the recording and microphone grants.
@@ -87,6 +89,8 @@ Every meeting recording shows a notification and the indicator. Live Text, nativ
 async function manageAgents(args) {
   const [sub,...rest]=args, flag=n=>{const k=rest.indexOf('--'+n);return k>=0?rest[k+1]:undefined;};
   if (!sub||sub==='list') return identity.listAll();
+  // The Mac's person-only grant commands have no Linux twin: grants are the owner's hand-edited file.
+  if (['grant','status','open'].includes(sub)) unsupported(`myman agents ${sub} is macOS-only. On Linux the person edits ${configPath()} by hand (see docs/linux-agents.md); \`myman doctor --json\` lists next_steps. No command grants access.`);
   if (process.env.MYMAN_AGENT_TOKEN||!process.stdin.isTTY||!process.stdout.isTTY) fail('HUMAN_REQUIRED','Only the person at this computer can change agent credentials, from an interactive terminal (not from an agent).');
   const readline=await import('node:readline/promises'), rl=readline.createInterface({input:process.stdin,output:process.stdout});
   const confirm=async(prompt,expected)=>{ try { if((await rl.question(prompt)).trim()!==expected) fail('CANCELLED','Nothing changed.'); } finally { rl.close(); } };
@@ -106,6 +110,7 @@ export async function main(argv) {
   if (mi>=0) { const value=argv[mi].includes('=')?argv[mi].split('=')[1]:argv[mi+1]; argv=argv.filter((_,k)=>k!==mi&&!(k===mi+1&&!argv[mi].includes('='))); await identity.checkMachine(value); }
   else await identity.checkMachine(process.env.MYMAN_MACHINE_ID);
   if (argv[0]==='agents') return manageAgents(argv.slice(1));
+  if (argv[0]==='install-cli') unsupported('install-cli is for the macOS app. The Linux installer places myman in ~/.local/bin; add that directory to PATH.');
   if (argv[0]==='dictation' && argv[1]==='save') { await dictation.save(); process.exit(0); }
   if (argv[0]==='dictation' && argv[1]==='store' && argv[2] && !process.env.MYMAN_AGENT_TOKEN) { await dictation.store(argv[2]); process.exit(0); }
   if (argv[0]==='dictation' && ['connect','disconnect','status'].includes(argv[1])) return dictation[argv[1]]();
@@ -182,7 +187,7 @@ export async function main(argv) {
     case 'doctor': {
       let brain; try { brain=await execute(new Brain(task.root),'status'); } catch(error) { brain={ok:false,error:errorData(error)}; }
       const app={ok:true,...await doctor()};
-      return {ok:brain.ok!==false,app,brain,node:process.versions.node,...(brain.ok===false?{error:brain.error}:{})};
+      return {ok:brain.ok!==false,app,brain,node:process.versions.node,next_steps:linuxNextSteps(app.permissions,configPath()),...(brain.ok===false?{error:brain.error}:{})};
     }
     case 'action': {
       const reply=await invoke(task.name,task.args,task.control);

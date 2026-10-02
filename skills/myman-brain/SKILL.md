@@ -59,7 +59,10 @@ Editing creates a new capture and preserves the source. Returned paths can be
 attached through the requesting client's mechanism; MyMan does not send messages.
 
 Settings → Agents has separate default-off capture, markup, recording and library
-grants. The CLI cannot enable them. Deletion also requires `--confirm`. Normal
+grants. No agent command, MCP tool or flag can enable them; if a result is `AGENT_DISABLED`,
+relay its `hint` (it names the command a person runs, e.g. `myman agents grant capture` in an
+interactive Terminal, or `myman agents open`) and stop. `myman doctor --plain` lists every next step
+and tells you when the app is not running (`open -a "My Man"`). Deletion also requires `--confirm`. Normal
 macOS permissions apply. Use explicit session IDs returned by start when stopping
 recordings. After timeouts, poll `myman job UUID`; don't blindly replay mutations.
 Note replacement uses expected_updated_at from library read to protect human edits.

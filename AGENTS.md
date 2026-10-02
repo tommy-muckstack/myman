@@ -34,7 +34,7 @@ CI runs the Swift build and tests on macOS for every pull request, and the Linux
 ## Rules
 
 - One focused change per pull request. Say what changed and how you verified it, with a screenshot or short recording for anything visible.
-- **Never weaken permissions.** Agent grants start off and only the person turns them on. Do not add a way for an agent to grant itself access, and do not change existing grant behavior.
+- **Never weaken permissions.** Agent grants start off and only the person turns them on. Do not add a way for an agent to grant itself access, and do not change existing grant behavior. The one person-only exception is `myman agents grant` (`integrations/brain/agent-access.mjs`): a local CLI command, never a catalog action or MCP tool, that refuses agent environments and non-TTY use, has no bypass flag, and needs a typed confirmation. Do not loosen those checks or expose it elsewhere.
 - Keep Mac and Linux in step. A new action goes in `actions.json`, gets the same name and schema on both platforms, and returns a structured unsupported error where a platform can't do it yet. Update `docs/agent-cli-parity.md`.
 - Commit regenerated bundles together with the source change, or `check-bundle` fails.
 - Never commit anyone's Brain export, recordings, screenshots, transcripts, credentials, or private paths. Use synthetic fixtures.

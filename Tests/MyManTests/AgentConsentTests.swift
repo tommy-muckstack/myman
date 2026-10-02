@@ -22,6 +22,13 @@ final class AgentConsentTests: XCTestCase {
         XCTAssertThrowsError(try AgentConsent.validate("screenshot.capture", args: [:], defaults: defaults))
         for action in ["app.doctor", "app.status", "settings.read", "recording.stop", "recording.cancel", "meeting.stop", "dictation.cancel"] { try AgentConsent.validate(action, args: [:], defaults: defaults) }
     }
+    /// `myman agents grant|revoke` (person-only, interactive Terminal) writes exactly these
+    /// preference keys; renaming one here without updating agent-access.mjs would break it silently.
+    func testGrantKeysMatchTheTerminalCommand() {
+        let expected = ["capture": "agentCaptureEnabled", "markup": "agentMarkupEnabled", "recording": "agentRecordingEnabled",
+                        "library": "agentLibraryEnabled", "sharing": "agentSharingEnabled"]
+        for (group, key) in expected { XCTAssertEqual(AgentConsent.keys[group], key) }
+    }
     @MainActor func testSettingsSchemaCannotGrantAgentConsent() throws {
         let actions = AgentActions.catalog["actions"] as! [[String: Any]]
         let schema = actions.first { $0["name"] as? String == "settings.update" }!["inputSchema"] as! [String: Any]

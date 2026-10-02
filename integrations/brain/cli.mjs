@@ -3,6 +3,7 @@ import { errorResult } from './tools.mjs';
 try {
   const result=await run(process.argv.slice(2));
   if(result.help)console.log(process.argv.includes('--json')?JSON.stringify({ok:true,help:result.help}):result.help);
+  else if(result.plain)console.log(result.plain);
   else console.log(JSON.stringify(result));
   const error=result.error??result.job?.error;
   if(error)process.exitCode=exitCode(error.code);

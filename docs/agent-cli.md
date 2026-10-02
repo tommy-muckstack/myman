@@ -20,7 +20,7 @@ ln -s "/Applications/My Man.app/Contents/Resources/myman" ~/.local/bin/myman
 
 A relocated app or a symlink works: the helper resolves its own location and loads its bundled companion. The exported fallback is `node "$HOME/MyManBrain/tools/cli.mjs"`. Source development uses `npm ci --ignore-scripts --prefix integrations/brain`. Rebuild committed bundles with `npm run bundle --prefix integrations/brain`.
 
-`--root` selects a Brain export for retrieval only. It never redirects mutations to that folder or to another Mac. App commands require a running MyMan instance under the same login. `doctor` checks app connectivity, OS permissions, enabled agent groups, Node, and export availability without requesting permission. Its individual permission fields describe readiness for each workflow; not every workflow needs every permission.
+`--root` selects a Brain export for retrieval only. It never redirects mutations to that folder or to another Mac. App commands require a running MyMan instance under the same login. `doctor` checks app connectivity (and whether the app is running), OS permissions, enabled agent groups with an exact next step for each disabled one, the CLI path, Node, and export availability without requesting permission. Its individual permission fields describe readiness for each workflow; not every workflow needs every permission.
 
 Linux agents: the separate [Linux companion](linux-agents.md) supports X11 and Hyprland/Omarchy/Sway screenshots, explicit-pixel annotations, notes, and Brain keyword queries. It uses the same capture/library JSON schemas with owner-controlled config grants; Mac-only actions return `unsupported_on_platform`. The following native UI/session/TCC details describe macOS.
 
@@ -36,7 +36,7 @@ Settings → Agents has **Allow local app commands**, plus separate, default-off
 | Create and change notes, tasks and library items | library | note/task/theme/library mutations, clipboard writes, safe settings changes |
 | Move the mouse and type to record app demos | control | `myman demo` (with the recording grant) |
 
-Combined capture/markup requires both grants. The native bridge checks grants; neither JSON nor URL arguments can enable them. App settings mutation schemas exclude these grant keys. A menu-bar dot indicates that agent screenshot or recording access is enabled. Normal recording controls remain visible. No permanent “silent forever” grant is enabled by default; grants apply to this Mac login until the human turns them off. Session tokens are not implemented. Same-login processes are the trust boundary, not individual agents.
+Combined capture/markup requires both grants. The native bridge checks grants; neither JSON nor URL arguments can enable them, and no MCP tool or CLI action exists that does. Only a person can turn them on: in Settings, or with the terminal-only `myman agents grant` described in [Enabling agent access](#enabling-agent-access-headless-macs-and-troubleshooting). App settings mutation schemas exclude these grant keys. A menu-bar dot indicates that agent screenshot or recording access is enabled. Normal recording controls remain visible. No permanent “silent forever” grant is enabled by default; grants apply to this Mac login until the human turns them off. Session tokens are not implemented. Same-login processes are the trust boundary, not individual agents.
 
 Stop/cancel and screen-recording pause commands remain available after revocation and still require the current session ID. Diagnostics remain available when commands are disabled. Delete (`item.delete`, `task.delete`, `history.clear`) requires library consent **and** `--confirm`. Changing a grant does not undo previously completed actions. Exported files remain readable independently of action settings.
 
@@ -50,6 +50,45 @@ Stop/cancel and screen-recording pause commands remain available after revocatio
 | Input Monitoring | not required by the CLI; only `myman demo` injects pointer and key events, behind the control grant |
 
 macOS prompts remain real. A refusal returns `PERMISSION_REQUIRED` with the relevant permission; grant it in System Settings. The CLI never changes TCC settings. The `myman-brain` MCP remains read-only; `myman-app` exposes the CLI’s app actions through the same native permission checks. CLI operations are local; requesting agents may send returned excerpts or pixels to their model provider. MyMan does not automatically upload the Brain or send attachments/messages.
+
+## Enabling agent access (headless Macs) and troubleshooting
+
+A Mac that an agent drives over SSH or a remote host (a Mac mini, for example) still needs a **person** to allow each capability once. Everything below is for that person; an agent's job is to read the hint and ask.
+
+**1. Find the helper.** `myman` may not be on `PATH` (it never is over a non-interactive SSH session until you add it). The exact path always works:
+
+```sh
+"/Applications/My Man.app/Contents/Resources/myman" doctor --plain
+```
+
+To put it on `PATH`, run `"/Applications/My Man.app/Contents/Resources/myman" install-cli`. It links `~/.local/bin/myman` to the app (it never overwrites an existing file) and prints the one line to add to `~/.zshenv` (read by non-interactive SSH commands; `~/.zprofile` is not). Doctor reports `cli.path`, `cli.on_path` and `cli.install_command`.
+
+**2. Start the app.** CLI app commands need My Man running as the same macOS user: `open -a "My Man"`. Doctor shows `app.running`, `app.process_running` and `app.launch_command`. If the process is running but the CLI cannot reach it, doctor says so and suggests restarting; with the app closed it still reads the saved grants from preferences (`agent_access.source: "preferences"`).
+
+**3. A person allows what is needed**, in an interactive Terminal on that Mac (Terminal.app, or `ssh -t` from a person's own session), logged in as the same macOS user:
+
+```sh
+myman agents status                       # what is on/off; read-only, works while the app is closed
+myman agents grant capture markup         # or: capture markup recording library sharing, or: all
+myman agents open                         # alternative: open Settings → Agents (grants nothing)
+myman agents revoke capture               # turn one back off (allowed anywhere)
+```
+
+`grant` prints exactly what each group allows, then requires the person to type the confirmation it names (`grant capture markup`). `all` means capture, markup, recording, library and sharing; the master switch (**Allow local app commands**) and control, calendar, scheduling and people grants can only be changed in Settings. Then verify: `myman doctor --json` should show the groups as `true` in `app.agents`.
+
+**Why this stays human-only.** `grant` is a local CLI command, not a catalog action, so no MCP tool, `invoke`, app-socket request, `settings set` or URL can reach it. It refuses (`HUMAN_REQUIRED`, nothing written) when `MYMAN_AGENT_TOKEN`, `MYMAN_AGENT_ID`, `MYMAN_MACHINE_ID` or `CI` is set, or when stdin/stdout is not an interactive terminal. It has no `--yes`, `--confirm` or `--force`; a wrong confirmation changes nothing. It writes the same preference the Settings toggle writes. Like the Linux `myman agents add`, this is a guardrail against accidents and non-interactive automation, not authentication: the model remains "same-login processes are the trust boundary," so do not run `grant` for an agent you do not trust with that access. `myman agents open` opens `myman://settings/agents`; opening the pane changes nothing.
+
+**Errors and doctor output.** A disabled capability returns the stable code `AGENT_DISABLED` (exit code 4) in the CLI, MCP and job receipts, now with extra fields:
+
+```json
+{"ok":false,"error":{"code":"AGENT_DISABLED","message":"Enable capture access in My Man Settings → Agents for this action.",
+ "groups":["capture"],"human_command":"\"/Applications/My Man.app/Contents/Resources/myman\" agents grant capture",
+ "settings_command":"\"/Applications/My Man.app/Contents/Resources/myman\" agents open",
+ "hint":"Agents cannot enable this. A person must allow capture access: in Terminal on this Mac run `... agents grant capture` ...",
+ "agent_may_self_grant":false}}
+```
+
+An agent should relay `hint` to the person and stop. `human_command` is omitted for Settings-only grants. `APP_NOT_RUNNING` and connection errors carry a `hint` and `launch_command` (`open -a "My Man"`). `myman doctor --json` adds `cli`, `agent_access` (`grants`, `disabled`, `human_command`, `agents_can_self_grant: false`) and `next_steps[]` (`id`, `summary`, `run`, `for`, `alternative`); `doctor --plain` prints the same as readable text. A missing Node returns `NODE_REQUIRED` with a `hint` about `PATH` in non-interactive shells. Linux/Omarchy: `agents grant|status|open` and `install-cli` return `unsupported_on_platform`; the owner edits `agents.json` and `doctor.next_steps` shows the exact JSON.
 
 ## Calendar booking
 

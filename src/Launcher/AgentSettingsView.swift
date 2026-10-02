@@ -41,7 +41,7 @@ struct AgentSettingsView: View {
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             Text("Commands use a local connection under your Mac login. macOS permissions still apply. Brain retrieval is read-only; agents can read exported files independently of these settings. Content they request may be sent to their model provider.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
-            Text("Agent setup: myman doctor --json\nCommand reference: myman --help")
+            Text("Agent setup: myman doctor --json\nCommand reference: myman --help\nNo screen to click? In Terminal on this Mac: myman agents grant capture (it asks you to confirm)")
                 .font(MM.Fonts.metadata).textSelection(.enabled)
             Button("Recorded briefs and workflow templates…") { AgentBriefWindow.shared.open() }.clickable()
             Button("Connection checks and workflow activity…") { WorkflowCenter.shared.open(tab: "connection") }.clickable()

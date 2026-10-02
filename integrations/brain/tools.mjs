@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { BrainError, kinds } from './brain.mjs';
+import { annotateError } from './agent-access.mjs';
 
 const kind = z.enum(kinds).optional();
 const limit = z.number().int().min(1).max(50).default(10);
@@ -66,8 +67,11 @@ export async function execute(brain, name, args = {}) {
   return brain[name](parsed.data);
 }
 
-export function errorResult(error) {
-  return error instanceof BrainError
-    ? { error: { code: error.code, message: error.message } }
-    : { error: { code: 'INTERNAL_ERROR', message: 'The Brain request failed. Check local setup and retry.' } };
+const ERROR_EXTRAS = ['hint', 'human_command', 'settings_command', 'launch_command', 'groups', 'agent_may_self_grant'];
+export function errorResult(error, options) {
+  if (!(error instanceof BrainError)) return { error: { code: 'INTERNAL_ERROR', message: 'The Brain request failed. Check local setup and retry.' } };
+  const shown = { code: error.code, message: error.message };
+  for (const key of ERROR_EXTRAS) if (error[key] !== undefined) shown[key] = error[key];
+  // Setup failures carry a stable code plus a `hint` naming the exact command a person can run.
+  return { error: annotateError(shown, options) };
 }

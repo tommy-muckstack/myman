@@ -259,10 +259,12 @@ final class SettingsController {
     static let shared = SettingsController()
     private var panel: FloatingPanel?
 
-    func show() {
+    /// `page` is a lowercase page name such as "agents"; unknown values open General.
+    func show(page: String = "") {
         panel?.dismiss()
         let settingsPanel = FloatingPanel(content: SettingsPanelView(
-            onDismiss: { [weak self] in self?.panel?.dismiss() }
+            onDismiss: { [weak self] in self?.panel?.dismiss() },
+            initialPage: page
         ))
         settingsPanel.onDismiss = { [weak self] in self?.panel = nil }
         panel = settingsPanel
@@ -283,6 +285,8 @@ struct SettingsPanelView: View {
 
     @ObservedObject var store = SettingsStore.shared
     var onDismiss: () -> Void
+    /// Optional page to show first, from `myman://settings/<page>`. Selecting a page changes no setting.
+    var initialPage: String = ""
     @State private var settingsPage: SettingsPage = .general
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
@@ -366,6 +370,9 @@ struct SettingsPanelView: View {
             .padding(MM.Layout.paddingLarge)
         }
         .frame(width: 420)
+        .onAppear {
+            if let page = SettingsPage.allCases.first(where: { $0.rawValue.lowercased() == initialPage }) { settingsPage = page }
+        }
         .background(
             RoundedRectangle(cornerRadius: MM.Layout.radius, style: .continuous)
                 .fill(MM.Colors.background)

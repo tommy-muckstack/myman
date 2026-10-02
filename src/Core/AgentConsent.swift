@@ -1,7 +1,8 @@
 import Foundation
 
 /// App-enforced consent, shared by socket clients. Grants are only changed in
-/// Settings by the human; settings.update deliberately cannot enable them.
+/// Settings by the human (or the person-only terminal command `myman agents grant`,
+/// which writes these same keys); settings.update deliberately cannot enable them.
 enum AgentConsent {
     static let keys = ["capture": "agentCaptureEnabled", "markup": "agentMarkupEnabled",
                        "recording": "agentRecordingEnabled", "library": "agentLibraryEnabled", "sharing": "agentSharingEnabled",
