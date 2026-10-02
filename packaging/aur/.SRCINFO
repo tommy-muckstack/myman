@@ -1,6 +1,6 @@
 pkgbase = myman-bin
 	pkgdesc = Local-first screenshots, markup, recordings and notes that people and AI agents can use (Linux and Omarchy)
-	pkgver = 1.1.105
+	pkgver = 1.1.106
 	pkgrel = 1
 	url = https://github.com/tommy-muckstack/myman
 	install = myman.install
@@ -27,7 +27,7 @@ pkgbase = myman-bin
 	optdepends = hyprland: Omarchy key binding and menu (myman omarchy install)
 	provides = myman
 	conflicts = myman
-	source = myman-bin-1.1.105.tar.gz::https://github.com/tommy-muckstack/myman/releases/download/v1.1.105/myman-linux-x64.tar.gz
-	sha256sums = 0506485a5a458aa1e55003b74dd64a7c2a55d4f98e2597179ca0bd0cc76630a4
+	source = myman-bin-1.1.106.tar.gz::https://github.com/tommy-muckstack/myman/releases/download/v1.1.106/myman-linux-x64.tar.gz
+	sha256sums = b38de81192da13a364d1c6cfafa4a2f393de1c590ea1e9cbe5eb9dfb3302c3a3
 
 pkgname = myman-bin

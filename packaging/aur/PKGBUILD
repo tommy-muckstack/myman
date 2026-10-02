@@ -2,7 +2,7 @@
 # MyMan for Linux and Omarchy: agent-ready screenshots, markup, recordings and a
 # local Brain. Built from the signed-off release tarball; update with ./update.sh.
 pkgname=myman-bin
-pkgver=1.1.105
+pkgver=1.1.106
 pkgrel=1
 pkgdesc='Local-first screenshots, markup, recordings and notes that people and AI agents can use (Linux and Omarchy)'
 arch=('any')
@@ -31,7 +31,7 @@ provides=('myman')
 conflicts=('myman')
 install=myman.install
 source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/myman-linux-x64.tar.gz")
-sha256sums=('0506485a5a458aa1e55003b74dd64a7c2a55d4f98e2597179ca0bd0cc76630a4')
+sha256sums=('b38de81192da13a364d1c6cfafa4a2f393de1c590ea1e9cbe5eb9dfb3302c3a3')
 
 package() {
   cd "${srcdir}/myman-linux-x64"
