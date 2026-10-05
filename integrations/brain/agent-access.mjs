@@ -15,6 +15,7 @@ import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { BrainError } from './brain.mjs';
+import { credentialsStatus, credentialsNextSteps, envFilePath } from './agent-credentials.mjs';
 
 export const BUNDLE_ID = 'com.muckstack.myman';
 export const APP_CLI = '/Applications/My Man.app/Contents/Resources/myman';
@@ -116,10 +117,16 @@ function requireDarwin(deps, what) {
 export async function status(deps = realDeps, env = process.env) {
   const grants = await readGrants(deps);
   const running = await appRunning(deps);
+  const credentials = credentialsStatus({ env });
+  const steps = [
+    ...nextSteps({ grants, appRunning: running }, env),
+    ...credentialsNextSteps(credentials, env),
+  ];
   return {
     ok: true, source: 'preferences', app_running: running, grants,
     disabled: Object.keys(GRANTABLE).filter(group => !grants[group]),
-    next_steps: nextSteps({ grants, appRunning: running }, env),
+    credentials,
+    next_steps: steps,
   };
 }
 
@@ -130,7 +137,8 @@ export async function change(action, names, { deps = realDeps, env = process.env
   if (action === 'revoke') return apply(groups, false, deps, env);
   const blocked = humanBlock({ env, stdin, stdout });
   if (blocked) fail('HUMAN_REQUIRED', `Only the person at this Mac can allow agent access, from an interactive Terminal (not from an agent): ${blocked}. Nothing changed.`, {
-    hint: `Ask the person to run in Terminal: ${cli(env)} agents grant ${groups.join(' ')}`, human_command: `${cli(env)} agents grant ${groups.join(' ')}`,
+    hint: `Ask the person to run in Terminal: ${cli(env)} agents grant ${groups.join(' ')}. If this shell loaded ~/.config/myman/agent.env, clear agent vars first: env -u MYMAN_AGENT_TOKEN -u MYMAN_MACHINE_ID -u MYMAN_AGENT_ID ${cli(env)} agents grant ${groups.join(' ')}`,
+    human_command: `${cli(env)} agents grant ${groups.join(' ')}`,
   });
   const expected = phrase(groups);
   const lines = [
@@ -261,6 +269,36 @@ export function annotateError(error, { env = process.env, platform = process.pla
   if (code === 'APP_NOT_RUNNING') return { ...error, hint: `My Man is not running (or its command socket is missing). Launch it with: ${LAUNCH_COMMAND} — wait a few seconds, then run: ${command} doctor --json`, launch_command: LAUNCH_COMMAND };
   if (['APP_UNAVAILABLE', 'CONNECTION_TIMEOUT', 'INCOMPLETE_REPLY'].includes(code)) return { ...error, hint: `The CLI could not reach the My Man app. If it is running, restart it (quit, then ${LAUNCH_COMMAND}) and check ${command} doctor --json. Make sure the app and CLI run as the same macOS user.`, launch_command: LAUNCH_COMMAND };
   if (code === 'INVALID_SOCKET') return { ...error, hint: `The My Man command socket has unexpected ownership or permissions, so the CLI refused to use it. Quit My Man and relaunch it with ${LAUNCH_COMMAND} as the same user that runs this CLI.`, launch_command: LAUNCH_COMMAND };
+  if (code === 'IDENTITY_REQUIRED') {
+    const file = envFilePath(env);
+    return {
+      ...error,
+      hint: `Named agent credentials are required. This is not AGENT_DISABLED (grants). A person must: (1) add an agent in My Man Settings → Agents and copy MYMAN_AGENT_TOKEN / MYMAN_MACHINE_ID, (2) save them with \`${command} agents credentials save\` (writes ${file}, mode 600; asks to type: save credentials), or put the same exports in that file by hand, (3) re-run: ${command} doctor --plain. Agents must not paste tokens into chat. Loading credentials never turns on capture/markup.`,
+      human_command: `${command} agents credentials save`,
+      settings_command: `${command} agents open`,
+      credentials_file: file,
+      agent_may_self_grant: false,
+    };
+  }
+  if (code === 'INVALID_CREDENTIAL') {
+    const file = envFilePath(env);
+    return {
+      ...error,
+      hint: `The MYMAN_AGENT_TOKEN in the environment or in ${file} is invalid or revoked. A person must issue a new credential in Settings → Agents, update the host env / agent.env (myman agents credentials save), then re-run: ${command} doctor --plain. This is not a grants problem.`,
+      human_command: `${command} agents credentials save`,
+      settings_command: `${command} agents open`,
+      credentials_file: file,
+      agent_may_self_grant: false,
+    };
+  }
+  if (code === 'WRONG_MACHINE') {
+    return {
+      ...error,
+      hint: `MYMAN_MACHINE_ID does not match this Mac. Set it to the ID shown in Settings → Agents (or in agent.env), or pass --machine with that ID. Re-run: ${command} machine current --json`,
+      settings_command: `${command} agents open`,
+      agent_may_self_grant: false,
+    };
+  }
   return error;
 }
 
@@ -284,6 +322,14 @@ export function renderDoctor(report) {
   }
   if (report.app?.permissions) out.push(`  macOS:      screen recording ${mark(report.app.permissions.screen_recording)}, accessibility ${mark(report.app.permissions.accessibility)}`);
   out.push(`  Node:       ${report.node}`);
+  const cred = report.credentials ?? report.agent_access?.credentials;
+  if (cred) {
+    const markKey = key => cred.keys?.[key] && cred.keys[key] !== 'missing' ? '✓' : '✗';
+    out.push(`  Credentials:${cred.ready ? ' ready' : ' missing'}${cred.file_exists ? ` (file ${cred.path})` : ' (no agent.env yet)'}`);
+    out.push(`    ${markKey('MYMAN_AGENT_TOKEN')} MYMAN_AGENT_TOKEN  ${cred.keys?.MYMAN_AGENT_TOKEN ?? 'missing'}`);
+    out.push(`    ${markKey('MYMAN_MACHINE_ID')} MYMAN_MACHINE_ID   ${cred.keys?.MYMAN_MACHINE_ID ?? 'missing'}`);
+    if (cred.file_exists && cred.file_mode_ok === false) out.push(`    ✗ file mode ${cred.file_mode} (want 600)`);
+  }
   if (report.next_steps?.length) {
     out.push('', 'Next steps (a person runs the grant commands in Terminal; agents cannot turn on access):');
     report.next_steps.forEach((step, index) => {

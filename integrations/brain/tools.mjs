@@ -67,7 +67,7 @@ export async function execute(brain, name, args = {}) {
   return brain[name](parsed.data);
 }
 
-const ERROR_EXTRAS = ['hint', 'human_command', 'settings_command', 'launch_command', 'groups', 'agent_may_self_grant'];
+const ERROR_EXTRAS = ['hint', 'human_command', 'settings_command', 'launch_command', 'groups', 'agent_may_self_grant', 'credentials_file'];
 export function errorResult(error, options) {
   if (!(error instanceof BrainError)) return { error: { code: 'INTERNAL_ERROR', message: 'The Brain request failed. Check local setup and retry.' } };
   const shown = { code: error.code, message: error.message };

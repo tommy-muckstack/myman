@@ -78,6 +78,18 @@ myman agents revoke capture               # turn one back off (allowed anywhere)
 
 **Why this stays human-only.** `grant` is a local CLI command, not a catalog action, so no MCP tool, `invoke`, app-socket request, `settings set` or URL can reach it. It refuses (`HUMAN_REQUIRED`, nothing written) when `MYMAN_AGENT_TOKEN`, `MYMAN_AGENT_ID`, `MYMAN_MACHINE_ID` or `CI` is set, or when stdin/stdout is not an interactive terminal. It has no `--yes`, `--confirm` or `--force`; a wrong confirmation changes nothing. It writes the same preference the Settings toggle writes. Like the Linux `myman agents add`, this is a guardrail against accidents and non-interactive automation, not authentication: the model remains "same-login processes are the trust boundary," so do not run `grant` for an agent you do not trust with that access. `myman agents open` opens `myman://settings/agents`; opening the pane changes nothing.
 
+**4. Persist named credentials (so hosts do not paste tokens into chat).** When Settings → Agents has **Require named agent credentials**, each bot needs `MYMAN_AGENT_TOKEN` and `MYMAN_MACHINE_ID`. Prefer a durable file the CLI/MCP load automatically when those variables are unset in the process environment:
+
+```sh
+# After copying the token and machine ID into this Terminal session:
+myman agents credentials save          # person-only; asks you to type: save credentials
+myman agents credentials status        # path, which keys are present (never prints secrets)
+```
+
+`agents credentials save` writes `${XDG_CONFIG_HOME:-~/.config}/myman/agent.env` (directory mode 700, file mode 600) with `export MYMAN_AGENT_TOKEN=...` and `export MYMAN_MACHINE_ID=...`. The CLI (`cli.mjs`) and app MCP server load that file at startup and before each app-socket request; already-set environment variables win. Saving credentials **never** turns on capture/markup/recording/library/sharing — grants stay human-only (`agents grant` or Settings). Optional: source the same file from `~/.zshenv` so interactive shells see the variables too (the Mini already uses this pattern).
+
+Doctor and `agents status` report a `credentials` block (`ready`, `path`, `keys.*` = `environment` | `file` | `missing`, never secret values) and add `next_steps` when the file or keys are missing. `IDENTITY_REQUIRED` / `INVALID_CREDENTIAL` errors carry a `hint` and `human_command` pointing at `agents credentials save`, distinct from `AGENT_DISABLED` (grants). If you need to run `agents grant` in a shell that already loaded `agent.env`, clear the agent vars for that one command: `env -u MYMAN_AGENT_TOKEN -u MYMAN_MACHINE_ID -u MYMAN_AGENT_ID myman agents grant capture markup`.
+
 **Errors and doctor output.** A disabled capability returns the stable code `AGENT_DISABLED` (exit code 4) in the CLI, MCP and job receipts, now with extra fields:
 
 ```json
