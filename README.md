@@ -208,6 +208,12 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## Persistable agent credentials (1.1.107)
+
+- `myman agents credentials status|save` and automatic load of `~/.config/myman/agent.env` (mode 600): named agent token and machine ID survive across shells so headless agents can call `myman` without re-exporting env each time (#171).
+- `myman doctor` reports whether credentials are ready from the file and/or environment; saving credentials is person-only at an interactive Terminal and never auto-grants capture/markup.
+- Clarifies doctor vs `AGENT_DISABLED` when the master agent switch is off.
+
 ## Agent access on headless Macs (1.1.106)
 
 - `myman agents grant | revoke | status | open` and `myman install-cli`: the person at the Mac can allow agent capabilities from an interactive Terminal (confirmation phrase required; refuses from agents, pipes and CI). Master switch, control, calendar and people grants stay in Settings → Agents.
