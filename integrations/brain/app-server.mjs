@@ -1,3 +1,5 @@
+import { ensureAgentEnv } from './agent-credentials.mjs';
+ensureAgentEnv();
 import { z } from 'zod/v4';
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';

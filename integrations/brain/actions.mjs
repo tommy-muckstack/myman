@@ -6,9 +6,11 @@ import { compose, wav, VERSION as MUSIC_VERSION, TRACKS } from '../linux/music.m
 import { randomUUID } from 'node:crypto';
 import catalog from './actions.json' with { type: 'json' };
 import { BrainError } from './brain.mjs';
+import { ensureAgentEnv } from './agent-credentials.mjs';
 export { catalog };
 
 export async function request(payload, { socketPath = process.env.MYMAN_AGENT_SOCKET ?? `/tmp/myman-${process.getuid()}/control.sock`, timeout = 15000 } = {}) {
+  ensureAgentEnv();
   payload = { ...(process.env.MYMAN_AGENT_TOKEN ? {credential:process.env.MYMAN_AGENT_TOKEN} : {}), ...(process.env.MYMAN_MACHINE_ID ? {machine_id:process.env.MYMAN_MACHINE_ID} : {}), ...payload };
   let folder, socket;
   try { [folder, socket] = await Promise.all([lstat(path.dirname(socketPath)), lstat(socketPath)]); }

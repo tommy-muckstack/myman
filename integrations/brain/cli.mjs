@@ -1,3 +1,5 @@
+import { ensureAgentEnv } from './agent-credentials.mjs';
+ensureAgentEnv();
 import { run, exitCode } from './app-cli.mjs';
 import { errorResult } from './tools.mjs';
 try {

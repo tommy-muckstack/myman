@@ -178,7 +178,7 @@ test('failed jobs, raw invoke replies and thrown errors all carry the hint', asy
 
 test('doctor with the app closed says so, gives the launch command and reads grants from preferences', async () => {
   const deps = {
-    platform: 'darwin', env: { PATH: '/usr/bin' }, accessDeps: fakeDefaults({ agentActionsEnabled: true }, { running: false }),
+    platform: 'darwin', env: { PATH: '/usr/bin', MYMAN_AGENT_TOKEN: 't', MYMAN_MACHINE_ID: 'm' }, accessDeps: fakeDefaults({ agentActionsEnabled: true }, { running: false }),
     request: async () => { throw new BrainError('APP_NOT_RUNNING', 'Open the updated My Man app, then retry.'); },
   };
   const report = await run(['doctor', '--root', await mkdtemp(path.join(tmpdir(), 'man-doctor-'))], deps);
@@ -206,7 +206,7 @@ test('doctor with the app closed says so, gives the launch command and reads gra
 
 test('doctor distinguishes a running-but-unreachable app and reports a healthy app with grants on', async () => {
   const stuck = await run(['doctor', '--root', await mkdtemp(path.join(tmpdir(), 'man-doctor-'))], {
-    platform: 'darwin', env: { PATH: '/usr/bin' }, accessDeps: fakeDefaults({}, { running: true }),
+    platform: 'darwin', env: { PATH: '/usr/bin', MYMAN_AGENT_TOKEN: 't', MYMAN_MACHINE_ID: 'm' }, accessDeps: fakeDefaults({}, { running: true }),
     request: async () => { throw new BrainError('APP_NOT_RUNNING', 'x'); },
   });
   assert.equal(stuck.app.process_running, true);
@@ -215,19 +215,19 @@ test('doctor distinguishes a running-but-unreachable app and reports a healthy a
   assert.ok(!stuck.next_steps.some(step => step.id === 'launch_app'));
 
   const native = { ok: true, job: { id: 'd', state: 'succeeded', result: { permissions: { screen_recording: true, accessibility: true }, agents: { enabled: true, capture: true, markup: true, recording: false, library: true, sharing: true } } }, launch_id: 'l' };
-  const healthy = await run(['doctor', '--root', await mkdtemp(path.join(tmpdir(), 'man-doctor-'))], { platform: 'darwin', env: { PATH: path.dirname(process.execPath) }, invoke: async () => native });
+  const healthy = await run(['doctor', '--root', await mkdtemp(path.join(tmpdir(), 'man-doctor-'))], { platform: 'darwin', env: { PATH: path.dirname(process.execPath), MYMAN_AGENT_TOKEN: 't', MYMAN_MACHINE_ID: 'm' }, invoke: async () => native });
   assert.equal(healthy.app.ok, true);
   assert.equal(healthy.agent_access.source, 'running_app');
   assert.deepEqual(healthy.agent_access.disabled, ['recording']);
   assert.deepEqual(healthy.next_steps.map(step => step.id), ['grant_recording', 'install_cli']);
-  const off = await run(['doctor', '--root', await mkdtemp(path.join(tmpdir(), 'man-doctor-'))], { platform: 'darwin', env: { PATH: '/usr/bin' }, invoke: async () => ({ ...native, job: { ...native.job, result: { permissions: { screen_recording: false }, agents: { enabled: false, capture: true } } } }) });
+  const off = await run(['doctor', '--root', await mkdtemp(path.join(tmpdir(), 'man-doctor-'))], { platform: 'darwin', env: { PATH: '/usr/bin', MYMAN_AGENT_TOKEN: 't', MYMAN_MACHINE_ID: 'm' }, invoke: async () => ({ ...native, job: { ...native.job, result: { permissions: { screen_recording: false }, agents: { enabled: false, capture: true } } } }) });
   assert.ok(off.next_steps.some(step => step.id === 'enable_commands' && !/agents grant/.test(step.run)));
   assert.ok(off.next_steps.some(step => step.id === 'screen_recording'));
 });
 
 test('doctor --plain prints each next step as a copy-pasteable line', async () => {
   const report = await run(['doctor', '--plain', '--root', await mkdtemp(path.join(tmpdir(), 'man-doctor-'))], {
-    platform: 'darwin', env: { PATH: '/usr/bin' }, accessDeps: fakeDefaults({}, { running: false }),
+    platform: 'darwin', env: { PATH: '/usr/bin', MYMAN_AGENT_TOKEN: 't', MYMAN_MACHINE_ID: 'm' }, accessDeps: fakeDefaults({}, { running: false }),
     request: async () => { throw new BrainError('APP_NOT_RUNNING', 'x'); },
   });
   assert.match(report.plain, /open -a "My Man"/);

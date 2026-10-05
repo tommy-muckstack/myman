@@ -7,6 +7,7 @@ import { checkWorkflow } from './workflows.mjs';
 import { Brain, BrainError } from './brain.mjs';
 import { execute } from './tools.mjs';
 import * as access from './agent-access.mjs';
+import * as credentials from './agent-credentials.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
 const strings = ['use-model','sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
@@ -99,7 +100,7 @@ brief read --id ID --include-context returns timestamped frames and untimed tran
 capture-markup --mode agent --region x,y,w,h --ops-file ops.json
 
 Collaboration: agent whoami|list; machine current; --machine ID verifies the selected Mac.
-Set MYMAN_AGENT_TOKEN and MYMAN_MACHINE_ID in the host environment; never put tokens in prompts.
+Set MYMAN_AGENT_TOKEN and MYMAN_MACHINE_ID in the host environment or ~/.config/myman/agent.env; never put tokens in prompts.
 bundle create|list|read|update|delete; handoff create|list|read|update; collaboration events
 lease acquire|release; session transfer; resource version --kind task|theme|item --id ID
 Bundles share references and revisions, handoffs never launch agents or send messages.
@@ -128,8 +129,10 @@ Capture/markup/recording/library grants start off. No agent command, MCP tool or
 Setup: doctor [--plain] lists each disabled capability with the exact command a person runs. agents status|open
 agents grant|revoke capture|markup|recording|library|sharing|all  (grant: a PERSON at an interactive Terminal only,
   refused when MYMAN_AGENT_TOKEN/agent env is set or there is no TTY; asks you to type the confirmation; no --yes)
+agents credentials status|save  (durable ~/.config/myman/agent.env; save is person+TTY only; never auto-grants)
 agents open  (opens Settings → Agents; grants nothing)  install-cli  (links myman into ~/.local/bin; never overwrites)
 Path: "/Applications/My Man.app/Contents/Resources/myman". Launch the app: open -a "My Man"
+Set MYMAN_AGENT_TOKEN / MYMAN_MACHINE_ID in the host env or agent.env (loaded automatically when unset).
 Geometry: --display + --region uses display-local points, top-left. Region alone uses
 AppKit global points, bottom-left. Markup uses original image pixels, top-left.
 --window-id selects a real window; windows list discovers IDs. No pointer automation.
@@ -176,7 +179,12 @@ export async function plan(argv) {
   if(p[0]==='agents'){
     allowed(v,[]);
     const sub=p[1];
-    if(!['status','grant','revoke','open'].includes(sub))fail('INVALID_ARGUMENTS','Use agents status | agents grant GROUP... | agents revoke GROUP... | agents open. Groups: capture markup recording library sharing, or all.');
+    if(sub==='credentials'){
+      const action=p[2];
+      if(!['status','save'].includes(action)||p.length!==3)fail('Use agents credentials status | agents credentials save. save is person-only at an interactive Terminal (asks to type: save credentials); it writes ~/.config/myman/agent.env and never grants capture/markup.');
+      return {type:'agents',sub:'credentials',action};
+    }
+    if(!['status','grant','revoke','open'].includes(sub))fail('INVALID_ARGUMENTS','Use agents status | agents grant GROUP... | agents revoke GROUP... | agents open | agents credentials status|save. Groups: capture markup recording library sharing, or all.');
     if(['status','open'].includes(sub)&&p.length!==2)fail('INVALID_ARGUMENTS',`agents ${sub} takes no arguments.`);
     if(['grant','revoke'].includes(sub)&&p.length<3)fail('INVALID_ARGUMENTS',`Name what to ${sub}: capture markup recording library sharing, or all.`);
     return {type:'agents',sub,names:p.slice(2)};
@@ -284,9 +292,14 @@ export async function run(argv, deps={}){
   // Person-only access management (see agent-access.mjs): local commands, never app actions.
   if(task.type==='agents'){
     const a=deps.access??access;
-    if(task.sub==='status')return a.status(deps.accessDeps);
+    const cred=deps.credentials??credentials;
+    if(task.sub==='credentials'){
+      if(task.action==='status')return cred.credentialsStatus({env:deps.env??process.env,...(deps.credentialIo??{})});
+      return cred.saveCredentials({env:deps.env??process.env,...(deps.humanIo??{}),...(deps.credentialIo??{})});
+    }
+    if(task.sub==='status')return a.status(deps.accessDeps, deps.env??process.env);
     if(task.sub==='open')return a.openSettings({deps:deps.accessDeps,open:deps.openUrl});
-    return a.change(task.sub,task.names,{deps:deps.accessDeps,...(deps.humanIo??{})});
+    return a.change(task.sub,task.names,{deps:deps.accessDeps,env:deps.env??process.env,...(deps.humanIo??{})});
   }
   if(task.type==='install-cli')return (deps.access??access).installCli(deps.installCli??{});
   if(task.type==='doctor'){
@@ -302,11 +315,19 @@ export async function run(argv, deps={}){
       if(processRunning&&app.error?.code==='APP_NOT_RUNNING')app.error={...app.error,hint:`My Man is running but the CLI cannot reach its command socket. Restart it (quit, then ${a.LAUNCH_COMMAND}) and re-run ${a.cli(env)} doctor --json. If it persists, update My Man and make sure the CLI runs as the same macOS user.`};
       try{grants=await a.readGrants(deps.accessDeps);source='preferences';}catch{grants=undefined;}
     }
-    const steps=a.nextSteps({grants,appRunning:app.ok?true:processRunning,unreachable:!app.ok&&processRunning===true,permissions:app.permissions,cli},env);
-    const report={ok:app.ok && brain.ok!==false,app,brain,node:process.versions.node,cli,
+    const cred=deps.credentials??credentials;
+    const credStatus=cred.credentialsStatus({env,...(deps.credentialIo??{})});
+    const steps=[
+      ...a.nextSteps({grants,appRunning:app.ok?true:processRunning,unreachable:!app.ok&&processRunning===true,permissions:app.permissions,cli},env),
+      ...cred.credentialsNextSteps(credStatus,env),
+    ];
+    // Credentials are always reported; missing keys become next_steps. Doctor ok still
+    // follows app/brain reachability — IDENTITY_REQUIRED surfaces when an action needs
+    // a named credential (annotateError adds the agent.env hint then).
+    const report={ok:app.ok && brain.ok!==false,app,brain,node:process.versions.node,cli,credentials:credStatus,
       ...(grants?{agent_access:{source,grants,disabled:Object.keys(a.GRANTABLE).filter(g=>!grants[g]),agents_can_self_grant:false,
         ...(Object.keys(a.GRANTABLE).some(g=>!grants[g])?{human_command:`${a.cli(env)} agents grant ${Object.keys(a.GRANTABLE).filter(g=>!grants[g]).join(' ')}`}:{}),
-        note:'Only a person can turn these on: in Terminal, or in Settings → Agents. No CLI action, MCP tool or flag can.'}}:{}),
+        note:'Only a person can turn these on: in Terminal, or in Settings → Agents. No CLI action, MCP tool or flag can. Credentials (agent.env) are separate from grants.'}}:{}),
       next_steps:steps,
       ...(!app.ok?{error:app.error}:brain.ok===false?{error:brain.error}:{})};
     return task.plain?{...report,plain:a.renderDoctor(report)}:report;
