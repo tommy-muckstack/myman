@@ -27,6 +27,33 @@ final class AgentCollaborationTests: XCTestCase {
         XCTAssertThrowsError(try reloaded.authenticate(["credential": token]))
         XCTAssertThrowsError(try reloaded.validate(principal, action: "note.create"))
     }
+    @MainActor func testBrainzCredentialIsIssuedOnceAndHonoursRevocation() throws {
+        let root = try root(), registry = AgentIdentity(root: root)
+        XCTAssertTrue(registry.ensureBrainzCredential())
+        XCTAssertFalse(registry.required, "a built-in identity must not start refusing unnamed callers")
+        let file = root.appendingPathComponent("AgentIdentity/brainz.env")
+        let env = try String(contentsOf: file, encoding: .utf8)
+        let token = env.split(separator: "\n").first { $0.hasPrefix("MYMAN_AGENT_TOKEN=") }.map { String($0.dropFirst("MYMAN_AGENT_TOKEN=".count)) }
+        XCTAssertNotNil(token)
+        XCTAssertTrue(env.contains("MYMAN_MACHINE_ID=\(registry.machine["id"] as! String)"))
+        XCTAssertEqual(try registry.authenticate(["credential": token!]).name, AgentIdentity.brainzAgentName)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int, 0o600)
+        // A second launch changes nothing.
+        XCTAssertTrue(registry.ensureBrainzCredential())
+        XCTAssertEqual(registry.agents.filter { $0.name == AgentIdentity.brainzAgentName && !$0.revoked }.count, 1)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), env)
+        // A lost file means a fresh credential; the old one stops working.
+        try FileManager.default.removeItem(at: file)
+        XCTAssertTrue(registry.ensureBrainzCredential())
+        XCTAssertThrowsError(try registry.authenticate(["credential": token!]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        // Revoking in Settings removes the file and is final.
+        let live = registry.agents.first { $0.name == AgentIdentity.brainzAgentName && !$0.revoked }!
+        try registry.revoke(live.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertFalse(registry.ensureBrainzCredential())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
     @MainActor func testCorruptIdentityRegistryFailsClosed() throws {
         let root = try root(), registry = AgentIdentity(root: root)
         _ = try registry.issue(name: "Capture Agent", scopes: [])

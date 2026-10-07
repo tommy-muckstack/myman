@@ -208,6 +208,10 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## Built-in Brainz credential (unreleased)
+
+- At launch My Man issues a named agent called **Brainz** (once) and writes its credential to `~/Library/Application Support/MyMan/AgentIdentity/brainz.env` (mode 600). The Brainz app reads that file and passes it to the companion servers it starts, so its My Man connectors work with nothing to paste. Issuing it does not turn on "Require named agent credentials", and the grants in Settings → Agents still gate what it may do. Revoke the Brainz agent in Settings → Agents to stop it; the file is removed and it is not issued again.
+
 ## Persistable agent credentials (1.1.107)
 
 - `myman agents credentials status|save` and automatic load of `~/.config/myman/agent.env` (mode 600): named agent token and machine ID survive across shells so headless agents can call `myman` without re-exporting env each time (#171).
