@@ -21,6 +21,10 @@ struct AgentIdentitySettings: View {
                     VStack(alignment: .leading) {
                         Text(agent.name)
                         Text(agent.scopes.joined(separator: ", ")).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                        if agent.name == AgentIdentity.brainzAgentName {
+                            Text("Issued for the Brainz app on this Mac at launch; no credential to paste. Revoke to stop it.")
+                                .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                        }
                     }
                     Spacer()
                     Button("Revoke") { attempt { try registry.revoke(agent.id) } }.clickable()

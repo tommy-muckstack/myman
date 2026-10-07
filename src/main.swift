@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.meetings.retryTranscription(meetingID: id, regenerate: regenerate)
         }
         Brain.bootstrap()
+        AgentIdentity.shared.ensureBrainzCredential()
         BrainAgentExportObserver.shared.start()
         Brain.backfillScreenshots()
         ConceptThemeWorker.foregroundBusy = { [weak self] in
