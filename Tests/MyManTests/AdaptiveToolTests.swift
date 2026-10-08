@@ -5,16 +5,17 @@ final class AdaptiveToolTests: XCTestCase {
     private let local = TimeZone(identifier: "America/New_York")!
     private func date(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
 
-    func testIcelandToLocalUsesSeasonalOffset() throws {
-        for (day, hour) in [("2026-07-01T12:00:00Z", 4), ("2026-01-01T12:00:00Z", 3)] {
+    func testLocalToIcelandUsesSeasonalOffset() throws {
+        for (day, hour) in [("2026-07-01T12:00:00Z", 12), ("2026-01-01T12:00:00Z", 13)] {
             guard case .timeZone(let result) = QuickTimeZone.parse("8am in iceland", now: date(day), local: local) else {
                 return XCTFail("Expected time-zone conversion")
             }
             var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = local
+            calendar.timeZone = result.destination
             XCTAssertEqual(calendar.component(.hour, from: result.date), hour)
-            XCTAssertEqual(result.sourceName, "Iceland")
-            XCTAssertEqual(result.destination, local)
+            XCTAssertEqual(result.destinationName, "Iceland")
+            XCTAssertEqual(result.source, local)
+            XCTAssertEqual(result.displayZones.first?.zone, local)
         }
         XCTAssertEqual(AdaptiveLauncherIntent.resolve("8am in iceland"), .create)
         XCTAssertEqual(AdaptiveLauncherIntent.resolve("find 8am in iceland"), .search)
