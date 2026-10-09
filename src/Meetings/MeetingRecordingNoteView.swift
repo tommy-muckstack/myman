@@ -60,11 +60,36 @@ private struct RecordingTabPressStyle: ButtonStyle {
 
 struct MeetingRecordingNoteView: View {
     @ObservedObject var draft: MeetingRecordingNote
+    /// Related past context shown under the editor; nil in previews/tests.
+    var context: MeetingContextStream? = nil
     var onFocusChanged: (Bool) -> Void
     @State private var focused = false
     @State private var showsSaved = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+            editor
+                .frame(minHeight: 120, maxHeight: .infinity)
+                .layoutPriority(1)
+            if let context {
+                MeetingContextStreamView(stream: context)
+                    .frame(maxHeight: 170)
+            }
+        }
+        .task(id: draft.note?.updatedAt) {
+            showsSaved = draft.note != nil
+            do { try await Task.sleep(for: .seconds(5)) }
+            catch { return }
+            showsSaved = false
+        }
+        .onChange(of: focused) { _, focused in
+            onFocusChanged(focused)
+            if !focused { draft.flush() }
+        }
+        .onDisappear { draft.flush(); onFocusChanged(false) }
+    }
+
+    private var editor: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
             HStack {
                 Text("Linked to this meeting")
@@ -106,16 +131,5 @@ struct MeetingRecordingNoteView: View {
                 }
             }
         }
-        .task(id: draft.note?.updatedAt) {
-            showsSaved = draft.note != nil
-            do { try await Task.sleep(for: .seconds(5)) }
-            catch { return }
-            showsSaved = false
-        }
-        .onChange(of: focused) { _, focused in
-            onFocusChanged(focused)
-            if !focused { draft.flush() }
-        }
-        .onDisappear { draft.flush(); onFocusChanged(false) }
     }
 }

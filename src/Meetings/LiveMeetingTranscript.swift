@@ -295,8 +295,13 @@ final class LiveMeetingTranscript: ObservableObject {
         var translationNote: String? = nil
     }
     let translation = MeetingLiveTranslation()
+    /// Related past context, fed by every rows change like translation is.
+    let context: MeetingContextStream
     @Published private(set) var rows: [Row] = [] {
-        didSet { translation.update(rows) }
+        didSet {
+            translation.update(rows)
+            context.update(rows: rows)
+        }
     }
     @Published private(set) var status: Status = .waiting
     @Published var editingRowID: String?
@@ -324,8 +329,9 @@ final class LiveMeetingTranscript: ObservableObject {
     var onProgress: ([MeetingTurn]) -> Void = { _ in }
     private let automaticRetryDelays: [Double]
 
-    init(automaticRetryDelays: [Double] = [2, 4]) {
+    init(automaticRetryDelays: [Double] = [2, 4], context: MeetingContextStream? = nil) {
         self.automaticRetryDelays = automaticRetryDelays
+        self.context = context ?? MeetingContextStream()
     }
 
     func start(reader: any LiveMeetingTranscriptReading, ownerName: String, candidates: SpeakerCandidates) {
@@ -419,6 +425,7 @@ final class LiveMeetingTranscript: ObservableObject {
         callParticipants = []
         editingRowID = nil
         translation.reset()
+        context.stop()
         rows = []
         status = .waiting
         return finishing
