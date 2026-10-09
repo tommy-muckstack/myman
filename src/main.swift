@@ -65,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         capture.meetingIDProvider = { [weak self] in self?.meetings.activeCaptureMeetingID }
         CaptureEnrichment.shared.start()
+        BrainNoteIndexer.shared.start()
         // Crashed sessions can leave phantom aggregate audio devices behind.
         SystemAudioTap.cleanupStaleDevices()
         MeetingController.cleanupOldRecordings()

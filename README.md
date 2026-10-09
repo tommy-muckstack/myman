@@ -208,6 +208,11 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## Meeting context stream and Brainz notes (unreleased)
+
+- While a meeting records, the Notes tab shows **From your past**: earlier meetings with the same people, and notes, screenshots and Brainz notes that match what is being discussed. It seeds from the calendar title and attendees, then refreshes as the conversation moves to new topics (at least 40 new words and 30 seconds between refreshes). Three cards show at a time; click one to open it, dismiss any, or hide the stream for the meeting. Turn it off under Settings → General → Meetings.
+- **Brainz notes** are indexed from the folder the Brainz app has open (Settings → Library → Brainz notes). My Man reads the Markdown files and never changes them. Folders named `finances`, `health`, `family`, `.claude`, `.git` and `node_modules` are skipped by default; edit the list there. Brainz notes appear in search as their own type and open in Brainz.
+
 ## Built-in Brainz credential (1.1.108)
 
 - At launch My Man issues a named agent called **Brainz** (once) and writes its credential to `~/Library/Application Support/MyMan/AgentIdentity/brainz.env` (mode 600). The Brainz app reads that file and passes it to the companion servers it starts, so its My Man connectors work with nothing to paste. Issuing it does not turn on "Require named agent credentials", and the grants in Settings → Agents still gate what it may do. Revoke the Brainz agent in Settings → Agents to stop it; the file is removed and it is not issued again.

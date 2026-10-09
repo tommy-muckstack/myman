@@ -41,6 +41,7 @@ enum MeetingBrief {
         case .screenshot(let shot): return "- **Screenshot:** \(shot.ocrText.prefix(250).replacingOccurrences(of: "\n", with: " "))"
         case .recording(let recording): return "- **Recording — \(recording.title):** \(recording.transcript.prefix(250).replacingOccurrences(of: "\n", with: " "))"
         case .dictation(let dictation): return "- **Dictation:** \(dictation.text.prefix(250).replacingOccurrences(of: "\n", with: " "))"
+        case .brainNote(let note): return "- **Brainz — \(note.title):** \(note.body.prefix(350).replacingOccurrences(of: "\n", with: " "))"
         }
     }
 }

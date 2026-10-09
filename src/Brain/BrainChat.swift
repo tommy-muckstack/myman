@@ -437,6 +437,7 @@ enum BrainChat {
         case .screenshot(let shot): return "SCREENSHOT\n\(shot.ocrText.prefix(2_000))"
         case .recording(let recording): return "SCREEN RECORDING — \(recording.title)\n\(recording.transcript.prefix(2_000))"
         case .dictation(let dictation): return "DICTATION\n\(dictation.text.prefix(1_000))"
+        case .brainNote(let note): return "BRAINZ NOTE — \(note.title)\n\(note.body.prefix(2_000))"
         }
     }
 }
