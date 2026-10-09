@@ -43,7 +43,7 @@ struct CapturePrivacySettings: View {
                 Text("Only the selected window at capture time. Browser URLs are included when available through existing Accessibility access; query strings are omitted.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             }
-            Text("Text recognition, search, titles and Themes run on this Mac. These features use only items you capture or create in Man. They do not monitor your activity.")
+            Text("Text recognition, search, titles and Themes run on this Mac. These features use only items you capture or create in Man. They do not monitor your activity. Meeting notes, tasks and Brain chat also stay on this Mac unless you turn on a hosted model under Settings > AI.")
                 .foregroundStyle(MM.Colors.textSecondary)
             Text("In Search, right-click a capture to hide it from search and Themes or delete it. The filter menu lets you include hidden captures.")
                 .foregroundStyle(MM.Colors.textSecondary)

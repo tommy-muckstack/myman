@@ -4,7 +4,7 @@
 
 <h1 align="center">My Man</h1>
 
-<p align="center"><b>The Mac sidekick for people and their AI agents: meetings, dictation, screenshots, and screen recording, all on-device, all in plain markdown you own. Claude, Grok Bot, and Cursor can use it through MCP or a JSON CLI.</b></p>
+<p align="center"><b>The Mac sidekick for people and their AI agents: meetings, dictation, screenshots, and screen recording, on-device by default, all in plain markdown you own. Claude, Grok Bot, and Cursor can use it through MCP or a JSON CLI.</b></p>
 
 <p align="center">
   <a href="https://muckstack.com/download/myman">Download for Mac</a> ·
@@ -15,7 +15,7 @@
 
 ---
 
-My Man replaces a stack of subscription tools with one local app: meeting notes (Granola-style), voice dictation (Wispr-Flow-style), screenshots with a full editor (CleanShot-style), and screen recording (Loom-style). There is no backend, no account, and no cloud AI — transcription, OCR, translation, and summarization all run on-device.
+My Man replaces a stack of subscription tools with one local app: meeting notes (Granola-style), voice dictation (Wispr-Flow-style), screenshots with a full editor (CleanShot-style), and screen recording (Loom-style). There is no backend and no account. All AI runs on-device by default — transcription, OCR, translation, and summarization. An optional setting can send meeting notes, tasks, and Brain chat to Anthropic's or OpenAI's API using your own key, stored in your Mac's Keychain.
 
 Everything you capture lands in **`~/MyManBrain`** as plain markdown in a git repo: meetings with speaker-attributed transcripts, notes, screenshot OCR, recording transcripts, tasks, and the people you meet with. Point Claude (or any LLM) at the folder and it knows your work. Push the repo anywhere for backup. Your data is files, forever.
 
@@ -33,7 +33,7 @@ My Man gives an AI agent working on a Mac (or Linux) eyes, hands, and memory, al
 | Hand work between agents with briefs, leases, and reviewer sign-off | [Multi-agent workflows](docs/multi-agent-workflows.md) |
 | Record a polished product demo (auto-zoom, smooth cursor, backgrounds, music, title cards) from a short script, on Linux today | `myman demo --script steps.json` ([Linux guide](docs/linux-agents.md)) |
 
-There are over 120 app actions. Every result is JSON with a stable error shape, every action has a strict schema (`myman actions`), and long work returns a job ID you can poll. It runs with no cloud relay, account, or API key.
+There are over 120 app actions. Every result is JSON with a stable error shape, every action has a strict schema (`myman actions`), and long work returns a job ID you can poll. It runs with no cloud relay, account, or API key (the optional hosted writing model in Settings → AI is the only place a key is ever entered, and it is yours).
 
 **Permissions stay with the person.** Capture, markup, recording, and library access are separate grants in **Settings → Agents**, and they all start off. An agent can check what it's allowed to do with `myman doctor --json` or the `myman_app_capabilities` tool. It cannot turn grants on itself: no CLI action, MCP tool, or flag can. A person turns them on in Settings → Agents, or by running `myman agents grant capture` at an interactive Terminal (it refuses inside an agent or without a TTY, and asks for a typed confirmation). `myman doctor` prints the exact command for each disabled capability. See [Enabling agent access](docs/agent-cli.md#enabling-agent-access-headless-macs-and-troubleshooting).
 
@@ -79,7 +79,7 @@ If `myman` isn't on the PATH, it lives at `"/Applications/My Man.app/Contents/Re
 
 **Can an agent search my meeting transcripts?** Yes. The read-only `myman-brain` server searches meetings, notes, screenshots, dictation, and recordings by time, person, keyword, or topic, and it cites the source file for every result.
 
-**Does anything leave my computer?** My Man itself runs its AI on-device and has no backend. An agent receives only the excerpts and images it asks for. Whether those then go to a hosted model depends on the agent you use.
+**Does anything leave my computer?** My Man itself runs its AI on-device by default and has no backend. An optional setting can send meeting notes, tasks, and Brain chat to Anthropic's or OpenAI's API using your own key, stored in your Mac's Keychain. An agent receives only the excerpts and images it asks for. Whether those then go to a hosted model depends on the agent you use.
 
 **Can an agent record my screen without asking?** No. Recording is a separate grant that starts off, and macOS also asks for Screen Recording permission.
 
@@ -174,7 +174,7 @@ no maintainer account or connection to the maintainer's Mac is needed.
 Open the launcher, use the search field, then choose **Chat β**. Text chat is
 ephemeral. To hear local voice replies, run `./scripts/install-chatterbox.sh`
 once and `./scripts/run-chatterbox.sh` while using Chat. The companion binds
-only to `127.0.0.1`; no prompt, transcript, or API key is sent to a service.
+only to `127.0.0.1`; no prompt, transcript, or API key is sent to a service by the voice companion. (Chat answers themselves stay on-device unless you turn on the hosted writing model under Settings → AI.)
 
 ### Release diagnostics
 
@@ -186,7 +186,7 @@ not block signing or publishing a release.
 
 ## Privacy
 
-All AI runs on-device (speech models, Vision OCR, Apple Translation, Foundation Models). Captures are stored locally. Official builds send anonymous usage analytics and crash reports (counts, kinds, and durations — never your content) and check a static feed for updates. The analytics keys are injected at release-build time and are not in this repo, so builds from source send no telemetry at all.
+All AI runs on-device by default (speech models, Vision OCR, Apple Translation, Foundation Models). An optional setting can send meeting notes, tasks, and Brain chat to Anthropic's or OpenAI's API using your own key, stored in your Mac's Keychain; nothing is sent while it is off, and live notes during a meeting always stay on-device. Captures are stored locally. Official builds send anonymous usage analytics and crash reports (counts, kinds, and durations — never your content) and check a static feed for updates. The analytics keys are injected at release-build time and are not in this repo, so builds from source send no telemetry at all.
 
 ## Acknowledgments
 
@@ -207,6 +207,10 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 ### Recorded briefs and visual proof
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
+
+## Hosted writing model (unreleased)
+
+Settings → AI adds an optional hosted writing model, off by default. Pick Claude or OpenAI, paste your own API key (stored only in this Mac's Keychain, never in the app's files, logs or analytics), and choose which features use it: the final meeting-notes pass, task extraction from notes and dictation, and Chat with your Brain. Hosted output goes through the same evidence checks as on-device notes, and any failure falls back to the on-device path. Live notes during a meeting, dictation cleanup, scheduling, Themes, the launcher and text-selection actions always stay on-device.
 
 ## Built-in Brainz credential (1.1.108)
 

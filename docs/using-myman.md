@@ -41,7 +41,10 @@ saved results are Markdown, not persistent interactive widgets. Several timers c
 continues while My Man is running and rings, shakes, and pulses when it finishes until you dismiss it; the expanded widget has a bell toggle for sound. Timers do not
 survive quitting the app. Simple requests use local rules; ambiguous phrasing may
 use Apple's on-device Foundation Models on supported Macs with Apple Intelligence
-enabled. No hosted classifier or API key is used. This is a bounded adaptive
+enabled. No hosted classifier or API key is used for the launcher. (All AI runs
+on-device by default. An optional setting under **Settings → AI** can send
+meeting notes, tasks, and Brain chat to Anthropic's or OpenAI's API using your
+own key, stored in your Mac's Keychain; the launcher never uses it.) This is a bounded adaptive
 interface, not an arbitrary mini-app generator. See the
 [implementation and local-model options](adaptive-launcher.md).
 
@@ -70,7 +73,7 @@ and are recognized again in the background.
 
 **Settings → Library** controls automatic Themes and local semantic search.
 Existing captures are indexed incrementally after the database migration.
-No app/window tracking or cloud inference is added. Deleting removes the
+No app/window tracking is added, and search, titles and Themes never use cloud inference. Deleting removes the
 capture’s local index, vectors, OCR geometry and relationships plus its current
 Brain export; Trash, earlier Git revisions and external backups can retain copies.
 
