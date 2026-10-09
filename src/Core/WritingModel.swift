@@ -166,6 +166,8 @@ struct WritingModelSettings: Sendable, Equatable {
     var enabled = false
     var vendor: WritingVendor = .claude
     var model: String = WritingVendor.claude.defaultModel
+    /// Only used by Claude; empty unless the key is a user-level key.
+    var claudeWorkspaceID = ""
     var meetingNotes = true
     var tasks = true
     var brainChat = true
@@ -193,7 +195,8 @@ enum WritingModels {
               let key = apiKey(settings.vendor)?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else { return nil }
         let model = settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
         switch settings.vendor {
-        case .claude: return ClaudeWritingModel(apiKey: key, model: model.isEmpty ? ClaudeWritingModel.defaultModel : model)
+        case .claude: return ClaudeWritingModel(apiKey: key, model: model.isEmpty ? ClaudeWritingModel.defaultModel : model,
+                                                workspaceID: settings.claudeWorkspaceID)
         case .openai: return OpenAIWritingModel(apiKey: key, model: model.isEmpty ? OpenAIWritingModel.defaultModel : model)
         }
     }
