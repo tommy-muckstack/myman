@@ -9,6 +9,9 @@ actor MeetingNotesCache {
         var facts: [MeetingFact]
         var actions: [MeetingCommitment]
         var unclear: Int
+        /// Hosted reads return an overview with the facts; on-device entries
+        /// (and entries written before this field existed) carry none.
+        var overview: String? = nil
     }
     private var files: [URL: [String: Entry]] = [:]
 

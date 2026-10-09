@@ -411,7 +411,11 @@ enum MeetingEvidence {
 }
 
 enum GroundedMeetingNotes {
+    /// `provider` is the opt-in hosted writing model for the FINAL notes pass
+    /// only (nil = on-device, the default). Hosted output is validated by the
+    /// same `MeetingEvidence` checks; any hosted failure falls back here.
     static func generate(_ meeting: Meeting, corrections: [String: String] = [:], useLanguageModel: Bool = true,
+                         provider: WritingModelProvider? = nil,
                          progress: @escaping MeetingNotesService.Progress = { _ in }) async -> MeetingAnalysis {
         let cacheURL = MeetingNotesCache.url(for: meeting)
         let parsed = MeetingSource.parse(meeting.transcript)
@@ -432,8 +436,33 @@ enum GroundedMeetingNotes {
         var facts: [MeetingFact] = []; var actions: [MeetingCommitment] = []
         var unclear = 0
         let debug = ProcessInfo.processInfo.environment["MAN_NOTES_DEBUG"] == "1"
+        var hostedOverview: String?
+        if let provider, useLanguageModel {
+            let start = ProcessInfo.processInfo.systemUptime
+            do {
+                let hosted = try await HostedMeetingNotes.extract(prepared: prepared, sources: sources, meeting: meeting,
+                                                                  provider: provider, cacheURL: cacheURL, progress: progress)
+                facts = hosted.facts; actions = hosted.actions; unclear = hosted.unclear; hostedOverview = hosted.overview
+                Analytics.track("hosted_notes_generated", [
+                    "vendor": WritingModels.vendor(of: provider),
+                    "duration_ms": Int((ProcessInfo.processInfo.systemUptime - start) * 1000),
+                    "transcript_chars": WritingModels.bucket(hosted.transcriptChars),
+                    "input_tokens": WritingModels.bucket(hosted.inputTokens),
+                    "output_tokens": WritingModels.bucket(hosted.outputTokens),
+                    "chunks": hosted.chunks,
+                ])
+            } catch is CancellationError {
+                return MeetingAnalysis(markdown: "")
+            } catch {
+                let reason = (error as? WritingModelError)?.reason ?? "other"
+                NSLog("My Man [Writing model] hosted notes failed (%@); using the on-device path", reason)
+                Analytics.track("hosted_notes_failed", ["vendor": WritingModels.vendor(of: provider), "reason": reason])
+                facts = []; actions = []; unclear = 0
+            }
+        }
+        let hostedSucceeded = hostedOverview != nil
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), useLanguageModel, case .available = SystemLanguageModel.default.availability {
+        if !hostedSucceeded, #available(macOS 26.0, *), useLanguageModel, case .available = SystemLanguageModel.default.availability {
             // Smaller windows: the model returns a handful of facts per call,
             // so a 30-minute meeting read in five bites came back as five
             // bullets. More, shorter reads cover the whole conversation.
@@ -457,28 +486,15 @@ enum GroundedMeetingNotes {
                     let response = try await AsyncDeadline.run(seconds: 20) {
                         (try await session.respond(to: window, generating: Extraction.self)).content
                     }
-                    facts += response.facts.filter { $0.importance >= 2 }.compactMap {
-                        let candidate = MeetingFact(sourceID: $0.sourceID, text: $0.text, quote: $0.quote, importance: $0.importance,
-                                                    kind: MeetingClaimKind(rawValue: $0.kind))
-                        let checked = MeetingEvidence.factChecked(candidate, sources: sources)
-                        if debug { print("NOTES_DEBUG fact \(checked.rejection ?? "ACCEPTED as \(checked.fact!.resolvedKind.rawValue)") | \(candidate.kind?.rawValue ?? "?") | \(candidate.text) | «\(candidate.quote)»") }
-                        if let fact = checked.fact { return fact }
-                        // Keep the model-selected evidence if its paraphrase is
-                        // unsupported. Never substitute an unrelated paragraph,
-                        // and never quote a passage that is not readable.
-                        guard let source = MeetingEvidence.source(for: $0.quote, in: sources),
-                              (60...450).contains($0.quote.count) else { return nil }
-                        guard MeetingEvidence.legible($0.quote) else { unclear += 1; return nil }
-                        return MeetingFact(sourceID: source.id, text: "“\($0.quote)”", quote: $0.quote, importance: 1, kind: .discussion)
-                    }
+                    facts += acceptFacts(response.facts.map {
+                        MeetingFact(sourceID: $0.sourceID, text: $0.text, quote: $0.quote, importance: $0.importance,
+                                    kind: MeetingClaimKind(rawValue: $0.kind))
+                    }, sources: sources, unclear: &unclear, debug: debug)
                     if meeting.captureKind != .listening {
-                        actions += response.commitments.compactMap {
-                            let candidate = MeetingCommitment(sourceID: $0.sourceID, owner: $0.owner, task: $0.task,
-                                                              quote: $0.quote, due: $0.due, confidence: $0.confidence, tentative: $0.tentative)
-                            let accepted = MeetingEvidence.commitment(candidate, sources: sources)
-                            if debug { print("NOTES_DEBUG action \(accepted == nil ? "REJECTED" : "ACCEPTED") | \($0.owner) | tentative=\($0.tentative) conf=\($0.confidence) | \($0.task) | «\($0.quote)» due=\($0.due)") }
-                            return accepted
-                        }
+                        actions += acceptCommitments(response.commitments.map {
+                            MeetingCommitment(sourceID: $0.sourceID, owner: $0.owner, task: $0.task,
+                                              quote: $0.quote, due: $0.due, confidence: $0.confidence, tentative: $0.tentative)
+                        }, sources: sources, debug: debug)
                     }
                     await MeetingNotesCache.shared.save(.init(facts: Array(facts.dropFirst(factStart)),
                         actions: Array(actions.dropFirst(actionStart)), unclear: unclear - unclearStart),
@@ -521,13 +537,10 @@ enum GroundedMeetingNotes {
                             (try await session.respond(to: excerpt + "\n\nReport the follow-up in [T\(turn.id)] if there is one.", generating: FollowUpExtraction.self)).content
                         }
                         succeeded = true
-                        found = response.commitments.compactMap {
-                            let candidate = MeetingCommitment(sourceID: $0.sourceID, owner: $0.owner, task: $0.task,
-                                                              quote: $0.quote, due: $0.due, confidence: $0.confidence, tentative: $0.tentative)
-                            let accepted = MeetingEvidence.commitment(candidate, sources: sources)
-                            if debug { print("NOTES_DEBUG followup \(accepted == nil ? "REJECTED" : "ACCEPTED") | \($0.owner) | tentative=\($0.tentative) conf=\($0.confidence) | \($0.task) | «\($0.quote)»") }
-                            return accepted
-                        }
+                        found = acceptCommitments(response.commitments.map {
+                            MeetingCommitment(sourceID: $0.sourceID, owner: $0.owner, task: $0.task,
+                                              quote: $0.quote, due: $0.due, confidence: $0.confidence, tentative: $0.tentative)
+                        }, sources: sources, debug: debug, label: "followup")
                     } catch {
                         if error is AsyncDeadline.TimedOut { modelResponsive = false }
                         if debug { print("NOTES_DEBUG followup pass failed: \(error)") }
@@ -574,8 +587,11 @@ enum GroundedMeetingNotes {
             !promised.contains { $0.contains(MeetingSource.normalized(fact.quote)) || MeetingSource.normalized(fact.quote).contains($0) }
         })
         var overview = ""
+        if let hostedOverview, meeting.captureKind != .listening, !selected.isEmpty {
+            overview = validatedOverview(hostedOverview, facts: selected, sources: sources)
+        }
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), useLanguageModel, meeting.captureKind != .listening, !selected.isEmpty,
+        if !hostedSucceeded, #available(macOS 26.0, *), useLanguageModel, meeting.captureKind != .listening, !selected.isEmpty,
            case .available = SystemLanguageModel.default.availability {
             await progress("Writing overview…")
             overview = (try? await AsyncDeadline.run(seconds: 20) {
@@ -589,6 +605,55 @@ enum GroundedMeetingNotes {
         let suffix = Array(Set(audit)).sorted().map { "<!-- corrected: \($0.replacingOccurrences(of: "--", with: "—")) -->" }.joined(separator: "\n")
         return MeetingAnalysis(markdown: markdown + (suffix.isEmpty ? "" : "\n\n" + suffix), facts: selected,
                                actions: actions, omittedPrivatePassages: omitted, unclearPassages: unclear)
+    }
+
+    /// The one validator pipeline for model-proposed facts, on-device or
+    /// hosted: importance 2+, `MeetingEvidence.factChecked`, and the quoted
+    /// fallback when the paraphrase is unsupported but the evidence is real.
+    static func acceptFacts(_ candidates: [MeetingFact], sources: [Int: MeetingSourceTurn], unclear: inout Int, debug: Bool = false) -> [MeetingFact] {
+        var accepted: [MeetingFact] = []
+        for candidate in candidates where candidate.importance >= 2 {
+            let checked = MeetingEvidence.factChecked(candidate, sources: sources)
+            if debug { print("NOTES_DEBUG fact \(checked.rejection ?? "ACCEPTED as \(checked.fact!.resolvedKind.rawValue)") | \(candidate.kind?.rawValue ?? "?") | \(candidate.text) | «\(candidate.quote)»") }
+            if let fact = checked.fact { accepted.append(fact); continue }
+            // Keep the model-selected evidence if its paraphrase is
+            // unsupported. Never substitute an unrelated paragraph,
+            // and never quote a passage that is not readable.
+            guard let source = MeetingEvidence.source(for: candidate.quote, in: sources),
+                  (60...450).contains(candidate.quote.count) else { continue }
+            guard MeetingEvidence.legible(candidate.quote) else { unclear += 1; continue }
+            accepted.append(MeetingFact(sourceID: source.id, text: "“\(candidate.quote)”", quote: candidate.quote, importance: 1, kind: .discussion))
+        }
+        return accepted
+    }
+
+    /// The one validator for model-proposed follow-ups, on-device or hosted.
+    static func acceptCommitments(_ candidates: [MeetingCommitment], sources: [Int: MeetingSourceTurn], debug: Bool = false,
+                                  label: String = "action") -> [MeetingCommitment] {
+        candidates.compactMap { candidate in
+            let accepted = MeetingEvidence.commitment(candidate, sources: sources)
+            if debug { print("NOTES_DEBUG \(label) \(accepted == nil ? "REJECTED" : "ACCEPTED") | \(candidate.owner) | tentative=\(candidate.tentative ?? false) conf=\(candidate.confidence) | \(candidate.task) | «\(candidate.quote)» due=\(candidate.due)") }
+            return accepted
+        }
+    }
+
+    /// An overview survives only if every sentence stays inside the facts'
+    /// own words (nouns, numbers, negation); otherwise the facts speak for
+    /// themselves. Shared by the on-device and hosted paths.
+    static func validatedOverview(_ text: String, facts: [MeetingFact], sources: [Int: MeetingSourceTurn]) -> String {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !facts.isEmpty else { return "" }
+        let evidence = facts.map { $0.text + " " + $0.quote + " " + (sources[$0.sourceID]?.speaker ?? "") }.joined(separator: " ")
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
+        var sentences: [String] = []
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            sentences.append(String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)); return true
+        }
+        guard (1...4).contains(sentences.count),
+              sentences.allSatisfy({ MeetingEvidence.groundedWording($0, in: evidence) && MeetingEvidence.legible($0) }),
+              !facts.contains(where: { MeetingEvidence.hasNegation($0.text) }) || MeetingEvidence.hasNegation(text) else { return "" }
+        return sentences.joined(separator: " ")
     }
 
     /// Distinct facts, spread across the whole conversation so the closing
@@ -675,18 +740,7 @@ enum GroundedMeetingNotes {
             Write a two or three sentence overview of a meeting using ONLY the notes provided. Keep each note's tense, hedging and negation exactly (a proposal stays a proposal; "don't need to grow" must not become "reduce"). Name who said what only as the notes do. Do not add facts, names, numbers, products, outcomes or dates that are not in the notes. Plain prose, no bullets, no preamble.
             """)
         guard let response = try? await session.respond(to: material) else { return "" }
-        let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        let evidence = lead.map { $0.text + " " + $0.quote + " " + (sources[$0.sourceID]?.speaker ?? "") }.joined(separator: " ")
-        let tokenizer = NLTokenizer(unit: .sentence)
-        tokenizer.string = text
-        var sentences: [String] = []
-        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
-            sentences.append(String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)); return true
-        }
-        guard (1...4).contains(sentences.count),
-              sentences.allSatisfy({ MeetingEvidence.groundedWording($0, in: evidence) && MeetingEvidence.legible($0) }),
-              !lead.contains(where: { MeetingEvidence.hasNegation($0.text) }) || MeetingEvidence.hasNegation(text) else { return "" }
-        return sentences.joined(separator: " ")
+        return validatedOverview(response.content, facts: lead, sources: sources)
     }
     #endif
 
@@ -743,8 +797,8 @@ enum GroundedMeetingNotes {
         return output
     }
 
-    #if canImport(FoundationModels)
-    @available(macOS 26.0, *) private static func instructions(listening: Bool) -> String {
+    /// Shared by the on-device model and the hosted writing model.
+    static func instructions(listening: Bool) -> String {
         """
         Read these source turns and extract grounded \(listening ? "takeaways from a recording the owner listened to" : "meeting notes"). Each starts with [Tnumber], a speaker, and a timestamp.
         Return zero to six useful facts worth remembering later: concrete proposals, explanations, decisions, numbers, and outcomes. Cover the later material too. Ignore greetings, filler, agenda prompts, calendar chit-chat, and audio checks. Return an empty facts array for small talk. A useful note states the actual proposal or explanation, not merely that somebody discussed a topic. Every fact needs its exact sourceID and a short VERBATIM quote from THAT turn. Use the speaker's concrete words; do not invent jargon, names, numbers, versions, technology (bots are not robotics), causality, or commitments. Keep the speaker's tense, hedging and negation: "we don't need to grow the team" is NOT "reduce the team"; something already invested in is an existing commitment, not a new decision; "could", "probably", "we should" and "I don't know" are tentative. The app supplies speaker attribution: write the fact without a leading name or pronoun. A speaker reporting somebody else's idea is not proposing it themselves. Predictions and statements about other companies are that speaker's opinion. importance is 1–3, with decisions/proposals at 3. kind is one of: discussion, proposal, existing_commitment, decision, open_question.
@@ -752,12 +806,13 @@ enum GroundedMeetingNotes {
         """
     }
 
-    @available(macOS 26.0, *) private static var followUpInstructions: String {
+    static var followUpInstructions: String {
         """
         Read these source turns (each starts with [Tnumber], a speaker, and a timestamp) and report the follow-up in the indicated turn; the neighbours are context only. A follow-up is: an explicit first-person promise (I'll, I will, let me, I can bring/talk/identify/send/share/look); a direct request to a named participant (can you, could you, would you); or a shared intention with no owner (we should, we need to, someone should). Return an empty list only if there are none. For each: sourceID of the turn; quote = the exact sentence containing the promise, request or we-should, copied verbatim; owner = that speaker's exact label for a promise, the named recipient for a request, or the exact text Owner not assigned for a shared we-should (set tentative true); task = imperative verb plus specific object using the speaker's words; due = deadline words copied from the same sentence, empty if none — a duration like month-long is not a deadline; confidence 0 to 1. Never invent names, owners, dates, or tasks that were not said.
         """
     }
 
+    #if canImport(FoundationModels)
     @available(macOS 26.0, *) @Generable fileprivate struct FollowUpExtraction: Sendable {
         @Guide(description: "The promise, request, or shared we-should in the indicated turn; empty if it holds none.", .count(0...2)) var commitments: [ExtractedCommitment]
     }
