@@ -68,12 +68,12 @@ struct MeetingRecordingNoteView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
+            // The panel's height is fixed, so the editor takes what the
+            // stream leaves: the stream sizes itself to its visible cards.
             editor
-                .frame(minHeight: 120, maxHeight: .infinity)
-                .layoutPriority(1)
+                .frame(minHeight: 100, maxHeight: .infinity)
             if let context {
                 MeetingContextStreamView(stream: context)
-                    .frame(maxHeight: 170)
             }
         }
         .task(id: draft.note?.updatedAt) {

@@ -43,9 +43,19 @@ struct MeetingContextStreamView: View {
                 }
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: stream.cards.map(\.id))
             }
+            .frame(height: Self.height(cards: stream.cards.count, expanded: expanded))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Related past context")
         }
+    }
+
+    static let maxHeight: CGFloat = 176
+    /// Header plus the visible cards, so the editor above never collapses
+    /// the list to nothing inside the panel's fixed height.
+    static func height(cards: Int, expanded: Bool) -> CGFloat {
+        let visible = expanded ? cards : min(cards, MeetingContextStream.visibleCount)
+        let more: CGFloat = cards > MeetingContextStream.visibleCount ? 26 : 0
+        return min(maxHeight, 22 + CGFloat(visible) * 70 + more)
     }
 
     private var visibleCards: [MeetingContextCard] {
