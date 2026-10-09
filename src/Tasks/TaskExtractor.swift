@@ -3,10 +3,12 @@ import Foundation
 import FoundationModels
 #endif
 
-// On-device task extraction (Apple Foundation Models, macOS 26+). The bar
-// varies by source: meetings are high-signal so probable action items count;
-// notes similar; dictation is mostly prose so ONLY explicit commitments pass.
-// Below macOS 26 this is a no-op — no cloud fallback, by design.
+// Task extraction, on-device by default (Apple Foundation Models, macOS 26+).
+// The bar varies by source: meetings are high-signal so probable action items
+// count; notes similar; dictation is mostly prose so ONLY explicit
+// commitments pass. Below macOS 26 this is a no-op unless the user has turned
+// on the hosted writing model (Settings → AI, their own key); that path uses
+// the same instructions and the same verbatim-quote gate.
 
 enum TaskExtractor {
     enum Source: String {
@@ -78,57 +80,87 @@ enum TaskExtractor {
             let lowered = text.lowercased()
             guard Source.dictationTriggers.contains(where: lowered.contains) else { return }
         }
+        if let provider = WritingModels.current(for: .tasks) {
+            Task { @MainActor in
+                let titles = await extractHosted(text: text, source: source, provider: provider)
+                Analytics.track("hosted_tasks_generated", ["vendor": WritingModels.vendor(of: provider), "source": source.rawValue, "count": titles.count])
+                store(titles, source: source)
+            }
+            return
+        }
         #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else { return }
         Task { @MainActor in
-            let titles = await extract(text: text, source: source)
-            guard !titles.isEmpty else { return }
-            let added = TasksStore.shared.addExtracted(titles, source: source.rawValue)
-            if added > 0 {
-                Toast.show(added == 1
-                    ? "Added a task from your \(source.rawValue)"
-                    : "Added \(added) tasks from your \(source.rawValue)",
-                    systemImage: "checklist")
-            }
+            store(await extract(text: text, source: source), source: source)
         }
         #endif
+    }
+
+    @MainActor private static func store(_ titles: [String], source: Source) {
+        guard !titles.isEmpty else { return }
+        let added = TasksStore.shared.addExtracted(titles, source: source.rawValue)
+        if added > 0 {
+            Toast.show(added == 1
+                ? "Added a task from your \(source.rawValue)"
+                : "Added \(added) tasks from your \(source.rawValue)",
+                systemImage: "checklist")
+        }
+    }
+
+    static func instructions(for source: Source) -> String {
+        """
+        You extract personal action items from text. \(source.barInstruction)
+        Reply with at most \(source.maxTasks) tasks, one per line, each line \
+        starting with "- ", phrased as a short imperative (max 12 words). \
+        Each line must end with " | " followed by the EXACT words from the \
+        text that commit to the task, quoted verbatim. \
+        If there are no qualifying tasks reply with exactly: NONE
+        """
+    }
+
+    /// The line parser and evidence gate shared by the on-device and hosted
+    /// paths: the cited quote must literally appear in the text, or the task
+    /// is a fabrication and is dropped. ALL sources.
+    static func titles(from content: String, text: String, source: Source) -> [String] {
+        guard !content.localizedCaseInsensitiveContains("NONE") || content.contains("- ") else { return [] }
+        var titles: [String] = []
+        let haystack = text.lowercased()
+        for line in content.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("- ") else { continue }
+            let body = String(trimmed.dropFirst(2))
+            let parts = body.split(separator: "|", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let quote = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: " \"'“”"))
+                .lowercased()
+            guard quote.count > 10, haystack.contains(quote) else { continue }
+            let title = parts[0].trimmingCharacters(in: .whitespaces)
+            guard !title.isEmpty else { continue }
+            titles.append(title)
+            if titles.count == source.maxTasks { break }
+        }
+        return titles
+    }
+
+    private static func extractHosted(text: String, source: Source, provider: WritingModelProvider) async -> [String] {
+        do {
+            let result = try await provider.generate(WritingRequest(instructions: instructions(for: source), input: String(text.prefix(6000)),
+                                                                    jsonSchema: nil, deadline: 60, purpose: .tasks))
+            return titles(from: result.text, text: text, source: source)
+        } catch {
+            NSLog("My Man [Tasks] hosted extraction failed: %@", (error as? WritingModelError)?.reason ?? "other")
+            return []
+        }
     }
 
     #if canImport(FoundationModels)
     @available(macOS 26.0, *)
     private static func extract(text: String, source: Source) async -> [String] {
         guard case .available = SystemLanguageModel.default.availability else { return [] }
-        let session = LanguageModelSession(instructions: """
-            You extract personal action items from text. \(source.barInstruction)
-            Reply with at most \(source.maxTasks) tasks, one per line, each line \
-            starting with "- ", phrased as a short imperative (max 12 words). \
-            Each line must end with " | " followed by the EXACT words from the \
-            text that commit to the task, quoted verbatim. \
-            If there are no qualifying tasks reply with exactly: NONE
-            """)
+        let session = LanguageModelSession(instructions: instructions(for: source))
         do {
             let response = try await session.respond(to: String(text.prefix(6000)))
-            let content = response.content
-            guard !content.localizedCaseInsensitiveContains("NONE") || content.contains("- ") else {
-                return []
-            }
-            var titles: [String] = []
-            let haystack = text.lowercased()
-            for line in content.split(separator: "\n") {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                guard trimmed.hasPrefix("- ") else { continue }
-                let body = String(trimmed.dropFirst(2))
-                // Evidence gate, ALL sources: the cited quote must literally
-                // appear in the text, or the task is a fabrication — drop it.
-                let parts = body.split(separator: "|", maxSplits: 1)
-                guard parts.count == 2 else { continue }
-                let quote = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: " \"'“”"))
-                    .lowercased()
-                guard quote.count > 10, haystack.contains(quote) else { continue }
-                titles.append(parts[0].trimmingCharacters(in: .whitespaces))
-                if titles.count == source.maxTasks { break }
-            }
-            return titles
+            return titles(from: response.content, text: text, source: source)
         } catch {
             NSLog("My Man [Tasks] extraction failed: \(error)")
             return []

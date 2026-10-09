@@ -6,6 +6,6 @@ Email **tommy@muckstack.com** with details. Please do not open a public issue fo
 
 ## Scope notes
 
-- My Man has no backend; the attack surface is the local app, its update channel, and its capture files.
+- My Man has no backend; the attack surface is the local app, its update channel, and its capture files. All AI runs on-device by default. An optional setting can send meeting notes, tasks, and Brain chat to Anthropic's or OpenAI's API using your own key, stored in your Mac's Keychain. The key is stored in the macOS Keychain and is never logged or sent to analytics.
 - Updates are Sparkle EdDSA-signed and delivered over HTTPS; the public key is embedded in the app. Reports about the update chain are especially welcome.
 - Analytics/crash-reporting keys are not in the source tree; they're injected into official builds at release time. Keys extracted from a shipped binary are publishable client ingestion keys; abuse reports about them still welcome.

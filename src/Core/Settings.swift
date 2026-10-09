@@ -217,6 +217,42 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Hosted writing model (Settings → AI). Off by default; the API key is
+    /// never stored here — only in the Keychain via `Keychain`.
+    @Published var writingModelEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(writingModelEnabled, forKey: "writingModel.enabled")
+            Analytics.track("hosted_writing_enabled", ["enabled": writingModelEnabled, "vendor": writingModelVendor.rawValue])
+        }
+    }
+    /// Switching vendor resets the model field to that vendor's default.
+    @Published var writingModelVendor: WritingVendor {
+        didSet {
+            UserDefaults.standard.set(writingModelVendor.rawValue, forKey: "writingModel.vendor")
+            if oldValue != writingModelVendor { writingModelName = writingModelVendor.defaultModel }
+        }
+    }
+    @Published var writingModelName: String {
+        didSet { UserDefaults.standard.set(writingModelName, forKey: "writingModel.model") }
+    }
+    @Published var writingModelMeetingNotes: Bool {
+        didSet { UserDefaults.standard.set(writingModelMeetingNotes, forKey: "writingModel.meetingNotes") }
+    }
+    @Published var writingModelTasks: Bool {
+        didSet { UserDefaults.standard.set(writingModelTasks, forKey: "writingModel.tasks") }
+    }
+    @Published var writingModelBrainChat: Bool {
+        didSet { UserDefaults.standard.set(writingModelBrainChat, forKey: "writingModel.brainChat") }
+    }
+    /// "OK 1.2 s · claude-opus-5-5" or the last error kind; never the key.
+    @Published var writingModelLastTest: String {
+        didSet { UserDefaults.standard.set(writingModelLastTest, forKey: "writingModel.lastTest") }
+    }
+    var writingModel: WritingModelSettings {
+        WritingModelSettings(enabled: writingModelEnabled, vendor: writingModelVendor, model: writingModelName,
+                             meetingNotes: writingModelMeetingNotes, tasks: writingModelTasks, brainChat: writingModelBrainChat)
+    }
+
     private init() {
         if let data = UserDefaults.standard.data(forKey: "hotkeys"),
            var decoded = try? JSONDecoder().decode([String: HotkeyCombo].self, from: data) {
@@ -245,6 +281,14 @@ final class SettingsStore: ObservableObject {
         dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
         captureSound = CaptureSound(rawValue: UserDefaults.standard.string(forKey: "captureSound") ?? "") ?? .bloop
         enhanceMicrophone = UserDefaults.standard.bool(forKey: "enhanceMicrophone")
+        writingModelEnabled = UserDefaults.standard.bool(forKey: "writingModel.enabled")
+        let vendor = WritingVendor(rawValue: UserDefaults.standard.string(forKey: "writingModel.vendor") ?? "") ?? .claude
+        writingModelVendor = vendor
+        writingModelName = UserDefaults.standard.string(forKey: "writingModel.model") ?? vendor.defaultModel
+        writingModelMeetingNotes = UserDefaults.standard.object(forKey: "writingModel.meetingNotes") as? Bool ?? true
+        writingModelTasks = UserDefaults.standard.object(forKey: "writingModel.tasks") as? Bool ?? true
+        writingModelBrainChat = UserDefaults.standard.object(forKey: "writingModel.brainChat") as? Bool ?? true
+        writingModelLastTest = UserDefaults.standard.string(forKey: "writingModel.lastTest") ?? ""
         theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "") ?? .dark
         screenshotFolderPath = UserDefaults.standard.string(forKey: "screenshotFolder")
             ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
@@ -301,7 +345,7 @@ extension Notification.Name {
 
 struct SettingsPanelView: View {
     private enum SettingsPage: String, CaseIterable, Identifiable {
-        case general = "General", dictation = "Dictation", shortcuts = "Shortcuts", library = "Library", agents = "Agents"
+        case general = "General", dictation = "Dictation", shortcuts = "Shortcuts", library = "Library", ai = "AI", agents = "Agents"
         var id: String { rawValue }
     }
 
@@ -353,6 +397,7 @@ struct SettingsPanelView: View {
                     case .dictation: dictationPage
                     case .shortcuts: shortcutsPage
                     case .library: CapturePrivacySettings()
+                    case .ai: AISettingsView()
                     case .agents: AgentSettingsView()
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)

@@ -79,10 +79,13 @@ final class MeetingNotesService: ObservableObject {
         tail = task
     }
 
-    nonisolated static func generateBounded(_ meeting: Meeting, progress: @escaping Progress = { _ in }) async -> MeetingAnalysis {
+    /// `provider` is the opt-in hosted writing model; only the final
+    /// `prepare`/`regenerate` job passes one. Live drafts never do.
+    nonisolated static func generateBounded(_ meeting: Meeting, provider: WritingModelProvider? = nil,
+                                            progress: @escaping Progress = { _ in }) async -> MeetingAnalysis {
         do {
-            return try await AsyncDeadline.run(seconds: 90) {
-                await GroundedMeetingNotes.generate(meeting, progress: progress)
+            return try await AsyncDeadline.run(seconds: provider == nil ? 90 : 150) {
+                await GroundedMeetingNotes.generate(meeting, provider: provider, progress: progress)
             }
         } catch {
             guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
@@ -117,6 +120,9 @@ final class MeetingNotesService: ObservableObject {
         let token = UUID()
         let previous = tail
         let queueTimer = MeetingProcessingTimer()
+        // Resolved here, on the main actor, so the setting at the time the
+        // job was queued is the one that applies.
+        let provider = WritingModels.current(for: .meetingNotes)
         stages[id] = "Waiting to prepare notes…"
         let task = Task { @MainActor [self] in
             defer {
@@ -139,7 +145,7 @@ final class MeetingNotesService: ObservableObject {
                 if let generate {
                     analysis = MeetingAnalysis(markdown: await generate(meeting.transcript, meeting.startedAt, progress))
                 } else {
-                    analysis = await Self.generateBounded(meeting, progress: progress)
+                    analysis = await Self.generateBounded(meeting, provider: provider, progress: progress)
                 }
                 if !analysis.markdown.isEmpty { break }
             }

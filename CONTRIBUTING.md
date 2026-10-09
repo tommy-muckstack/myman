@@ -1,6 +1,6 @@
 # Contributing to My Man
 
-PRs are welcome. The bar: the app must stay fast, minimal, on-device, and crash-free.
+PRs are welcome. The bar: the app must stay fast, minimal, on-device by default, and crash-free.
 
 ## Contributions from agents
 
@@ -44,7 +44,7 @@ swift build -c release --arch arm64 --arch x86_64
 - **Never resize a window from inside a layout pass.** GeometryReader size reports arrive during layout; defer any `setFrame` with `DispatchQueue.main.async` and coalesce to the newest size.
 - **Entitlements**: any new capability touching protected resources (camera, calendar, etc.) needs its hardened-runtime entitlement in `myman-direct.entitlements`, or notarized builds will silently fail where dev builds work.
 - **Audio**: all mic capture goes through the shared `AudioCapture` session API. Never create a second `AVAudioEngine`; never enable voice processing while another app owns the mic.
-- **Privacy**: analytics properties are counts, kinds, and durations only — never user content. All AI stays on-device.
+- **Privacy**: analytics properties are counts, kinds, and durations only — never user content. All AI runs on-device by default. An optional setting can send meeting notes, tasks, and Brain chat to Anthropic's or OpenAI's API using your own key, stored in your Mac's Keychain; that seam is `WritingModels.current`, it must stay off by default, and no API key may ever appear in source, tests, scripts, logs or analytics.
 - **No blocking the main thread at launch** — model loads and engine warm-ups belong on background queues.
 - **Dependencies**: FluidAudio is pinned `exact:` deliberately; do not bump any pin without discussing in an issue first.
 
