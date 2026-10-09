@@ -6,7 +6,7 @@ enum AgentSearch {
         let query = args["query"] as! String
         var filter = CaptureFilter()
         let kind = args["kind"] as? String ?? "all"
-        filter.kind = ["screenshots":"screenshot", "meetings":"meeting", "dictations":"dictation", "recordings":"recording", "notes":"note"][kind] ?? kind
+        filter.kind = ["screenshots":"screenshot", "meetings":"meeting", "dictations":"dictation", "recordings":"recording", "notes":"note", "brainz":"brainNote", "brain_notes":"brainNote"][kind] ?? kind
         func date(_ key: String) throws -> Date? {
             guard let text = args[key] as? String else { return nil }
             let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

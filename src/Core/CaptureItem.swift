@@ -22,8 +22,13 @@ struct CaptureItem: Identifiable, Codable, FetchableRecord, PersistableRecord, E
     var title: String {
         for value in [userTitle, rawTitle, generatedTitle] where !value.isEmpty { return value }
         if kind == "dictation", let line = body.split(separator: "\n").first { return String(line.prefix(80)) }
-        return kind.capitalized + " · " + capturedAt.formatted(date: .abbreviated, time: .shortened)
+        if kind == "brainNote", !sourcePath.isEmpty {
+            return URL(fileURLWithPath: sourcePath).deletingPathExtension().lastPathComponent
+        }
+        return kindLabel + " · " + capturedAt.formatted(date: .abbreviated, time: .shortened)
     }
+    /// Human label for the kind ("Brainz note" rather than "Brainnote").
+    var kindLabel: String { kind == "brainNote" ? "Brainz note" : kind.capitalized }
     var icon: MMIcon {
         switch kind {
         case "screenshot": .screenshot
@@ -40,12 +45,14 @@ struct CaptureItem: Identifiable, Codable, FetchableRecord, PersistableRecord, E
         case "meeting": "Matched meeting transcript"
         case "dictation": "Matched dictated text"
         case "recording": "Matched recording transcript"
+        case "brainNote": "Matched Brainz note"
         default: "Matched note text"
         }
     }
     func hit(in db: GRDB.Database) throws -> SearchHit? {
         switch kind {
         case "note": return try Note.fetchOne(db, key: sourceID).map(SearchHit.note)
+        case "brainNote": return try BrainNote.fetchOne(db, key: sourceID).map(SearchHit.brainNote)
         case "screenshot": return try Screenshot.fetchOne(db, key: sourceID).map(SearchHit.screenshot)
         case "meeting": return try Meeting.fetchOne(db, key: sourceID).map(SearchHit.meeting)
         case "recording": return try ScreenRecording.fetchOne(db, key: sourceID).map(SearchHit.recording)

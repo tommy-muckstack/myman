@@ -27,6 +27,12 @@ enum CaptureLifecycle {
     }
 
     @MainActor static func delete(_ item: CaptureItem, expectedRevision: Int? = nil) throws {
+        // A Brainz note is the user's own file in their brain folder: never
+        // touch it. Hiding it keeps the indexer from re-adding it next scan.
+        if item.kind == "brainNote" {
+            try exclude(item, excluded: true, expectedRevision: expectedRevision)
+            return
+        }
         let hit = try Database.shared.read { try checkRevision(item.id, expected: expectedRevision, db: $0); return try item.hit(in: $0) }
         guard let hit else { return }
         var files: [String] = []
@@ -54,7 +60,7 @@ enum CaptureLifecycle {
             Brain.deleteMeeting(id: m.id, startedAt: m.startedAt)
             TasksStore.shared.refresh()
         case .recording(let r): Brain.deleteRecording(id: r.id, createdAt: r.createdAt)
-        case .dictation: break
+        case .dictation, .brainNote: break
         }
         SearchService.clearVectorCache()
         CaptureThumbnailCache.clear()
@@ -71,9 +77,11 @@ enum CaptureLifecycle {
 
     @MainActor static func clearHistory() throws {
         let all = try Database.shared.read { try CaptureItem.fetchAll($0) }
-        for item in all { try delete(item) }
+        for item in all where item.kind != "brainNote" { try delete(item) }
         try Database.shared.write { db in
-            try db.execute(sql: "DELETE FROM searchClick; DELETE FROM captureTheme; DELETE FROM task WHERE source = 'meeting' AND archived = 1;")
+            // Brainz rows are only an index of files that stay on disk; they
+            // come back on the next scan unless the folder is removed.
+            try db.execute(sql: "DELETE FROM brainNote; DELETE FROM searchClick; DELETE FROM captureTheme; DELETE FROM task WHERE source = 'meeting' AND archived = 1;")
         }
     }
 }

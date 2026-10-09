@@ -9,6 +9,8 @@ struct CapturePrivacySettings: View {
     @AppStorage("captureMetadataExcludedApps") private var excludedApps = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            BrainzSettings()
+            Divider().overlay(MM.Colors.border)
             Toggle("Automatically group related captures into Themes", isOn: $automaticThemes)
                 .onChange(of: automaticThemes) { _, _ in CaptureEnrichment.shared.schedule() }
             Toggle("Find similar meanings with on-device search", isOn: $semanticSearch)

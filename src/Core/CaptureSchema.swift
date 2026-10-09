@@ -3,12 +3,18 @@ import GRDB
 
 /// Derived retrieval data only. Original capture tables remain authoritative.
 enum CaptureSchema {
-    static let sources: [(table: String, prefix: String, title: String, body: String, summary: String, path: String, date: String, modified: String)] = [
+    typealias Source = (table: String, prefix: String, title: String, body: String, summary: String, path: String, date: String, modified: String)
+    /// Brainz notes: Markdown files the Brainz app has open, mirrored into
+    /// the same index so search, the pre-meeting brief and the in-meeting
+    /// context stream all see them. Added in migration v20.
+    static let brainNoteSource: Source = ("brainNote", "brain", "title", "body", "''", "path", "createdAt", "updatedAt")
+    static let sources: [Source] = [
         ("note", "note", "title", "body", "''", "''", "createdAt", "updatedAt"),
         ("screenshot", "shot", "''", "ocrText", "''", "path", "createdAt", "createdAt"),
         ("meeting", "meeting", "title", "transcript", "summary", "''", "startedAt", "startedAt"),
         ("dictation", "dictation", "''", "text", "''", "''", "createdAt", "createdAt"),
-        ("recording", "recording", "''", "transcript", "''", "path", "createdAt", "createdAt")
+        ("recording", "recording", "''", "transcript", "''", "path", "createdAt", "createdAt"),
+        brainNoteSource
     ]
 
     static func create(in db: GRDB.Database) throws {
@@ -80,30 +86,38 @@ enum CaptureSchema {
               DELETE FROM captureTheme WHERE dismissed = 0 AND renamed = 0 AND pinned = 0 AND id NOT IN (SELECT themeID FROM captureThemeMember);
             END;
             """)
-        for source in sources {
-            func expression(_ column: String, prefix: String = "") -> String { column == "''" ? column : prefix + column }
-            let columns = "id,kind,sourceID,rawTitle,body,summary,sourcePath,capturedAt,modifiedAt"
-            func values(_ p: String) -> String {
-                "'\(source.prefix)-' || \(p)id, '\(source.table)', \(p)id, " +
-                [source.title, source.body, source.summary, source.path, source.date, source.modified]
-                    .map { expression($0, prefix: p) }.joined(separator: ",")
-            }
-            let upsert = """
-                INSERT INTO captureItem(\(columns)) VALUES(\(values("new.")))
-                ON CONFLICT(id) DO UPDATE SET rawTitle=excluded.rawTitle,body=excluded.body,
-                  summary=excluded.summary,sourcePath=excluded.sourcePath,
-                  capturedAt=excluded.capturedAt,modifiedAt=excluded.modifiedAt,
-                  revision=captureItem.revision + CASE WHEN captureItem.rawTitle != excluded.rawTitle OR captureItem.body != excluded.body OR captureItem.summary != excluded.summary OR captureItem.sourcePath != excluded.sourcePath THEN 1 ELSE 0 END,
-                  generatedTitle=CASE WHEN captureItem.rawTitle != excluded.rawTitle OR captureItem.body != excluded.body OR captureItem.summary != excluded.summary OR captureItem.sourcePath != excluded.sourcePath THEN '' ELSE captureItem.generatedTitle END;
-                """
-            try db.execute(sql: """
-                INSERT INTO captureItem(\(columns)) SELECT \(values("")) FROM \(source.table);
-                CREATE TRIGGER capture_\(source.table)_insert AFTER INSERT ON \(source.table) BEGIN \(upsert) END;
-                CREATE TRIGGER capture_\(source.table)_update AFTER UPDATE ON \(source.table) BEGIN \(upsert) END;
-                CREATE TRIGGER capture_\(source.table)_delete AFTER DELETE ON \(source.table) BEGIN
-                  DELETE FROM captureItem WHERE id = '\(source.prefix)-' || old.id;
-                END;
-                """)
+        // Sources whose table arrives in a later migration (brainNote, v20)
+        // are installed by that migration instead.
+        for source in sources where try db.tableExists(source.table) {
+            try install(source: source, in: db)
         }
+    }
+
+    /// Backfills `captureItem` from a source table and installs the triggers
+    /// that keep it in sync. Each source is installed exactly once.
+    static func install(source: Source, in db: GRDB.Database) throws {
+        func expression(_ column: String, prefix: String = "") -> String { column == "''" ? column : prefix + column }
+        let columns = "id,kind,sourceID,rawTitle,body,summary,sourcePath,capturedAt,modifiedAt"
+        func values(_ p: String) -> String {
+            "'\(source.prefix)-' || \(p)id, '\(source.table)', \(p)id, " +
+            [source.title, source.body, source.summary, source.path, source.date, source.modified]
+                .map { expression($0, prefix: p) }.joined(separator: ",")
+        }
+        let upsert = """
+            INSERT INTO captureItem(\(columns)) VALUES(\(values("new.")))
+            ON CONFLICT(id) DO UPDATE SET rawTitle=excluded.rawTitle,body=excluded.body,
+              summary=excluded.summary,sourcePath=excluded.sourcePath,
+              capturedAt=excluded.capturedAt,modifiedAt=excluded.modifiedAt,
+              revision=captureItem.revision + CASE WHEN captureItem.rawTitle != excluded.rawTitle OR captureItem.body != excluded.body OR captureItem.summary != excluded.summary OR captureItem.sourcePath != excluded.sourcePath THEN 1 ELSE 0 END,
+              generatedTitle=CASE WHEN captureItem.rawTitle != excluded.rawTitle OR captureItem.body != excluded.body OR captureItem.summary != excluded.summary OR captureItem.sourcePath != excluded.sourcePath THEN '' ELSE captureItem.generatedTitle END;
+            """
+        try db.execute(sql: """
+            INSERT INTO captureItem(\(columns)) SELECT \(values("")) FROM \(source.table);
+            CREATE TRIGGER capture_\(source.table)_insert AFTER INSERT ON \(source.table) BEGIN \(upsert) END;
+            CREATE TRIGGER capture_\(source.table)_update AFTER UPDATE ON \(source.table) BEGIN \(upsert) END;
+            CREATE TRIGGER capture_\(source.table)_delete AFTER DELETE ON \(source.table) BEGIN
+              DELETE FROM captureItem WHERE id = '\(source.prefix)-' || old.id;
+            END;
+            """)
     }
 }

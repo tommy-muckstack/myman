@@ -19,6 +19,7 @@ enum SearchHit: Identifiable {
     case meeting(Meeting)
     case dictation(DictationRecord)
     case recording(ScreenRecording)
+    case brainNote(BrainNote)
 
     var id: String {
         switch self {
@@ -27,6 +28,7 @@ enum SearchHit: Identifiable {
         case .meeting(let m): return "meeting-\(m.id)"
         case .dictation(let d): return "dictation-\(d.id)"
         case .recording(let r): return "recording-\(r.id)"
+        case .brainNote(let b): return "brain-\(b.id)"
         }
     }
 
@@ -38,6 +40,7 @@ enum SearchHit: Identifiable {
         case .meeting: return "meeting"
         case .dictation: return "dictation"
         case .recording: return "recording"
+        case .brainNote: return "brainz note"
         }
     }
 
@@ -48,6 +51,7 @@ enum SearchHit: Identifiable {
         case .meeting(let m): return m.startedAt
         case .dictation(let d): return d.createdAt
         case .recording(let r): return r.createdAt
+        case .brainNote(let b): return b.updatedAt
         }
     }
 }
