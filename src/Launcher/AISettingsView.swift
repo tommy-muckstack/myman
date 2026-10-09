@@ -42,6 +42,13 @@ struct AISettingsView: View {
                     Text(keyMessage).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                 }
                 if vendor == .claude {
+                    HStack(spacing: 8) {
+                        TextField("Workspace ID (wrkspc_…), only for user-level keys", text: $store.writingModelClaudeWorkspace)
+                            .textFieldStyle(.roundedBorder).font(MM.Fonts.bodyInput).frame(maxWidth: 360)
+                            .onChange(of: store.writingModelClaudeWorkspace) { _, _ in testResult = "" }
+                    }
+                    Text("Keys that start with sk-ant-usr- aren't tied to a workspace, so Anthropic needs the workspace id too. Find it in the Console under Settings → Workspaces. Leave this empty for a regular sk-ant-api key.")
+                        .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                     Link("Max subscribers get monthly API credits: claude.ai → Settings → Billing → link a Console org, then create a key.",
                          destination: URL(string: "https://claude.ai/settings/billing")!)
                         .font(MM.Fonts.metadata).clickable()
@@ -113,7 +120,8 @@ struct AISettingsView: View {
     }
 
     private func runTest() {
-        let settings = WritingModelSettings(enabled: true, vendor: vendor, model: store.writingModelName)
+        let settings = WritingModelSettings(enabled: true, vendor: vendor, model: store.writingModelName,
+                                            claudeWorkspaceID: store.writingModelClaudeWorkspace)
         guard let provider = WritingModels.current(for: .brainChat, settings: settings) else {
             testResult = WritingModelError.notConfigured.userMessage; return
         }
