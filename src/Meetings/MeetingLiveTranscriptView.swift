@@ -8,9 +8,19 @@ struct MeetingTranscriptSeek: Equatable {
 
 struct MeetingLiveTranscriptView: View {
     @ObservedObject var transcript: LiveMeetingTranscript
+    @ObservedObject private var translation: MeetingLiveTranslation
     var saveFailed = false
     var retry: () -> Void
     var seek: MeetingTranscriptSeek? = nil
+
+    init(transcript: LiveMeetingTranscript, saveFailed: Bool = false, retry: @escaping () -> Void,
+         seek: MeetingTranscriptSeek? = nil) {
+        self.transcript = transcript
+        self.translation = transcript.translation
+        self.saveFailed = saveFailed
+        self.retry = retry
+        self.seek = seek
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
@@ -27,6 +37,35 @@ struct MeetingLiveTranscriptView: View {
                         .font(MM.Fonts.metadata)
                         .foregroundStyle(MM.Colors.textSecondary)
                 }
+            }
+            if #available(macOS 15.0, *) {
+                HStack {
+                    Picker("Transcript language", selection: $translation.enabled) {
+                        Text("English").tag(true)
+                        Text("Original").tag(false)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 180).clickable()
+                    .accessibilityLabel("Transcript language")
+                    Spacer()
+                    if translation.enabled, translation.request != nil {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                if translation.enabled {
+                    HStack(alignment: .top) {
+                        Text(translation.hasFailures
+                             ? "Some speech couldn’t be translated. Original words are shown."
+                             : "Live English · Language downloads may be needed the first time.")
+                            .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                        if translation.hasFailures {
+                            Button("Retry") { translation.retry() }
+                                .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
+                        }
+                    }
+                }
+            } else {
+                Text("Live English translation requires macOS 15 or later.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             }
             if saveFailed {
                 Text("Edits haven’t saved yet. Stop will retry.")
@@ -46,7 +85,7 @@ struct MeetingLiveTranscriptView: View {
                     .padding(MM.Layout.padding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    LiveTranscriptScrollView(rows: transcript.rows, edit: { transcript.editingRowID = $0 }, seek: seek)
+                    LiveTranscriptScrollView(rows: displayRows, edit: { transcript.editingRowID = $0 }, seek: seek)
                 }
             }
             .background(MM.Colors.surface, in: RoundedRectangle(cornerRadius: MM.Layout.radiusSmall))
@@ -63,12 +102,20 @@ struct MeetingLiveTranscriptView: View {
                 Text(message).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             }
         }
+        .background {
+            if #available(macOS 15.0, *) { MeetingTranslationWorker(translation: translation) }
+        }
         .sheet(isPresented: Binding(get: { transcript.editingRowID != nil },
                                     set: { if !$0 { transcript.editingRowID = nil } })) {
             if let row = transcript.rows.first(where: { $0.id == transcript.editingRowID }) {
                 LiveTranscriptEditView(transcript: transcript, row: row)
             }
         }
+    }
+
+    private var displayRows: [LiveMeetingTranscript.Row] {
+        if #available(macOS 15.0, *) { return translation.rows }
+        return transcript.rows
     }
 
     private var retryButton: some View {
@@ -223,8 +270,13 @@ struct LiveTranscriptScrollView: NSViewRepresentable {
             link.host = "live-edit"
             link.queryItems = [URLQueryItem(name: "row", value: row.id)]
             if let url = link.url {
-                content.append(NSAttributedString(string: "  Edit", attributes: [
+                content.append(NSAttributedString(string: row.translationNote == nil ? "  Edit" : "  Edit original", attributes: [
                     .font: MM.Fonts.native(11.5), .link: url
+                ]))
+            }
+            if let note = row.translationNote {
+                content.append(NSAttributedString(string: "\n\(note)", attributes: [
+                    .font: MM.Fonts.native(11.5), .foregroundColor: NSColor(MM.Colors.textSecondary)
                 ]))
             }
             if let suggested = row.suggestedName {

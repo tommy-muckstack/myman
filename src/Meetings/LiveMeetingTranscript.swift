@@ -291,8 +291,13 @@ final class LiveMeetingTranscript: ObservableObject {
         var turnIDs: [String] = []
         /// Names read off the call window, offered as one-tap choices.
         var callParticipants: [String] = []
+        var translationSegments: [String] = []
+        var translationNote: String? = nil
     }
-    @Published private(set) var rows: [Row] = []
+    let translation = MeetingLiveTranslation()
+    @Published private(set) var rows: [Row] = [] {
+        didSet { translation.update(rows) }
+    }
     @Published private(set) var status: Status = .waiting
     @Published var editingRowID: String?
     @Published private(set) var voiceLearningMessage: String?
@@ -413,6 +418,7 @@ final class LiveMeetingTranscript: ObservableObject {
         confirmedNames = [:]
         callParticipants = []
         editingRowID = nil
+        translation.reset()
         rows = []
         status = .waiting
         return finishing
@@ -581,7 +587,7 @@ final class LiveMeetingTranscript: ObservableObject {
             guard let row = pending else { return }
             built.append(Row(id: row.id, speaker: row.speaker, timestamp: row.timestamp,
                              text: fragments.joined(separator: " "), start: row.start, suggestedName: row.suggestedName,
-                             turnIDs: members, callParticipants: row.callParticipants))
+                             turnIDs: members, callParticipants: row.callParticipants, translationSegments: fragments))
         }
         for (index, pair) in zip(turns, named).enumerated() {
             if Task.isCancelled { return [] }
