@@ -208,12 +208,12 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
-## Meeting context stream and Brainz notes (unreleased)
+## Meeting context stream and Brainz notes (1.1.109)
 
 - While a meeting records, the Notes tab shows **From your past**: earlier meetings with the same people, and notes, screenshots and Brainz notes that match what is being discussed. It seeds from the calendar title and attendees, then refreshes as the conversation moves to new topics (at least 40 new words and 30 seconds between refreshes). Three cards show at a time; click one to open it, dismiss any, or hide the stream for the meeting. Turn it off under Settings → General → Meetings.
 - **Brainz notes** are indexed from the folder the Brainz app has open (Settings → Library → Brainz notes). My Man reads the Markdown files and never changes them. Folders named `finances`, `health`, `family`, `.claude`, `.git` and `node_modules` are skipped by default; edit the list there. Brainz notes appear in search as their own type and open in Brainz.
 
-## Hosted writing model (unreleased)
+## Hosted writing model (1.1.109)
 
 Settings → AI adds an optional hosted writing model, off by default. Pick Claude or OpenAI, paste your own API key (stored only in this Mac's Keychain, never in the app's files, logs or analytics), and choose which features use it: the final meeting-notes pass, task extraction from notes and dictation, and Chat with your Brain. Hosted output goes through the same evidence checks as on-device notes, and any failure falls back to the on-device path. Live notes during a meeting, dictation cleanup, scheduling, Themes, the launcher and text-selection actions always stay on-device.
 
