@@ -31,6 +31,12 @@ final class WritingModelsResolverTests: XCTestCase {
         XCTAssertNil(WritingModels.current(for: .brainChat, settings: openai, apiKey: keys("claude-key", nil)))
     }
 
+    func testClaudeWorkspaceIDReachesTheProvider() {
+        let settings = WritingModelSettings(enabled: true, vendor: .claude, claudeWorkspaceID: "wrkspc_abc")
+        let provider = WritingModels.current(for: .brainChat, settings: settings, apiKey: keys("k", nil)) as? ClaudeWritingModel
+        XCTAssertEqual(provider?.workspaceID, "wrkspc_abc")
+    }
+
     func testPerPurposeTogglesGateEachPurpose() {
         var settings = WritingModelSettings(enabled: true, meetingNotes: false, tasks: true, brainChat: true)
         XCTAssertNil(WritingModels.current(for: .meetingNotes, settings: settings, apiKey: keys("k", nil)))

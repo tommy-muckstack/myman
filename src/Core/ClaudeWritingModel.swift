@@ -12,13 +12,18 @@ struct ClaudeWritingModel: WritingModelProvider {
 
     let apiKey: String
     let model: String
+    /// Console workspace id (`wrkspc_…`). Required by the API for user-level
+    /// keys (`sk-ant-usr-…`), which aren't bound to a workspace; ignored for
+    /// workspace-scoped keys. Sent as the `anthropic-workspace-id` header.
+    let workspaceID: String
     private let session: URLSession
     private let gate: WritingModelGate
 
-    init(apiKey: String, model: String = ClaudeWritingModel.defaultModel,
+    init(apiKey: String, model: String = ClaudeWritingModel.defaultModel, workspaceID: String = "",
          configuration: URLSessionConfiguration? = nil, gate: WritingModelGate = .shared) {
         self.apiKey = apiKey
         self.model = model
+        self.workspaceID = workspaceID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.session = HostedHTTP.session(configuration: configuration)
         self.gate = gate
     }
@@ -64,6 +69,7 @@ struct ClaudeWritingModel: WritingModelProvider {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue(Self.apiVersion, forHTTPHeaderField: "anthropic-version")
+        if !workspaceID.isEmpty { urlRequest.setValue(workspaceID, forHTTPHeaderField: "anthropic-workspace-id") }
         urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
         return urlRequest
