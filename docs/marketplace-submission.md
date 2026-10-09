@@ -1,3 +1,5 @@
+> Candidate update, 2026-10-08: root plugin **0.17.1** documents local-first Mac time-zone evaluation and adds Houston/DC destination aliases. Native Mac behavior changes; Brain **0.16.0**, Linux **0.17.0**, and Grok **0.12.0** packages remain unchanged. Linux time-zone evaluation remains explicitly unsupported. Prepared, not submitted or host-verified. Next step: an authorized update email to marketplace-publishing@cursor.com with org @muckstack, https://github.com/tommy-muckstack/myman and candidate 0.17.1; do not duplicate the pending publisher application. No email sent.
+
 > Release 1.1.103 (115), 2026-09-30: includes the scheduling Launcher and human-confirmed calendar booking. Root/Linux 0.17.0, Brain 0.16.0, Grok unchanged 0.12.0. Marketplace candidate remains prepared, not submitted; next step is an authorized update email to marketplace-publishing@cursor.com with @muckstack, https://github.com/tommy-muckstack/myman and candidate 0.17.0. No email sent.
 
 > Candidate update, 2026-09-30: root/Linux **0.17.0**, Brain **0.16.0**, Grok skill unchanged **0.12.0**. Adds native human-confirmed booking and receipt actions behind new default-off `calendar_write` plus `calendar_read`; CLI/MCP can open the preview but never confirm it. No invitations. Linux/Omarchy explicitly unsupported. Synthetic tests and native visual review only; no real-calendar save claimed. Prepared, not submitted or host-verified. Next authorized step: notify marketplace-publishing@cursor.com with org @muckstack, repo https://github.com/tommy-muckstack/myman and candidate 0.17.0. No email sent.
@@ -22,7 +24,7 @@
 
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.17.0** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.17.1** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 

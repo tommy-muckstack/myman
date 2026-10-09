@@ -70,7 +70,8 @@ final class AgentQuickToolsTests: XCTestCase {
         XCTAssertEqual(AgentQuickTools.evaluate("18% of 240")["value"] as? Double, 43.2)
         XCTAssertEqual((AgentQuickTools.evaluate("#fffffd")["palette"] as? [String])?.count, 4)
         XCTAssertEqual(AgentQuickTools.evaluate("timer 10m")["side_effects"] as? Bool, false)
-        XCTAssertEqual(AgentQuickTools.evaluate("8am in Iceland")["source_zone"] as? String, "Atlantic/Reykjavik")
+        XCTAssertEqual(AgentQuickTools.evaluate("8am in Iceland")["source_zone"] as? String, TimeZone.current.identifier)
+        XCTAssertEqual(AgentQuickTools.evaluate("8am in Iceland")["destination_zone"] as? String, "Atlantic/Reykjavik")
         let actions = try XCTUnwrap(AgentActions.catalog["actions"] as? [[String: Any]])
         let schema = try XCTUnwrap(actions.first { $0["name"] as? String == "timer.start" }?["inputSchema"] as? [String: Any])
         for seconds in [0.0, -1.0, 86401.0, .infinity] { XCTAssertThrowsError(try AgentSchema.validate(["seconds": seconds], schema: schema)) }

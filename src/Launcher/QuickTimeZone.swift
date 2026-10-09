@@ -7,13 +7,12 @@ struct QuickTimeZone: Equatable {
     let sourceName: String
     let destinationName: String
 
-    /// Present the eastern (larger UTC offset) zone first, using the conversion
-    /// date so regional daylight-saving rules are reflected in the ordering.
+    /// Match the conversion direction. Implicit conversions start with the
+    /// person's local time, so the arrow always reads input → answer.
     var displayZones: [(zone: TimeZone, name: String)] {
         let from = (zone: source, name: sourceName)
         let to = (zone: destination, name: destinationName)
-        return source.secondsFromGMT(for: date) >= destination.secondsFromGMT(for: date)
-            ? [from, to] : [to, from]
+        return [from, to]
     }
 
     func time(in zone: TimeZone) -> String {
@@ -51,6 +50,7 @@ struct QuickTimeZone: Equatable {
         let rest = clock[4]
         // Do not intercept ordinary unit conversions, such as '8 m in km'.
         guard !clock[3].isEmpty || !clock[2].isEmpty || rest.hasPrefix("in ") || rest.hasPrefix("to ")
+                || zone(rest, local: local) != nil
                 || groups(#"^.+\s+(?:to|in)\s+.+$"#, rest) != nil && zone(rest.components(separatedBy: " ")[0], local: local) != nil
         else { return nil }
         var source = local
@@ -66,8 +66,8 @@ struct QuickTimeZone: Equatable {
             destination = to; destinationName = String(rest.dropFirst(3))
         } else {
             let name = rest.hasPrefix("in ") ? String(rest.dropFirst(3)) : rest
-            guard let from = zone(name, local: local) else { return unknown }
-            source = from; sourceName = name
+            guard let to = zone(name, local: local) else { return unknown }
+            destination = to; destinationName = name
         }
         guard var hour = Int(clock[1]), let minute = Int(clock[2].isEmpty ? "0" : clock[2]), (0...59).contains(minute),
               clock[3].isEmpty ? (0...23).contains(hour) : (1...12).contains(hour) else {
@@ -100,6 +100,7 @@ struct QuickTimeZone: Equatable {
         let key = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if ["here", "local", "my time"].contains(key) { return local }
         if let id = aliases[key] { return TimeZone(identifier: id) }
+        if let city = cityAliases[cityKey(key)] { return TimeZone(identifier: city.zone) }
         // Fixed abbreviations retain their literal offsets; use ET/PT or city
         // names when the region's daylight saving rules should apply.
         let offsets = ["utc": 0, "gmt": 0, "est": -5, "edt": -4, "cst": -6, "cdt": -5,
@@ -125,6 +126,9 @@ struct QuickTimeZone: Equatable {
         }
         if key.hasPrefix("utc+") || key.hasPrefix("utc-") || key.hasPrefix("gmt+") || key.hasPrefix("gmt-") {
             return key.uppercased()
+        }
+        if let city = cityAliases[cityKey(key)] {
+            return city.name + (zone.abbreviation(for: date).map { " · " + $0 } ?? "")
         }
         if let abbreviation = zone.abbreviation(for: date),
            ["EST", "EDT", "CST", "CDT", "MST", "MDT", "PST", "PDT", "AKST", "AKDT", "HST"].contains(abbreviation),
@@ -156,6 +160,66 @@ struct QuickTimeZone: Equatable {
         "dubai": "Asia/Dubai", "singapore": "Asia/Singapore", "sydney": "Australia/Sydney",
         "auckland": "Pacific/Auckland", "new zealand": "Pacific/Auckland"
     ]
+
+    /// IANA uses representative cities: Houston and DC don't have their own
+    /// identifiers. Resolve common destinations to regional rules, not fixed
+    /// offsets, and keep the requested city's name on the answer.
+    private static let cityAliases: [String: (zone: String, name: String)] = [
+        "houston": ("America/Chicago", "Houston"),
+        "houston tx": ("America/Chicago", "Houston"),
+        "houston texas": ("America/Chicago", "Houston"),
+        "dallas": ("America/Chicago", "Dallas"),
+        "austin": ("America/Chicago", "Austin"),
+        "san antonio": ("America/Chicago", "San Antonio"),
+        "fort worth": ("America/Chicago", "Fort Worth"),
+        "dc": ("America/New_York", "Washington, DC"),
+        "washington dc": ("America/New_York", "Washington, DC"),
+        "washington d c": ("America/New_York", "Washington, DC"),
+        "district of columbia": ("America/New_York", "Washington, DC"),
+        "boston": ("America/New_York", "Boston"),
+        "philadelphia": ("America/New_York", "Philadelphia"),
+        "philly": ("America/New_York", "Philadelphia"),
+        "baltimore": ("America/New_York", "Baltimore"),
+        "atlanta": ("America/New_York", "Atlanta"),
+        "miami": ("America/New_York", "Miami"),
+        "orlando": ("America/New_York", "Orlando"),
+        "tampa": ("America/New_York", "Tampa"),
+        "charlotte": ("America/New_York", "Charlotte"),
+        "raleigh": ("America/New_York", "Raleigh"),
+        "pittsburgh": ("America/New_York", "Pittsburgh"),
+        "new york city": ("America/New_York", "New York"),
+        "nashville": ("America/Chicago", "Nashville"),
+        "memphis": ("America/Chicago", "Memphis"),
+        "new orleans": ("America/Chicago", "New Orleans"),
+        "minneapolis": ("America/Chicago", "Minneapolis"),
+        "st louis": ("America/Chicago", "St. Louis"),
+        "saint louis": ("America/Chicago", "St. Louis"),
+        "kansas city": ("America/Chicago", "Kansas City"),
+        "milwaukee": ("America/Chicago", "Milwaukee"),
+        "oklahoma city": ("America/Chicago", "Oklahoma City"),
+        "salt lake city": ("America/Denver", "Salt Lake City"),
+        "slc": ("America/Denver", "Salt Lake City"),
+        "seattle": ("America/Los_Angeles", "Seattle"),
+        "portland": ("America/Los_Angeles", "Portland"),
+        "portland oregon": ("America/Los_Angeles", "Portland"),
+        "portland maine": ("America/New_York", "Portland, Maine"),
+        "las vegas": ("America/Los_Angeles", "Las Vegas"),
+        "san diego": ("America/Los_Angeles", "San Diego"),
+        "san jose": ("America/Los_Angeles", "San Jose"),
+        "sacramento": ("America/Los_Angeles", "Sacramento"),
+        "oakland": ("America/Los_Angeles", "Oakland"),
+        "sf": ("America/Los_Angeles", "San Francisco"),
+        "ottawa": ("America/Toronto", "Ottawa"),
+        "calgary": ("America/Edmonton", "Calgary"),
+        "manchester": ("Europe/London", "Manchester"),
+        "edinburgh": ("Europe/London", "Edinburgh")
+    ]
+
+    private static func cityKey(_ text: String) -> String {
+        text.replacingOccurrences(of: ".", with: "")
+            .replacingOccurrences(of: ",", with: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
 
     private static func groups(_ pattern: String, _ text: String) -> [String]? {
         guard let regex = try? NSRegularExpression(pattern: pattern),
