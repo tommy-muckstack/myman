@@ -29,7 +29,7 @@ struct CaptureFilterMenu: View {
             Button { filters.reset(); mode = .themes } label: { Label { Text("Themes") } icon: { Image(nsImage: MMIcon.themes.menuImage) } }
             Divider()
             Menu("Content") {
-                ForEach([("all", "All types"), ("screenshot", "Screenshots"), ("meeting", "Meetings"), ("dictation", "Dictation"), ("recording", "Recordings"), ("note", "Notes")], id: \.0) { kind, label in
+                ForEach([("all", "All types"), ("screenshot", "Screenshots"), ("meeting", "Meetings"), ("dictation", "Dictation"), ("recording", "Recordings"), ("note", "Notes"), ("brainNote", "Brainz notes")], id: \.0) { kind, label in
                     Button { filters.actionKind = nil; filters.kind = kind; filters.isBrowsing = true; mode = .search } label: { Label(label, systemImage: filters.displayedKind == kind ? "checkmark" : "circle") }
                 }
             }

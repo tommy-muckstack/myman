@@ -318,6 +318,27 @@ final class MeetingController: ObservableObject {
             checkpointURL: MeetingTranscriptCheckpoint.url(micPath: micWriter?.url.path, systemPath: systemWriter?.url.path))
         MeetingTranscriptionStatus.shared.recordingIDs.insert(meeting.id)
         liveTranscript.start(reader: reader, ownerName: meeting.resolvedOwner, candidates: sessionAttendeeNames)
+        liveTranscript.context.enabled = SettingsStore.shared.meetingContextStream
+        liveTranscript.context.start(session: MeetingContextStream.Session(meetingID: meeting.id, startedAt: meeting.startedAt,
+                                                                           title: meeting.title, attendees: sessionPeople,
+                                                                           ownerName: meeting.resolvedOwner),
+                                     database: titleDatabase ?? Database.shared)
+        if titleDatabase == nil { BrainNoteIndexer.shared.rescan(reason: "meeting_start") }
+    }
+
+    /// Everyone on the call except the owner: calendar attendees with their
+    /// emails, plus names read off the call window.
+    var sessionPeople: [MeetingContextPerson] {
+        let owner = meeting?.resolvedOwner ?? ""
+        var people = pendingAttendees
+            .filter { !LiveMeetingTranscript.sameName($0.name, owner) }
+            .map { MeetingContextPerson(name: $0.name, email: $0.email) }
+        for name in sessionAttendeeNames.names
+        where !name.isEmpty && !LiveMeetingTranscript.sameName(name, owner)
+            && !people.contains(where: { LiveMeetingTranscript.sameName($0.name, name) }) {
+            people.append(MeetingContextPerson(name: name, email: nil))
+        }
+        return people
     }
 
     static var recordingsFolder: URL {
@@ -859,6 +880,7 @@ final class MeetingController: ObservableObject {
         if merged != sessionAttendeeNames {
             sessionAttendeeNames = merged
             Analytics.track("meeting_call_names_seen", ["count": names.count])
+            liveTranscript.context.updateAttendees(sessionPeople)
         }
         liveTranscript.updateCallParticipants(names, candidates: merged)
     }
@@ -2429,7 +2451,7 @@ struct MeetingPillView: View {
                     MeetingRecordingTabs(selection: $selectedTab)
                     switch selectedTab {
                     case .notes:
-                        MeetingRecordingNoteView(draft: controller.recordingNote) { focused in
+                        MeetingRecordingNoteView(draft: controller.recordingNote, context: controller.liveTranscript.context) { focused in
                             noteFocused = focused
                         }
                     case .summary:

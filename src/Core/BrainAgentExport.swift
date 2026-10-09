@@ -55,7 +55,9 @@ enum BrainAgentExport {
     }
 
     static func source(in db: GRDB.Database) throws -> Source {
-        let items = try CaptureItem.filter(Column("excluded") == false).order(Column("id")).fetchAll(db)
+        // Brainz notes already live in the user's brain folder; exporting them
+        // into MyManBrain would re-index the copies if Brainz opened it.
+        let items = try CaptureItem.filter(Column("excluded") == false && Column("kind") != "brainNote").order(Column("id")).fetchAll(db)
         let meetings = Dictionary(uniqueKeysWithValues: try Row.fetchAll(db, sql: "SELECT * FROM meeting").map { ($0["id"] as String, $0) })
         let recordings = Dictionary(uniqueKeysWithValues: try Row.fetchAll(db, sql: "SELECT id,duration FROM recording").map { ($0["id"] as String, $0["duration"] as Int) })
         let memberships = try Row.fetchAll(db, sql: """

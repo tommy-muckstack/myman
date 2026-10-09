@@ -163,6 +163,25 @@ final class SettingsStore: ObservableObject {
     @Published var autoRecordMeetings: Bool {
         didSet { UserDefaults.standard.set(autoRecordMeetings, forKey: "autoRecordMeetings") }
     }
+    /// Related past context shown under the Notes tab while recording.
+    @Published var meetingContextStream: Bool {
+        didSet { UserDefaults.standard.set(meetingContextStream, forKey: "meetingContextStream") }
+    }
+    /// The Brainz workspace folder the person picked; nil means follow the
+    /// pointer Brainz writes, or its default folder.
+    @Published var brainFolderPath: String? {
+        didSet {
+            UserDefaults.standard.set(brainFolderPath, forKey: "brainFolder")
+            BrainNoteIndexer.shared.rescan(reason: "folder_changed")
+        }
+    }
+    /// Folder names (any depth) the Brainz indexer leaves alone.
+    @Published var brainExcludedFolders: [String] {
+        didSet {
+            UserDefaults.standard.set(brainExcludedFolders, forKey: "brainExcludedFolders")
+            BrainNoteIndexer.shared.rescan(reason: "excludes_changed")
+        }
+    }
     /// Cursor trail + click ripple drawn into screen recordings.
     @Published var cursorEffects: Bool {
         didSet { UserDefaults.standard.set(cursorEffects, forKey: "cursorEffects") }
@@ -254,6 +273,9 @@ final class SettingsStore: ObservableObject {
             hotkeys = [:]
         }
         autoRecordMeetings = UserDefaults.standard.bool(forKey: "autoRecordMeetings")
+        meetingContextStream = UserDefaults.standard.object(forKey: "meetingContextStream") as? Bool ?? true
+        brainFolderPath = UserDefaults.standard.string(forKey: "brainFolder")
+        brainExcludedFolders = UserDefaults.standard.stringArray(forKey: "brainExcludedFolders") ?? BrainNoteIndexer.defaultExcludedFolders
         cursorEffects = UserDefaults.standard.object(forKey: "cursorEffects") as? Bool ?? true
         recordCursorSeparately = UserDefaults.standard.bool(forKey: "recordCursorSeparately")
         dictationTone = DictationTone(rawValue: UserDefaults.standard.string(forKey: "dictationTone") ?? "") ?? .neutral
@@ -463,6 +485,10 @@ struct SettingsPanelView: View {
             settingSection("Meetings") {
                 Toggle("Auto record when meeting detected", isOn: $store.autoRecordMeetings)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                Toggle("Show related past context while recording", isOn: $store.meetingContextStream)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                Text("Past meetings, notes and Brainz notes that match the people on the call and what is being discussed appear under the Notes tab.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Screenshot sound") {

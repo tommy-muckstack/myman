@@ -108,6 +108,7 @@ enum CaptureThumbnailCache {
             else { Toast.show("The original image is missing", systemImage: "exclamationmark.triangle") }
         case .recording(let recording): NSWorkspace.shared.open(URL(fileURLWithPath: recording.path))
         case .dictation: CaptureDetailController.shared.open(item, query: query)
+        case .brainNote(let note): BrainWorkspace.open(path: note.path)
         }
     }
     @discardableResult static func copy(_ item: CaptureItem, textOnly: Bool = false, pasteboard: NSPasteboard = .general) -> Bool {
@@ -135,7 +136,7 @@ enum CaptureThumbnailCache {
     }
 
     static func fileURL(for item: CaptureItem, brainRoot: URL = Brain.root) -> URL? {
-        if ["screenshot", "recording"].contains(item.kind), !item.sourcePath.isEmpty {
+        if ["screenshot", "recording", "brainNote"].contains(item.kind), !item.sourcePath.isEmpty {
             return URL(fileURLWithPath: item.sourcePath)
         }
         guard ["note", "meeting", "dictation"].contains(item.kind) else { return nil }

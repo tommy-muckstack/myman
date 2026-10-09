@@ -309,6 +309,16 @@ enum Database {
                 t.add(column: "slideMetadataJSON", .text).notNull().defaults(to: "[]")
             }
         }
+        migrator.registerMigration("v20-brain-notes") { db in
+            try db.execute(sql: """
+                CREATE TABLE brainNote (
+                  id TEXT PRIMARY KEY NOT NULL, path TEXT NOT NULL UNIQUE,
+                  title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '',
+                  createdAt DATETIME NOT NULL, updatedAt DATETIME NOT NULL,
+                  mtime DOUBLE NOT NULL, size INTEGER NOT NULL DEFAULT 0);
+                """)
+            try CaptureSchema.install(source: CaptureSchema.brainNoteSource, in: db)
+        }
         return migrator
     }
 }

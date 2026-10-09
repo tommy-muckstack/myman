@@ -11,7 +11,7 @@ enum CaptureQuery {
         var result = filter
         var text = query.lowercased()
         var hints: [String] = []
-        let kinds: [(String, [String])] = [("screenshot", ["screenshot", "screenshots", "screenshotted"]), ("meeting", ["meeting", "meetings"]), ("dictation", ["dictation", "dictations", "dictated"]), ("recording", ["recording", "recordings"]), ("note", ["notes"])]
+        let kinds: [(String, [String])] = [("screenshot", ["screenshot", "screenshots", "screenshotted"]), ("meeting", ["meeting", "meetings"]), ("dictation", ["dictation", "dictations", "dictated"]), ("recording", ["recording", "recordings"]), ("brainNote", ["brainz"]), ("note", ["notes"])]
         let detected = kinds.filter { !$0.1.filter(words.contains).isEmpty }
         if detected.count == 1, result.kind == "all" { result.kind = detected[0].0; hints.append(result.kind.capitalized) }
         if result.after == nil && result.before == nil {
