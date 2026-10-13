@@ -44,6 +44,7 @@ final class ClaudeWritingModelTests: XCTestCase {
         XCTAssertEqual(http.url, ClaudeWritingModel.endpoint)
         XCTAssertEqual(http.value(forHTTPHeaderField: "x-api-key"), "test-key-not-real")
         XCTAssertEqual(http.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
+        XCTAssertNil(http.value(forHTTPHeaderField: "anthropic-workspace-id"))
         XCTAssertEqual(http.value(forHTTPHeaderField: "content-type"), "application/json")
         let body = StubURLProtocol.jsonBody()
         XCTAssertEqual(body["model"] as? String, "claude-opus-5-5")
@@ -60,6 +61,14 @@ final class ClaudeWritingModelTests: XCTestCase {
         let format = output?["format"] as? [String: Any]
         XCTAssertEqual(format?["type"] as? String, "json_schema")
         XCTAssertEqual(((format?["schema"] as? [String: Any])?["required"] as? [String]), ["ok"])
+    }
+
+    func testWorkspaceIDIsSentAsHeaderWhenSet() async throws {
+        StubURLProtocol.install { _ in StubURLProtocol.json(Self.success()) }
+        let model = ClaudeWritingModel(apiKey: "test-key-not-real", workspaceID: " wrkspc_test123 \n",
+                                       configuration: StubURLProtocol.configuration, gate: WritingModelGate())
+        _ = try await model.generate(request())
+        XCTAssertEqual(StubURLProtocol.requests[0].request.value(forHTTPHeaderField: "anthropic-workspace-id"), "wrkspc_test123")
     }
 
     func testChatUsesLowEffortAndNoFormat() async throws {

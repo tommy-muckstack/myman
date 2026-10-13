@@ -235,6 +235,10 @@ final class SettingsStore: ObservableObject {
     @Published var writingModelName: String {
         didSet { UserDefaults.standard.set(writingModelName, forKey: "writingModel.model") }
     }
+    /// Anthropic Console workspace id; only needed for user-level keys.
+    @Published var writingModelClaudeWorkspace: String {
+        didSet { UserDefaults.standard.set(writingModelClaudeWorkspace, forKey: "writingModel.claudeWorkspace") }
+    }
     @Published var writingModelMeetingNotes: Bool {
         didSet { UserDefaults.standard.set(writingModelMeetingNotes, forKey: "writingModel.meetingNotes") }
     }
@@ -250,7 +254,7 @@ final class SettingsStore: ObservableObject {
     }
     var writingModel: WritingModelSettings {
         WritingModelSettings(enabled: writingModelEnabled, vendor: writingModelVendor, model: writingModelName,
-                             meetingNotes: writingModelMeetingNotes, tasks: writingModelTasks, brainChat: writingModelBrainChat)
+                             claudeWorkspaceID: writingModelClaudeWorkspace, meetingNotes: writingModelMeetingNotes, tasks: writingModelTasks, brainChat: writingModelBrainChat)
     }
 
     private init() {
@@ -285,6 +289,7 @@ final class SettingsStore: ObservableObject {
         let vendor = WritingVendor(rawValue: UserDefaults.standard.string(forKey: "writingModel.vendor") ?? "") ?? .claude
         writingModelVendor = vendor
         writingModelName = UserDefaults.standard.string(forKey: "writingModel.model") ?? vendor.defaultModel
+        writingModelClaudeWorkspace = UserDefaults.standard.string(forKey: "writingModel.claudeWorkspace") ?? ""
         writingModelMeetingNotes = UserDefaults.standard.object(forKey: "writingModel.meetingNotes") as? Bool ?? true
         writingModelTasks = UserDefaults.standard.object(forKey: "writingModel.tasks") as? Bool ?? true
         writingModelBrainChat = UserDefaults.standard.object(forKey: "writingModel.brainChat") as? Bool ?? true
