@@ -5,6 +5,14 @@ import Security
 /// writing-model API keys). The value lives only in this Mac's Keychain:
 /// never in UserDefaults, `secrets.env`, Info.plist, logs or analytics.
 /// Mirrors the SecItem pattern in `SharePublishing` (update, then add).
+///
+/// Persistence across updates: items land in the login Keychain with an
+/// access list that trusts the creating app's designated requirement
+/// (bundle id + Developer ID team), not one specific binary. Every release
+/// is signed with the same identity, so a Sparkle update or a reinstall of
+/// a newer version reads the key silently. A differently signed build (an
+/// ad-hoc dev build) gets the system "allow access?" prompt instead; never
+/// change the bundle id or signing team without migrating these items.
 enum Keychain {
     struct SaveFailed: Error { let status: OSStatus }
 

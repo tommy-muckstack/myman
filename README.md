@@ -208,6 +208,11 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## User-level Claude keys (1.1.110)
+
+- Settings → AI gains a **Workspace ID** field for Claude. Keys that start with `sk-ant-usr-` are not tied to a workspace, so Anthropic needs the workspace id (Console → Settings → Workspaces, `wrkspc_…`) on every request; My Man now sends it. Leave the field empty for a regular `sk-ant-api` key.
+- API keys survive updates. They live in the login Keychain under items that trust My Man's code signature (bundle id `com.muckstack.myman` plus the MuckStack Developer ID), and every release is signed the same way, so Sparkle updates and fresh installs of a newer version read the key without asking again. The Workspace ID and the rest of Settings → AI persist in the app's preferences the same way.
+
 ## Meeting context stream and Brainz notes (1.1.109)
 
 - While a meeting records, the Notes tab shows **From your past**: earlier meetings with the same people, and notes, screenshots and Brainz notes that match what is being discussed. It seeds from the calendar title and attendees, then refreshes as the conversation moves to new topics (at least 40 new words and 30 seconds between refreshes). Three cards show at a time; click one to open it, dismiss any, or hide the stream for the meeting. Turn it off under Settings → General → Meetings.
