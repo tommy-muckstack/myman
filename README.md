@@ -208,6 +208,11 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## Live translation stays quiet in English meetings (1.1.111)
+
+- The "Download Languages to Translate" sheet no longer appears over the meeting window. One-word fragments such as "No", "Uh" or "Mm-hmm" used to be mislabelled as Portuguese, Croatian or Turkish, and each guess asked macOS to download that language. A passage now needs at least three words and a confident match before it counts as non-English.
+- My Man never starts a language download on its own. When speech is in a language whose model isn't installed, the transcript shows the original words with a **Download** button; the system download sheet appears only after you click it, and each meeting starts without that permission.
+
 ## User-level Claude keys (1.1.110)
 
 - Settings → AI gains a **Workspace ID** field for Claude. Keys that start with `sk-ant-usr-` are not tied to a workspace, so Anthropic needs the workspace id (Console → Settings → Workspaces, `wrkspc_…`) on every request; My Man now sends it. Leave the field empty for a regular `sk-ant-api` key.
