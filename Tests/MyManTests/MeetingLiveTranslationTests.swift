@@ -104,6 +104,28 @@ final class MeetingLiveTranslationTests: XCTestCase {
         XCTAssertEqual(MeetingLiveTranslation.detectLanguage("Vamos a revisar el proyecto mañana por la tarde."), "es")
         XCTAssertEqual(MeetingLiveTranslation.detectLanguage("Nous allons examiner le projet demain après-midi."), "fr")
         XCTAssertEqual(MeetingLiveTranslation.detectLanguage("We will review the project tomorrow afternoon."), "en")
+        // Fragments the recognizer mislabels (pt, hr, tr, pl) must not open language downloads.
+        for fragment in ["No", "Uh", "Mm-hmm.", "Hmm", "Okay.", "Cool", "Yeah, so", "Um, so I think we should"] {
+            XCTAssertEqual(MeetingLiveTranslation.detectLanguage(fragment), "en", fragment)
+        }
+    }
+
+    @MainActor func testMissingLanguageModelWaitsForExplicitDownload() throws {
+        let model = MeetingLiveTranslation(detect: { _ in "pt" })
+        XCTAssertFalse(model.downloadsAllowed)
+        model.update([row("Vamos rever o projeto amanhã.")])
+        model.skipDownload(try XCTUnwrap(model.request))
+        XCTAssertNil(model.request)
+        XCTAssertTrue(model.needsDownload)
+        XCTAssertTrue(model.hasFailures)
+        model.update([row("Vamos rever o projeto amanhã. Mais palavras.", pieces: ["Vamos rever o projeto amanhã.", "Mais palavras."])])
+        XCTAssertNil(model.request, "New speech must not re-prompt for the download")
+        model.retry()
+        XCTAssertTrue(model.downloadsAllowed)
+        XCTAssertFalse(model.needsDownload)
+        XCTAssertNotNil(model.request)
+        model.reset()
+        XCTAssertFalse(model.downloadsAllowed, "A new meeting starts without download permission")
     }
 
     @MainActor func testInstalledSpanishTranslationReachesLiveTab() async throws {

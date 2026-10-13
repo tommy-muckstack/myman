@@ -53,12 +53,14 @@ struct MeetingLiveTranscriptView: View {
                 }
                 if translation.enabled {
                     HStack(alignment: .top) {
-                        Text(translation.hasFailures
+                        Text(translation.needsDownload
+                             ? "Translating this speech needs a language download. Original words are shown."
+                             : translation.hasFailures
                              ? "Some speech couldn’t be translated. Original words are shown."
                              : "Live English · Language downloads may be needed the first time.")
                             .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                         if translation.hasFailures {
-                            Button("Retry") { translation.retry() }
+                            Button(translation.needsDownload ? "Download" : "Retry") { translation.retry() }
                                 .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
                         }
                     }

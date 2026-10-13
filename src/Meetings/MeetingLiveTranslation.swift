@@ -17,6 +17,10 @@ final class MeetingLiveTranslation: ObservableObject {
     @Published private(set) var request: Request?
     @Published private(set) var rows: [LiveMeetingTranscript.Row] = []
     @Published private(set) var hasFailures = false
+    /// A language pair exists but its model isn't on this Mac. The system
+    /// download sheet only appears after the person asks for it.
+    @Published private(set) var needsDownload = false
+    private(set) var downloadsAllowed = false
     @Published var enabled = true { didSet { refresh() } }
     private var originals: [LiveMeetingTranscript.Row] = []
     private var translated: [String: String] = [:]
@@ -28,9 +32,19 @@ final class MeetingLiveTranslation: ObservableObject {
         self.detect = detect
     }
 
+    /// Short fragments ("No", "Uh", "Mm-hmm") get confident-looking but random
+    /// guesses from the recognizer, which used to open language downloads for
+    /// Portuguese or Croatian in an English meeting. Only substantial, clearly
+    /// non-English passages leave the English pass-through.
     nonisolated static func detectLanguage(_ text: String) -> String? {
-        guard text.contains(where: \.isLetter) else { return "en" }
-        return NLLanguageRecognizer.dominantLanguage(for: text)?.rawValue
+        let letters = text.filter(\.isLetter).count
+        let words = text.split(whereSeparator: \.isWhitespace).count
+        guard letters >= 12, words >= 3 else { return "en" }
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        guard let (language, confidence) = recognizer.languageHypotheses(withMaximum: 1).first,
+              confidence >= 0.6 else { return "en" }
+        return language.rawValue
     }
 
     func update(_ rows: [LiveMeetingTranscript.Row]) {
@@ -46,10 +60,23 @@ final class MeetingLiveTranslation: ObservableObject {
         failedLanguages = []
         rows = []
         hasFailures = false
+        needsDownload = false
+        downloadsAllowed = false
     }
 
     func retry() {
         failedLanguages = []
+        needsDownload = false
+        downloadsAllowed = true
+        refresh()
+    }
+
+    /// The worker found an installable pair but had no permission to prompt.
+    func skipDownload(_ work: Request) {
+        guard request?.id == work.id else { return }
+        failedLanguages.insert(work.language ?? "und")
+        needsDownload = true
+        request = nil
         refresh()
     }
 
@@ -143,11 +170,22 @@ struct MeetingTranslationWorker: View {
                 .translationTask(source: request.language.map { Locale.Language(identifier: $0) },
                                  target: Locale.Language(identifier: "en")) { session in
                     do {
-                        let availability = LanguageAvailability()
-                        if let language = request.language,
-                           await availability.status(from: Locale.Language(identifier: language), to: Locale.Language(identifier: "en")) == .unsupported {
-                            translation.fail(request)
-                            return
+                        if let language = request.language {
+                            let status = await LanguageAvailability().status(from: Locale.Language(identifier: language), to: Locale.Language(identifier: "en"))
+                            switch status {
+                            case .unsupported:
+                                translation.fail(request)
+                                return
+                            case .supported where !translation.downloadsAllowed:
+                                // translations(from:) would open the system
+                                // download sheet over the meeting window.
+                                translation.skipDownload(request)
+                                return
+                            case .supported:
+                                try await session.prepareTranslation()
+                            default:
+                                break
+                            }
                         }
                         let inputs = request.texts.enumerated().map {
                             TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset))
