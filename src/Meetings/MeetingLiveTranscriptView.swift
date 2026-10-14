@@ -54,14 +54,24 @@ struct MeetingLiveTranscriptView: View {
                 if translation.enabled {
                     HStack(alignment: .top) {
                         Text(translation.needsDownload
-                             ? "Translating this speech needs a language download. Original words are shown."
+                             ? "Download languages in System Settings → General → Language & Region → Translation Languages, then retry. Original words are shown."
                              : translation.hasFailures
                              ? "Some speech couldn’t be translated. Original words are shown."
-                             : "Live English · Language downloads may be needed the first time.")
+                             : "Live English · Uses languages installed on this Mac.")
                             .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                         if translation.hasFailures {
-                            Button(translation.needsDownload ? "Download" : "Retry") { translation.retry() }
-                                .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
+                            VStack(alignment: .trailing, spacing: MM.Layout.spacing / 2) {
+                                if translation.needsDownload {
+                                    Button("Languages…") {
+                                        if let url = URL(string: "x-apple.systempreferences:com.apple.Localization-Settings.extension") {
+                                            NSWorkspace.shared.open(url)
+                                        }
+                                    }
+                                    .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
+                                }
+                                Button("Retry") { translation.retry() }
+                                    .font(MM.Fonts.metadata).buttonStyle(.plain).clickable()
+                            }
                         }
                     }
                 }

@@ -2107,7 +2107,7 @@ final class MeetingController: ObservableObject {
     }
 
     private func dismissPill() {
-        panel?.orderOut(nil)
+        panel?.tearDown()
         panel = nil
     }
 

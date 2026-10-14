@@ -10,17 +10,15 @@ import Translation
 final class MeetingLiveTranslation: ObservableObject {
     struct Request: Equatable, Identifiable {
         let id = UUID()
-        let language: String?
+        let language: String
         let texts: [String]
     }
 
     @Published private(set) var request: Request?
     @Published private(set) var rows: [LiveMeetingTranscript.Row] = []
     @Published private(set) var hasFailures = false
-    /// A language pair exists but its model isn't on this Mac. The system
-    /// download sheet only appears after the person asks for it.
+    /// Downloads belong in System Settings, never over the recorder.
     @Published private(set) var needsDownload = false
-    private(set) var downloadsAllowed = false
     @Published var enabled = true { didSet { refresh() } }
     private var originals: [LiveMeetingTranscript.Row] = []
     private var translated: [String: String] = [:]
@@ -61,20 +59,36 @@ final class MeetingLiveTranslation: ObservableObject {
         rows = []
         hasFailures = false
         needsDownload = false
-        downloadsAllowed = false
     }
 
     func retry() {
         failedLanguages = []
         needsDownload = false
-        downloadsAllowed = true
         refresh()
     }
 
-    /// The worker found an installable pair but had no permission to prompt.
+    /// Check before creating a UI-backed session, and again after any await:
+    /// stopping, switching to Original, or editing can invalidate the batch.
+    @available(macOS 15.0, *)
+    func prepare(_ work: Request,
+                 availability: (Locale.Language, Locale.Language) async -> LanguageAvailability.Status = {
+                     await LanguageAvailability().status(from: $0, to: $1)
+                 }) async -> Bool {
+        guard !Task.isCancelled, request?.id == work.id else { return false }
+        let status = await availability(Locale.Language(identifier: work.language), Locale.Language(identifier: "en"))
+        guard !Task.isCancelled, request?.id == work.id else { return false }
+        switch status {
+        case .installed: return true
+        case .supported: skipDownload(work)
+        default: fail(work)
+        }
+        return false
+    }
+
+    /// The worker found an installable pair. Keep displaying the original.
     func skipDownload(_ work: Request) {
         guard request?.id == work.id else { return }
-        failedLanguages.insert(work.language ?? "und")
+        failedLanguages.insert(work.language)
         needsDownload = true
         request = nil
         refresh()
@@ -85,7 +99,7 @@ final class MeetingLiveTranslation: ObservableObject {
         for text in work.texts {
             guard let result = translations[text]?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !result.isEmpty else {
-                failedLanguages.insert(work.language ?? "und")
+                failedLanguages.insert(work.language)
                 continue
             }
             translated[text] = result
@@ -96,9 +110,9 @@ final class MeetingLiveTranslation: ObservableObject {
 
     func fail(_ work: Request) {
         guard request?.id == work.id else { return }
-        // Don't repeatedly request a declined download or unsupported pair
-        // for every new passage. Other languages can keep translating.
-        failedLanguages.insert(work.language ?? "und")
+        // Don't repeatedly retry an unavailable or unsupported pair for
+        // every new passage. Other languages can keep translating.
+        failedLanguages.insert(work.language)
         request = nil
         refresh()
     }
@@ -125,7 +139,9 @@ final class MeetingLiveTranslation: ObservableObject {
         let current = Set(passages.flatMap { $0 })
         translated = translated.filter { current.contains($0.key) }
         languages = languages.filter { current.contains($0.key) }
-        for text in current where languages[text] == nil { languages[text] = detect(text) ?? "und" }
+        // A nil source lets Translation ask the person to choose a language.
+        // Uncertain speech stays unchanged instead of opening system UI.
+        for text in current where languages[text] == nil { languages[text] = detect(text) ?? "en" }
         // Keep an in-flight batch stable when more speech arrives. Its results
         // can only fill exact source passages, never overwrite corrected text.
         if let work = request, !work.texts.contains(where: current.contains) { request = nil }
@@ -136,8 +152,8 @@ final class MeetingLiveTranslation: ObservableObject {
             if let first = pending.first {
                 let language = languages[first] ?? "und"
                 var seen: Set<String> = []
-                let batch = pending.filter { languages[$0] == language && seen.insert($0).inserted }.prefix(language == "und" ? 1 : 4)
-                request = Request(language: language == "und" ? nil : language, texts: Array(batch))
+                let batch = pending.filter { languages[$0] == language && seen.insert($0).inserted }.prefix(4)
+                request = Request(language: language, texts: Array(batch))
             }
         }
         hasFailures = current.contains { translated[$0] == nil && failedLanguages.contains(languages[$0] ?? "und") }
@@ -159,53 +175,87 @@ final class MeetingLiveTranslation: ObservableObject {
 
 /// Each batch owns a session with one language pair. Recreating only the
 /// invisible worker prevents new speech from cancelling a batch or moving
-/// the transcript's selection/scroll position. SwiftUI owns session lifetime.
+/// the transcript's selection/scroll position.
 @available(macOS 15.0, *)
 struct MeetingTranslationWorker: View {
     @ObservedObject var translation: MeetingLiveTranslation
 
     var body: some View {
         if let request = translation.request {
-            Color.clear.frame(width: 0, height: 0)
-                .translationTask(source: request.language.map { Locale.Language(identifier: $0) },
-                                 target: Locale.Language(identifier: "en")) { session in
-                    do {
-                        if let language = request.language {
-                            let status = await LanguageAvailability().status(from: Locale.Language(identifier: language), to: Locale.Language(identifier: "en"))
-                            switch status {
-                            case .unsupported:
-                                translation.fail(request)
-                                return
-                            case .supported where !translation.downloadsAllowed:
-                                // translations(from:) would open the system
-                                // download sheet over the meeting window.
-                                translation.skipDownload(request)
-                                return
-                            case .supported:
-                                try await session.prepareTranslation()
-                            default:
-                                break
-                            }
-                        }
-                        let inputs = request.texts.enumerated().map {
-                            TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset))
-                        }
-                        let responses = try await session.translations(from: inputs)
-                        try Task.checkCancellation()
-                        var results: [String: String] = [:]
-                        for response in responses {
-                            guard let identifier = response.clientIdentifier, let index = Int(identifier),
-                                  request.texts.indices.contains(index) else { continue }
-                            results[request.texts[index]] = response.targetText
-                        }
-                        translation.complete(request, translations: results)
-                    } catch {
-                        // Switching tabs cancels the view's task. Leave the
-                        // request queued so it resumes when the tab returns.
-                        if !Task.isCancelled { translation.fail(request) }
-                    }
-                }
+            MeetingTranslationBatch(translation: translation, request: request)
                 .id(request.id)
+        }
+    }
+}
+
+@available(macOS 15.0, *)
+private struct MeetingTranslationBatch: View {
+    @ObservedObject var translation: MeetingLiveTranslation
+    let request: MeetingLiveTranslation.Request
+    @State private var ready = false
+    @State private var activeSession: TranslationSession?
+
+    var body: some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            Color.clear.frame(width: 0, height: 0)
+                .task {
+                    guard await translation.prepare(request) else { return }
+                    // Unlike translationTask, this session cannot present UI,
+                    // even if the model disappears after the availability check.
+                    let session = TranslationSession(installedSource: Locale.Language(identifier: request.language),
+                                                     target: Locale.Language(identifier: "en"))
+                    activeSession = session
+                    defer { session.cancel(); activeSession = nil }
+                    await translate(using: session)
+                }
+                .onDisappear { activeSession?.cancel() }
+        } else {
+            legacyWorker
+        }
+        #else
+        legacyWorker
+        #endif
+    }
+
+    /// macOS 15 requires a view-backed session. Do not even configure it
+    /// until a known language pair has been confirmed installed.
+    private var legacyWorker: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .task { ready = await translation.prepare(request) }
+            .translationTask(ready ? .init(source: Locale.Language(identifier: request.language),
+                                          target: Locale.Language(identifier: "en")) : nil) { session in
+                guard await translation.prepare(request) else { return }
+                await translate(using: session)
+            }
+    }
+
+    private func translate(using session: TranslationSession) async {
+        do {
+            try Task.checkCancellation()
+            guard translation.request?.id == request.id else { return }
+            let inputs = request.texts.enumerated().map {
+                TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset))
+            }
+            let responses = try await session.translations(from: inputs)
+            try Task.checkCancellation()
+            var results: [String: String] = [:]
+            for response in responses {
+                guard let identifier = response.clientIdentifier, let index = Int(identifier),
+                      request.texts.indices.contains(index) else { continue }
+                results[request.texts[index]] = response.targetText
+            }
+            translation.complete(request, translations: results)
+        } catch {
+            // A disappearing tab leaves the batch queued for its next visit.
+            guard !Task.isCancelled else { return }
+            #if compiler(>=6.2)
+            if #available(macOS 26.0, *), case TranslationError.notInstalled = error {
+                translation.skipDownload(request)
+                return
+            }
+            #endif
+            translation.fail(request)
         }
     }
 }

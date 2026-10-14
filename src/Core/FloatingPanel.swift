@@ -81,6 +81,21 @@ final class FloatingPanel: NSPanel {
         orderOut(nil)
     }
 
+    /// Finished recordings must release their SwiftUI tasks and any system
+    /// sheets. Hiding the parent alone can leave a sheet without usable controls.
+    func tearDown() {
+        onResignKey = nil
+        // A nonactivating panel can have a visible system sheet even while
+        // AppKit reports an empty `sheets` list. The child's parent is reliable.
+        let attachedSheets = Set(sheets + NSApp.windows.filter { $0.sheetParent === self })
+        for sheet in attachedSheets {
+            endSheet(sheet, returnCode: .cancel)
+            sheet.orderOut(nil)
+        }
+        contentView = nil
+        dismiss()
+    }
+
     /// Show centered on the screen with the mouse, upper third — where the eye rests.
     /// The safe way to ask what the content wants: measured on demand,
     /// never wired into window-resizing constraints.

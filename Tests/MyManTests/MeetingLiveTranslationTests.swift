@@ -110,22 +110,91 @@ final class MeetingLiveTranslationTests: XCTestCase {
         }
     }
 
-    @MainActor func testMissingLanguageModelWaitsForExplicitDownload() throws {
+    @MainActor func testMissingLanguageModelNeverStartsSessionEvenAfterRetry() async throws {
+        guard #available(macOS 15.0, *) else { throw XCTSkip("Requires macOS 15") }
         let model = MeetingLiveTranslation(detect: { _ in "pt" })
-        XCTAssertFalse(model.downloadsAllowed)
         model.update([row("Vamos rever o projeto amanhã.")])
-        model.skipDownload(try XCTUnwrap(model.request))
+        let first = try XCTUnwrap(model.request)
+        let ready = await model.prepare(first, availability: { _, _ in .supported })
+        XCTAssertFalse(ready)
         XCTAssertNil(model.request)
         XCTAssertTrue(model.needsDownload)
         XCTAssertTrue(model.hasFailures)
         model.update([row("Vamos rever o projeto amanhã. Mais palavras.", pieces: ["Vamos rever o projeto amanhã.", "Mais palavras."])])
         XCTAssertNil(model.request, "New speech must not re-prompt for the download")
         model.retry()
-        XCTAssertTrue(model.downloadsAllowed)
         XCTAssertFalse(model.needsDownload)
-        XCTAssertNotNil(model.request)
+        let retry = try XCTUnwrap(model.request)
+        let retryReady = await model.prepare(retry, availability: { _, _ in .supported })
+        XCTAssertFalse(retryReady, "Retry must not authorize a download dialog")
+        XCTAssertTrue(model.needsDownload)
+        XCTAssertNil(model.request)
+        model.retry()
+        let installed = try XCTUnwrap(model.request)
+        let installedReady = await model.prepare(installed, availability: { _, _ in .installed })
+        XCTAssertTrue(installedReady, "Retry resumes once the language is installed in System Settings")
+        XCTAssertEqual(model.request?.id, installed.id)
         model.reset()
-        XCTAssertFalse(model.downloadsAllowed, "A new meeting starts without download permission")
+        XCTAssertFalse(model.needsDownload)
+    }
+
+    @MainActor func testUnknownLanguageNeverRequestsAutomaticLanguageSelection() {
+        let model = MeetingLiveTranslation(detect: { _ in nil })
+        model.update([row("Uncertain speech from the microphone.")])
+        XCTAssertNil(model.request)
+        XCTAssertEqual(model.rows.first?.text, "Uncertain speech from the microphone.")
+        XCTAssertNil(model.rows.first?.translationNote)
+    }
+
+    @MainActor func testStopDuringAvailabilityCheckCannotStartSessionOrRestoreDownloadNotice() async throws {
+        guard #available(macOS 15.0, *) else { throw XCTSkip("Requires macOS 15") }
+        for status in [LanguageAvailability.Status.installed, .supported] {
+            let model = MeetingLiveTranslation(detect: { _ in "es" })
+            model.update([row("Vamos a revisar el proyecto mañana.")])
+            let work = try XCTUnwrap(model.request)
+            let started = expectation(description: "Availability check started")
+            var continuation: CheckedContinuation<LanguageAvailability.Status, Never>?
+            let task = Task { @MainActor in
+                await model.prepare(work, availability: { _, _ in
+                    await withCheckedContinuation {
+                        continuation = $0
+                        started.fulfill()
+                    }
+                })
+            }
+            await fulfillment(of: [started], timeout: 2)
+            model.reset()
+            continuation?.resume(returning: status)
+            let ready = await task.value
+            XCTAssertFalse(ready)
+            XCTAssertNil(model.request)
+            XCTAssertFalse(model.needsDownload)
+            XCTAssertTrue(model.rows.isEmpty)
+        }
+    }
+
+    @MainActor func testCancelledAvailabilityCheckLeavesBatchQueuedWithoutStartingSession() async throws {
+        guard #available(macOS 15.0, *) else { throw XCTSkip("Requires macOS 15") }
+        let model = MeetingLiveTranslation(detect: { _ in "es" })
+        model.update([row("Vamos a revisar el proyecto mañana.")])
+        let work = try XCTUnwrap(model.request)
+        let started = expectation(description: "Availability check started")
+        var continuation: CheckedContinuation<LanguageAvailability.Status, Never>?
+        let task = Task { @MainActor in
+            await model.prepare(work, availability: { _, _ in
+                await withCheckedContinuation {
+                    continuation = $0
+                    started.fulfill()
+                }
+            })
+        }
+        await fulfillment(of: [started], timeout: 2)
+        task.cancel()
+        continuation?.resume(returning: .installed)
+        let ready = await task.value
+        XCTAssertFalse(ready)
+        XCTAssertEqual(model.request?.id, work.id)
+        XCTAssertFalse(model.hasFailures)
     }
 
     @MainActor func testInstalledSpanishTranslationReachesLiveTab() async throws {
@@ -157,6 +226,7 @@ final class MeetingLiveTranslationTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         }
         XCTAssertFalse(transcript.translation.hasFailures)
+        XCTAssertNil(window.attachedSheet, "Live translation must not present a system dialog")
         XCTAssertNil(transcript.translation.request)
         let output = try XCTUnwrap(transcript.translation.rows.first)
         XCTAssertEqual(output.translationNote, "English translation")
