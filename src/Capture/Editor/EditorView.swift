@@ -61,6 +61,59 @@ enum EditorTool: String, CaseIterable, Identifiable {
     }
 }
 
+/// Keep every tool visible as the window narrows. The final item contains
+/// the editing actions and stays together at the trailing edge of its row.
+private struct EditorToolbarLayout: Layout {
+    private let spacing = MM.Layout.spacing / 2
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let naturalWidth = sizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, sizes.count - 1))
+        let proposedWidth = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? naturalWidth
+        let width = max(proposedWidth, sizes.map(\.width).max() ?? 0)
+        let rows = rows(for: sizes, width: width)
+        let height = rows.reduce(CGFloat.zero) { total, row in
+            total + (row.map { sizes[$0].height }.max() ?? 0)
+        } + spacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var y = bounds.minY
+        for row in rows(for: sizes, width: bounds.width) {
+            let height = row.map { sizes[$0].height }.max() ?? 0
+            var x = bounds.minX
+            for index in row {
+                let size = sizes[index]
+                if index == subviews.count - 1 { x = max(x, bounds.maxX - size.width) }
+                subviews[index].place(at: CGPoint(x: x, y: y + (height - size.height) / 2),
+                                      anchor: .topLeading, proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += height + spacing
+        }
+    }
+
+    private func rows(for sizes: [CGSize], width: CGFloat) -> [[Int]] {
+        var rows: [[Int]] = []
+        var row: [Int] = []
+        var used: CGFloat = 0
+        for index in sizes.indices {
+            let next = sizes[index].width + (row.isEmpty ? 0 : spacing)
+            if !row.isEmpty, used + next > width {
+                rows.append(row)
+                row = []
+                used = 0
+            }
+            used += sizes[index].width + (row.isEmpty ? 0 : spacing)
+            row.append(index)
+        }
+        if !row.isEmpty { rows.append(row) }
+        return rows
+    }
+}
+
 struct EditorView: View {
     @ObservedObject var model: EditorModel
     @State private var tool: EditorTool = .box
@@ -94,6 +147,7 @@ struct EditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+                .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()
                 Button("Screenshot text & related captures") { CaptureDetailController.openPath(model.fileURL.path) }
@@ -105,36 +159,38 @@ struct EditorView: View {
                     Button("Create font…") { FontWorkbenchController.open(image: model.image, sourceURL: model.fileURL) }
                 }
                 .padding(MM.Layout.paddingLarge)
+                .overlay(alignment: .topTrailing) { translationPanel }
         }
         .background(MM.Colors.background)
-        .overlay(alignment: .topTrailing) {
-            if showTranslate, #available(macOS 15.0, *) {
-                TranslatePanelView(
-                    sourceText: ocrForTranslate,
-                    image: model.image,
-                    provideObservations: { [weak model] in
-                        guard let model else { return [] }
-                        if let cached = model.textObservations { return cached }
-                        return await ImageAnalysis.textObservations(model.image)
-                    },
-                    onApplyInPlace: { patches in
-                        withAnimation(MM.Motion.gentle) {
-                            model.translationPatches = patches
-                            model.showTranslation = true
-                            showTranslate = false
-                        }
-                    }
-                ) {
-                    withAnimation(MM.Motion.gentle) { showTranslate = false }
-                }
-                .padding(.top, 52)
-                .padding(.trailing, MM.Layout.padding)
-                .transition(.opacity)
-            }
-        }
         .onKeyPress(.escape) {
             if pendingText != nil { cancelText(); return .handled }
             return .ignored
+        }
+    }
+
+    @ViewBuilder private var translationPanel: some View {
+        if showTranslate, #available(macOS 15.0, *) {
+            TranslatePanelView(
+                sourceText: ocrForTranslate,
+                image: model.image,
+                provideObservations: { [weak model] in
+                    guard let model else { return [] }
+                    if let cached = model.textObservations { return cached }
+                    return await ImageAnalysis.textObservations(model.image)
+                },
+                onApplyInPlace: { patches in
+                    withAnimation(MM.Motion.gentle) {
+                        model.translationPatches = patches
+                        model.showTranslation = true
+                        showTranslate = false
+                    }
+                }
+            ) {
+                withAnimation(MM.Motion.gentle) { showTranslate = false }
+            }
+            .padding(.top, MM.Layout.spacing / 2)
+            .padding(.trailing, MM.Layout.padding)
+            .transition(.opacity)
         }
     }
 
@@ -159,11 +215,17 @@ struct EditorView: View {
     // MARK: Toolbar
 
     private var toolbar: some View {
-        HStack(spacing: 6) {
-            // The tools scroll sideways when the window is narrow; the
-            // actions on the right keep their size and never overlap.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+        EditorToolbarLayout {
+            drawingTools
+            appearanceTools
+            editingActions
+        }
+        .padding(.horizontal, MM.Layout.padding)
+        .padding(.vertical, MM.Layout.spacing / 2)
+    }
+
+    private var drawingTools: some View {
+        HStack(spacing: MM.Layout.spacing / 2) {
             toolButton(.select)
             drawToolsGroup
             toolButton(.pixelate)
@@ -171,12 +233,15 @@ struct EditorView: View {
             toolButton(.ocr)
             strokeWidthGroup
             textSizeGroup
+        }
+        .fixedSize()
+    }
 
-            Divider().frame(height: 18).overlay(MM.Colors.border).padding(.horizontal, 6)
-
+    private var appearanceTools: some View {
+        HStack(spacing: MM.Layout.spacing / 2) {
             backdropGroup
 
-            Divider().frame(height: 18).overlay(MM.Colors.border).padding(.horizontal, 6)
+            toolbarDivider
 
             Button {
                 model.removeBackground()
@@ -284,14 +349,12 @@ struct EditorView: View {
             }
 
             colorGroup
-                }
-                .padding(.vertical, 2)
-            }
-            .layoutPriority(0)
+        }
+        .fixedSize()
+    }
 
-            Spacer(minLength: 8)
-
-            HStack(spacing: 6) {
+    private var editingActions: some View {
+        HStack(spacing: MM.Layout.spacing / 2) {
             if model.didCopyText {
                 Text("Copied")
                     .font(MM.Fonts.hint)
@@ -354,14 +417,14 @@ struct EditorView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("s", modifiers: .command)
             .help("Save (⌘S)")
-            }
-            .fixedSize()
-            .layoutPriority(1)
         }
-        .padding(.horizontal, MM.Layout.padding)
-        // One fixed row height: every control centers on the same axis, and
-        // nothing (looking at you, pill buttons) can stretch the bar.
-        .frame(height: 46)
+        .fixedSize()
+    }
+
+    private var toolbarDivider: some View {
+        Rectangle().fill(MM.Colors.border)
+            .frame(width: 1, height: 18)
+            .padding(.horizontal, MM.Layout.spacing / 2)
     }
 
     // MARK: Collapsible toolbar groups
@@ -737,7 +800,8 @@ struct EditorView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
-        .frame(minWidth: 560, minHeight: 380)
+        // The window already has a minimum size. Let the canvas use the
+        // remaining height instead of pushing wrapped controls out of view.
     }
 
     private var backdropPreview: some View {
