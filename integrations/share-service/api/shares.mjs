@@ -1,5 +1,6 @@
 import { get, put } from '@vercel/blob';
 import { createService } from '../service.mjs';
+import videoHandler from './videos.mjs';
 const store = {
   async get(id) {
     const blob = await get(`shares/${id}.json`, { access: 'private', useCache: false });
@@ -12,6 +13,10 @@ const store = {
 };
 export default async function handler(req, res) {
   try {
+    if (['GET', 'HEAD'].includes(req.method) && /^[a-zA-Z0-9_-]{32}$/.test(req.query.id ?? '')) {
+      const value = await store.get(req.query.id);
+      if (value?.version === 2) return videoHandler(req, res);
+    }
     let body = req.body;
     if (typeof body === 'string') { if (Buffer.byteLength(body) > 4_100_000) { res.status(413).end(); return; } body = JSON.parse(body); }
     const service = createService({ store, publisherToken: process.env.MYMAN_SHARE_PUBLISHER_TOKEN });

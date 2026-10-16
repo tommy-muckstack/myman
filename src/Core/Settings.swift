@@ -100,7 +100,7 @@ struct HotkeyCombo: Codable, Equatable {
 }
 
 enum HotkeyAction: String, CaseIterable, Identifiable {
-    case launcher, screenshot, note, voice, meeting, record
+    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record
     var id: String { rawValue }
 
     var label: String {
@@ -109,6 +109,8 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .screenshot: return "Take Screenshot"
         case .note: return "New Note"
         case .voice: return "Voice Dictation"
+        case .voiceEdit: return "Voice Edit Selection"
+        case .voiceUndo: return "Undo Voice Edit"
         case .meeting: return "Record Meeting"
         case .record: return "Record Screen"
         }
@@ -126,6 +128,8 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         // machine, and chords like ⌘⇧S kept arming dictation before the
         // second modifier arrived. Right ⌥ is on no common shortcut.
         case .voice: return HotkeyCombo(keyCode: UInt32(kVK_RightOption), carbonModifiers: 0)
+        case .voiceEdit: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_V), carbonModifiers: UInt32(cmdKey | optionKey | shiftKey))
+        case .voiceUndo: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(cmdKey | optionKey | shiftKey))
         case .meeting: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(optionKey | shiftKey))
         case .record: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey))
         }
@@ -455,6 +459,7 @@ struct SettingsPanelView: View {
         )
         .background(HotkeyCaptureView(active: recordingAction != nil) { combo in
             if let action = recordingAction {
+                if [.voiceEdit, .voiceUndo].contains(action), combo.isModifierOnly { NSSound.beep(); return }
                 store.setCombo(combo, for: action)
                 recordingAction = nil
             }
@@ -565,6 +570,7 @@ struct SettingsPanelView: View {
             }.labelsHidden().pickerStyle(.segmented)
             Text(store.dictationTone.detail).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             DictationAppStyleSettings()
+            DictationPersonalizationSettings()
             Button("Review dictation delivery and corrections…") { WorkflowCenter.shared.open(tab: "dictation") }.clickable()
             Toggle("Noise suppression on the mic", isOn: $store.enhanceMicrophone)
                 .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)

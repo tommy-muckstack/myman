@@ -64,19 +64,19 @@ final class Qwen3Engine {
         }
     }
 
-    func transcribe(_ samples: [Float]) async -> String {
+    func transcribe(_ samples: [Float], language: String = "en") async -> String {
         guard let manager = model.value else { return "" }
         do {
             // Force English — Qwen3 is multilingual and short ambiguous audio
             // ("github") can decode into Chinese under auto-detection.
-            let text = try await manager.transcribe(audioSamples: samples, language: "en")
+            let text = try await manager.transcribe(audioSamples: samples, language: language)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             // Belt and suspenders: if CJK still dominates, it's a decode
             // hallucination, not speech — never paste it.
             let cjk = text.unicodeScalars.filter {
                 (0x4E00...0x9FFF).contains($0.value) || (0x3040...0x30FF).contains($0.value)
             }.count
-            if cjk * 3 > max(text.count, 1) {
+            if language == "en", cjk * 3 > max(text.count, 1) {
                 NSLog("My Man [Qwen3] discarded CJK-dominant hallucination")
                 return ""
             }
@@ -111,17 +111,43 @@ final class ParakeetEngine {
     }
 
     func transcribe(_ samples: [Float]) async -> String {
-        guard let manager else { return "" }
+        await recognize(samples)?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    func timedWords(_ samples: [Float], offset: Double) async -> [RecordingTranscript.Segment] {
+        guard let result = await recognize(samples) else { return [] }
+        return Self.words(from: result.tokenTimings ?? [], sampleCount: samples.count, offset: offset)
+    }
+
+    nonisolated static func words(from tokens: [TokenTiming], sampleCount: Int, offset: Double) -> [RecordingTranscript.Segment] {
+        var words: [RecordingTranscript.Segment] = []
+        var pendingBoundary = false
+        for token in tokens where !token.token.isEmpty && !token.token.hasPrefix("<") {
+            let startsWord = pendingBoundary || token.token.hasPrefix(" ") || token.token.hasPrefix("▁") || words.isEmpty
+            let text = token.token.replacingOccurrences(of: "▁", with: " ").trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty else { pendingBoundary = startsWord; continue }
+            pendingBoundary = false
+            let start = max(0, token.startTime), end = min(Double(sampleCount) / 16000, max(start + 0.02, token.endTime))
+            guard end > start else { continue }
+            if startsWord { words.append(.init(start: offset + start, end: offset + end, text: text)) }
+            else { words[words.count - 1].text += text; words[words.count - 1].end = max(words[words.count - 1].end, offset + end) }
+        }
+        // Without real alignment, don't invent per-word timestamps.
+        return words
+    }
+
+    private func recognize(_ samples: [Float]) async -> ASRResult? {
+        guard let manager else { return nil }
         do {
             // Fresh decoder state per utterance — recordings are independent.
             var decoderState = TdtDecoderState.make()
             let minimum = ASRConstants.minimumRequiredSamples(forSampleRate: 16000)
             let input = samples + [Float](repeating: 0, count: max(0, minimum - samples.count))
             let result = try await manager.transcribe(input, decoderState: &decoderState)
-            return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return result
         } catch {
             NSLog("My Man [Parakeet] transcription failed: \(error)")
-            return ""
+            return nil
         }
     }
 }
@@ -132,9 +158,11 @@ final class ParakeetEngine {
 @available(macOS 26.0, *)
 final class AppleSpeechEngine {
     private(set) var isReady = false
-    private let locale = Locale(identifier: "en_US")
+    private var locale = Locale(identifier: "en_US")
 
-    func load() async {
+    func load(language: String = "en") async {
+        locale = DictationProfile.locale(for: language)
+        isReady = false
         do {
             let supported = await SpeechTranscriber.supportedLocales
             guard supported.contains(where: {
@@ -153,7 +181,8 @@ final class AppleSpeechEngine {
         }
     }
 
-    func transcribe(_ samples: [Float]) async -> String {
+    func transcribe(_ samples: [Float], language: String = "en") async -> String {
+        if locale != DictationProfile.locale(for: language) { await load(language: language) }
         guard isReady else { return "" }
         do {
             let transcriber = SpeechTranscriber(
@@ -267,7 +296,12 @@ final class TranscriptionService {
 
     /// Best engine for dictation RIGHT NOW — accuracy if loaded, speed otherwise.
     var dictationKind: SttEngineKind {
-        qwen3Ready ? .qwen3 : .parakeet
+        if let raw = UserDefaults.standard.string(forKey: "dictationEngineProfile"),
+           let selected = SttEngineKind(rawValue: raw), selected.isAvailable,
+           selected != .parakeet || DictationProfile.parakeetLanguages.contains(DictationProfile.language) { return selected }
+        // Non-Latin languages need Qwen rather than an English-biased fallback.
+        if DictationProfile.language != "en", SttEngineKind.qwen3.isAvailable { return .qwen3 }
+        return qwen3Ready ? .qwen3 : .parakeet
     }
 
     var isReady: Bool {
@@ -316,16 +350,16 @@ final class TranscriptionService {
         }
     }
 
-    func transcribe(_ samples: [Float]) async -> String {
+    func transcribe(_ samples: [Float], language: String = "en") async -> String {
         let text: String
         switch kind {
         case .parakeet: text = await parakeet.transcribe(samples)
         case .qwen3:
-            if #available(macOS 15.0, *) { text = await qwen3.transcribe(samples) }
+            if #available(macOS 15.0, *) { text = await qwen3.transcribe(samples, language: language) }
             else { text = await parakeet.transcribe(samples) }
         case .apple:
             #if compiler(>=6.2)
-            if #available(macOS 26.0, *) { text = await apple.transcribe(samples) }
+            if #available(macOS 26.0, *) { text = await apple.transcribe(samples, language: language) }
             else { text = "" }
             #else
             text = ""

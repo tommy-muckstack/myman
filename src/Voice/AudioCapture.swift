@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import AudioEngineSafety
 import CoreAudio
+import AudioToolbox
 import Foundation
 
 /// THE mic pipeline — one engine, one tap, any number of consumer sessions.
@@ -20,6 +21,7 @@ final class AudioCapture: @unchecked Sendable {
     private var configurationObservation: AudioEngineConfigurationObservation?
     private var vpEnabled = false
     private var requestedVoiceProcessing = false
+    private var configuredMicrophoneUID = ""
     private var tapInstalled = false
     private var buffers: [UUID: [Float]] = [:]
     private var modes: [UUID: Mode] = [:]
@@ -101,6 +103,15 @@ final class AudioCapture: @unchecked Sendable {
         defer { prepareLock.unlock() }
         guard engine == nil else { return }
         var eng = AVAudioEngine()
+        configuredMicrophoneUID = DictationProfile.microphoneUID
+        func applyMicrophone(to eng: AVAudioEngine) {
+        if var device = DictationProfile.deviceID(for: configuredMicrophoneUID), let unit = eng.inputNode.audioUnit {
+            let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                             &device, UInt32(MemoryLayout<AudioDeviceID>.size))
+            if status != noErr { NSLog("My Man [Audio] preferred microphone unavailable (%d); using system default", status) }
+        }
+        }
+        applyMicrophone(to: eng)
         // Voice processing (AGC + noise suppression) lifts whispers for the
         // dictation model. Best-effort — plain capture if hardware refuses.
         let wantVP = desiredVoiceProcessing()
@@ -109,6 +120,7 @@ final class AudioCapture: @unchecked Sendable {
             // Failed setup can leave a partially configured graph. Fall back
             // to raw capture on a fresh engine, never reuse that graph.
             eng = AVAudioEngine()
+            applyMicrophone(to: eng)
         }
         if let error = MMPrepareAudioEngine(eng) { throw error }
         vpEnabled = eng.inputNode.isVoiceProcessingEnabled
@@ -249,6 +261,8 @@ final class AudioCapture: @unchecked Sendable {
         do {
             try await withCheckedThrowingContinuation { continuation in
                 Self.engineQueue.async { [self] in
+                    lock.lock(); let soleSession = buffers.count == 1; lock.unlock()
+                    if soleSession && configuredMicrophoneUID != DictationProfile.microphoneUID { discardEngine() }
                     continuation.resume(with: Result { try reconfigureAndRun() })
                 }
             }

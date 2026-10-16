@@ -31,8 +31,8 @@ APP_NAME="My Man"
 EXEC_NAME="MyMan"
 SLUG="myman"
 BUNDLE_ID="com.muckstack.myman"
-VERSION="${RELEASE_VERSION:-1.1.112}"
-BUILD_NUMBER="${RELEASE_BUILD:-124}"
+VERSION="${RELEASE_VERSION:-1.1.113}"
+BUILD_NUMBER="${RELEASE_BUILD:-125}"
 TEAM_ID="${APPLE_TEAM_ID:-K8NAZ76CBQ}"
 NOTARY_PROFILE="mumbls-notary"
 SPARKLE_ACCOUNT="myman"
@@ -77,7 +77,7 @@ if [[ -n "${CERT_P12_BASE64:-}" ]]; then
     rm -f "$P12_PATH"
 fi
 
-DEV_ID_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
+DEV_ID_IDENTITY=$(security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ && !found { print $2; found=1 }')
 if [[ -z "$DEV_ID_IDENTITY" ]]; then
     echo "ERROR: No 'Developer ID Application' certificate found in Keychain."
     exit 1

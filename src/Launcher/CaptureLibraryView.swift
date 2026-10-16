@@ -334,6 +334,7 @@ struct CaptureLibraryView: View {
                 .clickable()
         }.buttonStyle(.plain)
             .contextMenu {
+                Button("Ask this theme…") { BrainChatController.shared.show(scope: .init(themeID: theme.id)) }
                 Button("Rename…") { CaptureActions.prompt(title: "Rename theme", value: theme.title) { try ThemeStore.rename(theme.id, title: $0) } }
                 Button(theme.pinned ? "Unpin" : "Pin") { CaptureActions.perform { try ThemeStore.pin(theme.id, pinned: !theme.pinned) } }
                 Menu("Merge into") { ForEach(model.themes.filter { $0.id != theme.id }) { target in Button(target.title) { CaptureActions.perform { try ThemeStore.merge(theme.id, into: target.id) } } } }
@@ -342,6 +343,7 @@ struct CaptureLibraryView: View {
     }
     @ViewBuilder private func itemMenu(_ item: CaptureItem) -> some View {
         Button("Open original") { CaptureActions.open(item, query: query) }
+        Button("Ask this capture…") { BrainChatController.shared.show(scope: .init(itemID: item.id)) }
         if item.kind == "screenshot" {
             Button("Float as reference") { CaptureActions.perform { try FloatingReference.open(item) } }
         }

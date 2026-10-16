@@ -487,6 +487,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         register(store.combo(for: .launcher), "launcher") { $0.launcher.toggle() }
         register(store.combo(for: .screenshot), "screenshot") { $0.capture.beginRegionCapture() }
         register(store.combo(for: .note), "note") { $0.notesPanel.show() }
+        register(store.combo(for: .voiceEdit), "voiceEdit") { $0.voice.toggleCommand() }
+        register(store.combo(for: .voiceUndo), "voiceUndo") { _ in
+            Task { @MainActor in
+                if let outcome = await DictationDelivery.undoVoiceEdit() { Toast.show(outcome.isVerified ? "Voice edit undone" : outcome.reason) }
+                else { Toast.show("Undo is available while the edited field is unchanged and focused.") }
+            }
+        }
         register(store.combo(for: .meeting), "meeting") { $0.meetings.toggle() }
         if ScreenRecorder.isSupported {
             // Same toggle as the launcher tile: starts region selection, or

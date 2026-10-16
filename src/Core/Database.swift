@@ -319,6 +319,13 @@ enum Database {
                 """)
             try CaptureSchema.install(source: CaptureSchema.brainNoteSource, in: db)
         }
+        migrator.registerMigration("v21-meeting-note-preferences") { db in
+            try db.execute(sql: """
+                CREATE TABLE meetingNotePreference (
+                    meetingID TEXT PRIMARY KEY NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
+                    templateJSON TEXT NOT NULL, enhance BOOLEAN NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 1);
+                """)
+        }
         return migrator
     }
 }

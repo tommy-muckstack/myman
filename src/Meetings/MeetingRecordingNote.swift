@@ -45,12 +45,12 @@ final class MeetingRecordingNote: ObservableObject {
         saveTask?.cancel()
         saveTask = nil
         guard isDirty, let meetingID else { return true }
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = text
         let previous = note
         do {
             let saved: Note? = try db.write { db in
                 guard let meeting = try Meeting.fetchOne(db, key: meetingID) else { throw CocoaError(.fileNoSuchFile) }
-                if body.isEmpty {
+                if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     if let previous { _ = try Note.deleteOne(db, key: previous.id) }
                     return nil
                 }

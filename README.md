@@ -208,6 +208,14 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## Competitive workflow candidate (1.1.113)
+
+- Dictation adds spoken corrections, snippets, pronunciation aliases, language and microphone profiles, and guarded voice editing with undo.
+- Meetings add note templates and optional enhancement of your notes. Brain chat adds document scopes, quoted citations, and saved questions.
+- Recording adds window/camera selection, timed transcript editing, cuts, captions, redaction, rendered previews, and optional private video sharing through the updated personal sharing service.
+
+This is a release candidate; installer signing and publication are pending. See [verification and release status](docs/competitive-workflows-progress.md) for requirements and remaining checks.
+
 ## Dismissable meeting translation windows (1.1.112)
 
 - Stopping or discarding a recording closes attached translation dialogs and releases the live transcript view, including sheets attached to an inactive floating panel.

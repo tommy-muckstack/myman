@@ -82,15 +82,16 @@ final class MeetingNotesService: ObservableObject {
     /// `provider` is the opt-in hosted writing model; only the final
     /// `prepare`/`regenerate` job passes one. Live drafts never do.
     nonisolated static func generateBounded(_ meeting: Meeting, provider: WritingModelProvider? = nil,
+                                            noteInput: MeetingNoteInput = .empty,
                                             progress: @escaping Progress = { _ in }) async -> MeetingAnalysis {
         do {
             return try await AsyncDeadline.run(seconds: provider == nil ? 90 : 150) {
-                await GroundedMeetingNotes.generate(meeting, provider: provider, progress: progress)
+                await GroundedMeetingNotes.generate(meeting, provider: provider, noteInput: noteInput, progress: progress)
             }
         } catch {
             guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
             await progress("Saving notes from the transcript…")
-            return await GroundedMeetingNotes.generate(meeting, useLanguageModel: false)
+            return await GroundedMeetingNotes.generate(meeting, useLanguageModel: false, noteInput: noteInput)
         }
     }
 
@@ -104,7 +105,11 @@ final class MeetingNotesService: ObservableObject {
     private func job(for id: String, replacing: Bool = false) -> Task<String, Never>? {
         guard !isShuttingDown, let meeting = try? db.read({ try Meeting.fetchOne($0, key: id) }),
               (replacing || meeting.summary.isEmpty), !meeting.transcript.isEmpty else { return nil }
-        let input = [meeting.transcript, meeting.summary, meeting.kind, meeting.ownerName, meeting.participantsJSON].joined(separator: "\u{0}")
+        guard let noteInput = try? db.read({ try MeetingNoteInput.load(id, in: $0) }) else {
+            failures[id] = "The meeting format or personal notes could not be read. They have been preserved."
+            return nil
+        }
+        let input = [meeting.transcript, meeting.summary, meeting.kind, meeting.ownerName, meeting.participantsJSON, noteInput.fingerprint].joined(separator: "\u{0}")
         if let current = jobs[id], current.input == input { return current.task }
         if replacing, !meeting.summary.isEmpty, let url = MeetingNotesCache.url(for: meeting) {
             do {
@@ -133,7 +138,7 @@ final class MeetingNotesService: ObservableObject {
                 if jobs.isEmpty && draftTasks.isEmpty { tail = nil }
             }
             _ = await previous?.value
-            guard !Task.isCancelled, isCurrent(meeting) else { return "" }
+            guard !Task.isCancelled, isCurrent(meeting, noteInput: noteInput) else { return "" }
             queueTimer.finish("notes_queue")
             let progress: Progress = { [weak self] stage in
                 await self?.setStage(stage, id: id, token: token)
@@ -145,7 +150,7 @@ final class MeetingNotesService: ObservableObject {
                 if let generate {
                     analysis = MeetingAnalysis(markdown: await generate(meeting.transcript, meeting.startedAt, progress))
                 } else {
-                    analysis = await Self.generateBounded(meeting, provider: provider, progress: progress)
+                    analysis = await Self.generateBounded(meeting, provider: provider, noteInput: noteInput, progress: progress)
                 }
                 if !analysis.markdown.isEmpty { break }
             }
@@ -157,6 +162,7 @@ final class MeetingNotesService: ObservableObject {
             }
             do {
                 let saved: Meeting? = try await db.write { [analysis] db in
+                    guard try MeetingNoteInput.load(id, in: db) == noteInput else { return nil }
                     // Field-only, conditional update: never overwrite edits,
                     // resurrect a deletion, or save notes for an old transcript.
                     try db.execute(sql: """
@@ -170,7 +176,10 @@ final class MeetingNotesService: ObservableObject {
                     try MeetingVocabulary.record(meeting, in: db)
                     return try Meeting.fetchOne(db, key: id)
                 }
-                guard let saved else { return "" }
+                guard let saved else {
+                    failures[id] = "Your notes, transcript or format changed while this summary was being prepared. Regenerate to use the latest version."
+                    return ""
+                }
                 if database == nil {
                     TasksStore.shared.refresh()
                     Brain.syncMeeting(id: saved.id, title: saved.title,
@@ -189,8 +198,9 @@ final class MeetingNotesService: ObservableObject {
         return task
     }
 
-    private func isCurrent(_ meeting: Meeting) -> Bool {
+    private func isCurrent(_ meeting: Meeting, noteInput: MeetingNoteInput) -> Bool {
         guard let current = try? db.read({ try Meeting.fetchOne($0, key: meeting.id) }) else { return false }
+        guard (try? db.read { try MeetingNoteInput.load(meeting.id, in: $0) }) == noteInput else { return false }
         return current.summary == meeting.summary && current.transcript == meeting.transcript
             && current.kind == meeting.kind && current.ownerName == meeting.ownerName
             && current.participantsJSON == meeting.participantsJSON
