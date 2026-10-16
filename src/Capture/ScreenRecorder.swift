@@ -66,6 +66,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     func prepareForQuit() {
         guard !isShuttingDown else { return }
         isShuttingDown = true
+        CameraOnlyRecorder.shared.stop()
         startupTask?.cancel()
         durationTask?.cancel()
         selection?.hideAll(); selection = nil
@@ -79,7 +80,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     func finishQuitting() async {
         prepareForQuit()
-        while isBusy, !Task.isCancelled {
+        while isBusy || CameraOnlyRecorder.shared.isBusy, !Task.isCancelled {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
     }
@@ -126,6 +127,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     func toggle() {
         guard !isShuttingDown else { return }
+        if CameraOnlyRecorder.shared.isBusy { CameraOnlyRecorder.shared.stop(); return }
         if isRecording {
             stop()
             return
@@ -140,6 +142,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
         if pendingRegion != nil || confirmPanel != nil {
             cancelPending()
         }
+        RecordingSourcePicker.shared.show()
+    }
+
+    func startRegionFromPicker(microphone: Bool, systemAudio: Bool, webcam: Bool) {
+        microphoneEnabled = microphone
+        UserDefaults.standard.set(microphone, forKey: "mm.screenRecordingMicrophone")
+        UserDefaults.standard.set(webcam, forKey: "mm.webcamBubble")
+        agentSystemAudio = systemAudio
         beginRegionSelection()
     }
 
@@ -218,6 +228,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
             AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
         ) == noErr, deviceID != kAudioObjectUnknown else { return nil }
 
+        if let preferred = DictationProfile.deviceID(for: DictationProfile.microphoneUID) { deviceID = preferred }
+
         func stringProperty(_ selector: AudioObjectPropertySelector) -> String? {
             var value: CFString = "" as CFString
             var valueSize = UInt32(MemoryLayout<CFString>.size)
@@ -245,7 +257,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     @available(macOS 15.0, *)
     func startForAgent(region: CGRect?, windowID: String? = nil, maximumDuration: Double = 300, microphone: Bool, systemAudio: Bool = true, webcam: Bool = false, hideCursor: Bool = false) async throws {
-        guard !isShuttingDown, !isBusy else { throw AgentError("BUSY", "A screen recording is active, starting, or My Man is quitting.") }
+        guard !isShuttingDown, !isBusy, !CameraOnlyRecorder.shared.isBusy else { throw AgentError("BUSY", "A screen recording is active, starting, or My Man is quitting.") }
         guard maximumDuration.isFinite, (1...3600).contains(maximumDuration) else { throw AgentError("INVALID_ARGUMENTS", "Maximum duration must be 1–3600 seconds.") }
         guard windowID == nil || (region == nil && !webcam) else { throw AgentError("INVALID_ARGUMENTS", "Window recording cannot combine a region or webcam bubble.") }
         isBusy = true
@@ -672,18 +684,22 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     // MARK: Transcription → brain
 
-    private func transcribeAndSync(_ record: ScreenRecording) {
+    func transcribeAndSync(_ record: ScreenRecording) {
         guard !isShuttingDown else { return }
         transcriptionCount += 1
         Task { @MainActor in
             defer { transcriptionCount -= 1 }
-            if !TranscriptionService.shared.isReady || TranscriptionService.shared.kind != .parakeet {
-                await TranscriptionService.shared.load(kind: .parakeet)
-            }
+            // Timed recognition owns its engine without changing active dictation settings.
             let text = await Self.transcribeMovie(at: URL(fileURLWithPath: record.path))
-            var updated = record
-            updated.transcript = text
-            try? await Database.shared.write { [updated] in try updated.update($0) }
+            guard !text.isEmpty else { return }
+            let saved = try? await Database.shared.write { db -> Bool in
+                try db.execute(sql: """
+                    UPDATE recording SET transcript = ? WHERE id = ? AND path = ? AND transcript = ?
+                    AND NOT EXISTS (SELECT 1 FROM captureItem WHERE id = ? AND excluded = 1)
+                    """, arguments: [text, record.id, record.path, record.transcript, "recording-" + record.id])
+                return db.changesCount == 1
+            }
+            guard saved == true else { return }
             Brain.syncRecording(id: record.id, filePath: record.path,
                                 duration: record.duration, transcript: text,
                                 createdAt: record.createdAt)
@@ -691,55 +707,10 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     /// All audio tracks of the movie (mic + system), streamed as 16k mono
-    /// and transcribed in 60s chunks — bounded memory at any length.
+    /// and transcribed in silence-aligned chunks — bounded memory at any length.
     private static func transcribeMovie(at url: URL) async -> String {
-        let asset = AVURLAsset(url: url)
-        guard let tracks = try? await asset.loadTracks(withMediaType: .audio),
-              !tracks.isEmpty else { return "" }
-        var parts: [String] = []
-        for track in tracks {
-            guard let reader = try? AVAssetReader(asset: asset) else { continue }
-            let settings: [String: Any] = [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVSampleRateKey: 16000,
-                AVNumberOfChannelsKey: 1,
-                AVLinearPCMBitDepthKey: 32,
-                AVLinearPCMIsFloatKey: true,
-                AVLinearPCMIsNonInterleaved: false,
-            ]
-            let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
-            guard reader.canAdd(output) else { continue }
-            reader.add(output)
-            guard reader.startReading() else { continue }
-            var buffer: [Float] = []
-            let chunk = 16000 * 60
-            func drain(_ final: Bool) async {
-                while buffer.count >= chunk || (final && !buffer.isEmpty) {
-                    let take = min(chunk, buffer.count)
-                    let piece = Array(buffer.prefix(take))
-                    buffer.removeFirst(take)
-                    let text = await TranscriptionService.shared.transcribe(piece)
-                    if !text.isEmpty { parts.append(text) }
-                    if final && buffer.isEmpty { break }
-                }
-            }
-            while let sample = output.copyNextSampleBuffer() {
-                if let block = CMSampleBufferGetDataBuffer(sample) {
-                    var length = 0
-                    var pointer: UnsafeMutablePointer<Int8>?
-                    CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil,
-                                                totalLengthOut: &length, dataPointerOut: &pointer)
-                    if let pointer {
-                        pointer.withMemoryRebound(to: Float.self, capacity: length / 4) { floats in
-                            buffer.append(contentsOf: UnsafeBufferPointer(start: floats, count: length / 4))
-                        }
-                    }
-                }
-                await drain(false)
-            }
-            await drain(true)
-        }
-        return parts.joined(separator: " ")
+        do { return try await RecordingTranscriber.transcribe(url).map(\.text).joined(separator: " ") }
+        catch { NSLog("My Man [Recording] timed transcription failed"); return "" }
     }
 
     // MARK: Pill — same top-right recording indicator contract as meetings
@@ -1075,7 +1046,7 @@ final class WebcamBubble: ObservableObject {
 
     private func begin() {
         guard !isShuttingDown else { return }
-        guard let device = AVCaptureDevice.default(for: .video),
+        guard let device = RecordingDevices.camera,
               let input = try? AVCaptureDeviceInput(device: device) else { return }
         let session = AVCaptureSession()
         // The bubble is filmed off the screen at Retina scale, so the feed

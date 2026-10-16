@@ -323,19 +323,11 @@ enum DictationCleanup {
     }
 
     /// Spoken commands, applied deterministically to the final text:
-    /// "new line" / "new paragraph" become breaks; "scratch that" discards
-    /// everything said before it. Punctuation the cleanup added around the
+    /// "new line" / "new paragraph" become breaks; "scratch that" removes
+    /// the current sentence. Punctuation the cleanup added around the
     /// command words is absorbed.
     static func applyVoiceCommands(_ text: String) -> String {
-        var result = text
-        // scratch that → keep only what came after the LAST occurrence
-        if let regex = try? NSRegularExpression(pattern: "(?i)[,.!?]?\\s*\\bscratch that\\b[,.!?]?\\s*") {
-            let ns = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length))
-            if let last = matches.last {
-                result = ns.substring(from: last.range.location + last.range.length)
-            }
-        }
+        var result = DictationBacktrack.apply(text)
         for (pattern, replacement) in [
             ("(?i)[,.]?\\s*\\bnew paragraph\\b[,.]?\\s*", "\n\n"),
             ("(?i)[,.]?\\s*\\bnew line\\b[,.]?\\s*", "\n"),
@@ -559,10 +551,23 @@ enum DictationCleanup {
         """
     }
 
+    static func personalizedClean(_ raw: String, tone: DictationTone,
+                                  targetBundleID: String?, personalization: DictationPersonalization,
+                                  contextTerms: [String] = []) async -> String {
+        let plan = personalization.prepare(raw)
+        let cleaned = await clean(plan.text, tone: tone, targetBundleID: targetBundleID,
+                                  contextTerms: contextTerms + personalization.aliases.map(\.term))
+        // If the model damages a placeholder, use rules only. Expansion is the
+        // final step: no formatting, spelling or style pass sees its contents.
+        return plan.restore(cleaned)
+            ?? plan.restore(deterministicCleanup(plan.text, terms: vocabulary()))
+            ?? plan.restore(plan.text) ?? raw
+    }
+
     static func clean(_ raw: String, tone: DictationTone = .neutral,
-                      targetBundleID: String? = nil) async -> String {
+                      targetBundleID: String? = nil, contextTerms: [String] = []) async -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let terms = vocabulary()
+        let terms = vocabulary() + contextTerms
         // Rules first: the model then sees formatted numbers, links, and
         // punctuation, and only has corrections and wordy fillers left to do.
         let prepared = deterministicCleanup(trimmed, terms: terms)
@@ -577,7 +582,8 @@ enum DictationCleanup {
         #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else { return prepared }
         guard case .available = SystemLanguageModel.default.availability else { return prepared }
-        let session = PreparedPolish.shared.take(tone: tone)
+        let warmed = PreparedPolish.shared.take(tone: tone)
+        let session = (contextTerms.isEmpty ? warmed : nil)
             ?? LanguageModelSession(instructions: instructions(tone: tone, terms: terms))
         // Delimited so the model can never mistake the transcript for a
         // question addressed to it (it once ANSWERED "how we doing?"

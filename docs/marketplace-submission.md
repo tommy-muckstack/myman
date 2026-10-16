@@ -1,3 +1,5 @@
+> Candidate update, 2026-10-16: root plugin **0.17.2** documents optional `originalSelection` and `commandInstruction` fields in native Mac dictation recovery, behind the existing library grant. No new action or permission. The new video publication workflow is person-initiated; agent `share.publish` keeps its existing recording-text behavior. Brain **0.16.0**, Linux **0.17.0**, and Grok **0.12.0** packages remain unchanged. Verification and remaining release gates: [competitive workflows](competitive-workflows-progress.md). **Prepared, not submitted or host-verified.** Next authorized marketplace step after validation: notify marketplace-publishing@cursor.com with org @muckstack, repository https://github.com/tommy-muckstack/myman and candidate 0.17.2. No email or form sent.
+
 > Candidate update, 2026-10-08: root plugin **0.17.1** documents local-first Mac time-zone evaluation and adds Houston/DC destination aliases. Native Mac behavior changes; Brain **0.16.0**, Linux **0.17.0**, and Grok **0.12.0** packages remain unchanged. Linux time-zone evaluation remains explicitly unsupported. Prepared, not submitted or host-verified. Next step: an authorized update email to marketplace-publishing@cursor.com with org @muckstack, https://github.com/tommy-muckstack/myman and candidate 0.17.1; do not duplicate the pending publisher application. No email sent.
 
 > Release 1.1.103 (115), 2026-09-30: includes the scheduling Launcher and human-confirmed calendar booking. Root/Linux 0.17.0, Brain 0.16.0, Grok unchanged 0.12.0. Marketplace candidate remains prepared, not submitted; next step is an authorized update email to marketplace-publishing@cursor.com with @muckstack, https://github.com/tommy-muckstack/myman and candidate 0.17.0. No email sent.
@@ -24,7 +26,7 @@
 
 # MyMan Brain — Cursor Marketplace submission
 
-Plugin: **myman-brain** · Candidate: **0.17.1** · Author: **MuckStack, LLC** · License: **Apache-2.0**
+Plugin: **myman-brain** · Candidate: **0.17.2** · Author: **MuckStack, LLC** · License: **Apache-2.0**
 
 Repository to submit: https://github.com/tommy-muckstack/myman
 
@@ -66,6 +68,8 @@ For Grok Bot, local-computer execution must target the Mac containing MyMan and 
 Keywords: myman, meetings, notes, macos, linux, local, memory, transcripts, screenshots, dictation.
 
 ## Submission status
+
+**October 16, 2026 — root 0.17.2 prepared, not submitted.** Native recovery fields and competitive workflows are implemented. Release verification has outstanding environment gates documented in the progress report above; no installation, marketplace acceptance or production video upload is claimed.
 
 **September 29, 2026 — root/Linux 0.15.0 and Brain 0.14.0 prepared, not submitted.** The proposal candidate adds a human-only permission gate and a read-only preview action; [contract and synthetic verification](calendar-propose.md). No real-calendar or physical Omarchy test, booking UI or marketplace host activation is claimed. The original publisher application remains pending; the next step is the authorized update email described above. Grok skill remains 0.12.0.
 

@@ -145,6 +145,13 @@ private struct DictationRecoveryView: View {
                         Button("Copy text") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(entry.correctedText ?? entry.text, forType: .string) }.clickable()
                         Button("Correct") { selected = entry.id; correction = entry.correctedText ?? entry.text }.clickable()
                     }
+                    if let original = entry.originalSelection {
+                        DisclosureGroup("Original selection and voice instruction") {
+                            if let instruction = entry.commandInstruction { Text(instruction).font(MM.Fonts.metadata).textSelection(.enabled) }
+                            Text(original).textSelection(.enabled)
+                            Button("Copy original selection") { DictationDelivery.copyToClipboard(original) }.clickable()
+                        }.clickable()
+                    }
                     if selected == entry.id {
                         TextEditor(text: $correction).font(MM.Fonts.body).frame(minHeight: 110).accessibilityLabel("Corrected dictation")
                         Button("Save correction") { do { try history.correct(entry.id, text: correction); selected = nil; message = "Correction saved." } catch { message = error.localizedDescription } }.clickable()

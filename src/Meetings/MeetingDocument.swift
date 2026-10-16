@@ -539,6 +539,7 @@ struct MeetingDocumentView: View {
                 Button { showRelated.toggle() } label: { IconView(icon: .related).clickable(minSize: 28) }
                     .buttonStyle(.plain).help("Related captures").accessibilityLabel("Related captures")
                 Menu {
+                    Button("Ask this meeting…") { BrainChatController.shared.show(scope: .init(itemID: "meeting-" + meeting.id)) }
                     Button("Regenerate transcript") { retryTranscription(regenerate: true) }
                         .disabled(!canTranscribe || transcriptionStatus.isPending(meeting.id))
                     Button("Regenerate summary") { regenerateNotes() }
@@ -572,6 +573,7 @@ struct MeetingDocumentView: View {
                 .foregroundStyle(MM.Colors.textPrimary)
                 .textFieldStyle(.plain)
             MeetingThemePills(meetingID: meeting.id, database: db)
+            MeetingTemplateControls(meetingID: meeting.id, database: db, regenerate: regenerateNotes)
             HStack(spacing: MM.Layout.paddingLarge) {
                 ForEach([MeetingRecordingTab.transcript, .summary, .notes], id: \.self) { item in
                     tab(item.rawValue, active: selectedTab == item) { selectedTab = item }

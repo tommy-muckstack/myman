@@ -416,6 +416,7 @@ enum GroundedMeetingNotes {
     /// same `MeetingEvidence` checks; any hosted failure falls back here.
     static func generate(_ meeting: Meeting, corrections: [String: String] = [:], useLanguageModel: Bool = true,
                          provider: WritingModelProvider? = nil,
+                         noteInput: MeetingNoteInput = .empty,
                          progress: @escaping MeetingNotesService.Progress = { _ in }) async -> MeetingAnalysis {
         let cacheURL = MeetingNotesCache.url(for: meeting)
         let parsed = MeetingSource.parse(meeting.transcript)
@@ -441,7 +442,7 @@ enum GroundedMeetingNotes {
             let start = ProcessInfo.processInfo.systemUptime
             do {
                 let hosted = try await HostedMeetingNotes.extract(prepared: prepared, sources: sources, meeting: meeting,
-                                                                  provider: provider, cacheURL: cacheURL, progress: progress)
+                                                                  provider: provider, cacheURL: cacheURL, noteInput: noteInput, progress: progress)
                 facts = hosted.facts; actions = hosted.actions; unclear = hosted.unclear; hostedOverview = hosted.overview
                 Analytics.track("hosted_notes_generated", [
                     "vendor": WritingModels.vendor(of: provider),
@@ -471,7 +472,7 @@ enum GroundedMeetingNotes {
             for (index, window) in windows.enumerated() {
                 guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
                 await progress("Reading sources · \(index + 1) of \(windows.count)…")
-                let cacheKey = "sources-v1:" + meeting.kind + ":" + window
+                let cacheKey = "sources-v2:" + noteInput.fingerprint + ":" + meeting.kind + ":" + window
                 if let cached = await MeetingNotesCache.shared.value(for: cacheKey, at: cacheURL) {
                     facts += cached.facts; actions += cached.actions; unclear += cached.unclear
                     continue
@@ -481,7 +482,7 @@ enum GroundedMeetingNotes {
                     continue
                 }
                 let factStart = facts.count, actionStart = actions.count, unclearStart = unclear
-                let session = LanguageModelSession(instructions: instructions(listening: meeting.captureKind == .listening))
+                let session = LanguageModelSession(instructions: instructions(listening: meeting.captureKind == .listening) + noteInput.guidance)
                 do {
                     let response = try await AsyncDeadline.run(seconds: 20) {
                         (try await session.respond(to: window, generating: Extraction.self)).content
@@ -519,7 +520,7 @@ enum GroundedMeetingNotes {
                     guard !Task.isCancelled else { return MeetingAnalysis(markdown: "") }
                     await progress("Collecting follow-ups · \(index + 1) of \(candidates.count)…")
                     let excerpt = [sources[turn.id - 1], turn, sources[turn.id + 1]].compactMap { $0?.prompt }.joined(separator: "\n\n")
-                    let cacheKey = "followup-v1:" + excerpt + " target:" + String(turn.id)
+                    let cacheKey = "followup-v2:" + noteInput.fingerprint + ":" + excerpt + " target:" + String(turn.id)
                     if let cached = await MeetingNotesCache.shared.value(for: cacheKey, at: cacheURL) {
                         actions += cached.actions
                         continue
@@ -568,7 +569,7 @@ enum GroundedMeetingNotes {
         if !useLanguageModel {
             // A deadline must not discard successfully grounded earlier windows.
             for window in MeetingSource.windows(prepared, limit: 2600) {
-                let key = "sources-v1:" + meeting.kind + ":" + window
+                let key = "sources-v2:" + noteInput.fingerprint + ":" + meeting.kind + ":" + window
                 if let cached = await MeetingNotesCache.shared.value(for: key, at: cacheURL) {
                     facts += cached.facts; actions += cached.actions; unclear += cached.unclear
                 } else { facts += fallbackFacts(prepared.filter { window.contains("[T\($0.id)]") }) }
@@ -603,7 +604,8 @@ enum GroundedMeetingNotes {
                               unclear: unclear, overview: overview)
         let audit = publicSource.flatMap { MeetingVocabulary.correct($0.text, terms: vocabulary, aliases: aliases).corrections }
         let suffix = Array(Set(audit)).sorted().map { "<!-- corrected: \($0.replacingOccurrences(of: "--", with: "—")) -->" }.joined(separator: "\n")
-        return MeetingAnalysis(markdown: markdown + (suffix.isEmpty ? "" : "\n\n" + suffix), facts: selected,
+        let formatted = noteInput == .empty ? markdown : noteInput.template.render(markdown, personalNotes: noteInput.personalNotes)
+        return MeetingAnalysis(markdown: formatted + (suffix.isEmpty ? "" : "\n\n" + suffix), facts: selected,
                                actions: actions, omittedPrivatePassages: omitted, unclearPassages: unclear)
     }
 
