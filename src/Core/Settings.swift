@@ -469,6 +469,16 @@ struct SettingsPanelView: View {
 
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 0) {
+            settingSection("Recording") {
+                RecordingSettingsView()
+                Toggle("Cursor trail and click ripple", isOn: $store.cursorEffects)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+                Toggle("Record the cursor separately so Polish can smooth and resize it", isOn: $store.recordCursorSeparately)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+                Text("Off: the cursor is baked into the recording. On: the raw recording has no cursor; Polish draws one.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
             settingSection("Automation & CLI") {
                 HStack(spacing: 6) {
                     IconView(icon: .agent, size: 16, color: MM.Colors.accent)
@@ -508,15 +518,6 @@ struct SettingsPanelView: View {
                 .pickerStyle(.segmented).labelsHidden().controlSize(.small)
                 .onChange(of: store.captureSound) { _, sound in CaptureSoundPlayer.shared.play(sound) }
                 Text("Plays when a screenshot is captured. Pick one to hear it.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
-            settingSection("Screen Recording") {
-                Toggle("Cursor trail and click ripple", isOn: $store.cursorEffects)
-                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
-                Toggle("Record the cursor separately so Polish can smooth and resize it", isOn: $store.recordCursorSeparately)
-                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
-                Text("Off: the cursor is baked into the recording. On: the raw recording has no cursor; Polish draws one.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
