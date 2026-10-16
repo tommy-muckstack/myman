@@ -82,12 +82,21 @@ final class ShareReadyMovieTests: XCTestCase {
         XCTAssertEqual(saved.edits, project.edits)
         XCTAssertEqual(saved.polish?.backdrop, BackdropStyle.none.rawValue)
         let generator = AVAssetImageGenerator(asset: asset); generator.appliesPreferredTrackTransform = true
-        let cgImage = try await generator.image(at: CMTime(seconds: 3.2, preferredTimescale: 600)).image
-        let image = NSBitmapImageRep(cgImage: cgImage)
-        let redacted = try XCTUnwrap(image.colorAt(x: 140, y: 80)?.usingColorSpace(.deviceRGB))
-        let visible = try XCTUnwrap(image.colorAt(x: 260, y: 150)?.usingColorSpace(.deviceRGB))
-        XCTAssertLessThan(redacted.redComponent + redacted.greenComponent + redacted.blueComponent, 0.15)
-        XCTAssertGreaterThan(visible.blueComponent, 0.6, "unredacted blue fixture remains visible")
+        // The default infinite tolerance can return a title-card keyframe.
+        // Inspect exact content frames on both sides of the removed ranges.
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        for seconds in [3.2, 5.2] {
+            let frame = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600))
+            XCTAssertEqual(frame.actualTime.seconds, seconds, accuracy: 0.05)
+            XCTAssertEqual(frame.image.width, 320)
+            XCTAssertEqual(frame.image.height, 200)
+            let image = NSBitmapImageRep(cgImage: frame.image)
+            let redacted = try XCTUnwrap(image.colorAt(x: 140, y: 80)?.usingColorSpace(.deviceRGB))
+            let visible = try XCTUnwrap(image.colorAt(x: 260, y: 150)?.usingColorSpace(.deviceRGB))
+            XCTAssertLessThan(redacted.redComponent + redacted.greenComponent + redacted.blueComponent, 0.15)
+            XCTAssertGreaterThan(visible.blueComponent, 0.6, "unredacted blue fixture remains visible at \(seconds)s")
+        }
     }
 
     // MARK: Fixtures
