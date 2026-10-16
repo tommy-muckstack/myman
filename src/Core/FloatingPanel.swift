@@ -24,7 +24,7 @@ final class FloatingPanel: NSPanel {
     /// the collapsed-pill / "S"-button / flicker family.)
     private let fixedSize: Bool
 
-    init<Content: View>(content: Content, becomesKey: Bool = true, fixedSize: Bool = false) {
+    init<Content: View>(content: Content, becomesKey: Bool = true, fixedSize: Bool = false, acceptsFirstClick: Bool = false) {
         self.becomesKey = becomesKey
         self.fixedSize = fixedSize
         super.init(
@@ -43,7 +43,9 @@ final class FloatingPanel: NSPanel {
         hidesOnDeactivate = false
         animationBehavior = .utilityWindow
 
-        let hosting = NSHostingView(rootView: content)
+        let hosting: NSHostingView<Content> = acceptsFirstClick
+            ? FirstClickHostingView(rootView: content)
+            : NSHostingView(rootView: content)
         // THE panel rule (MYMAN-1's family): panels whose content CHANGES
         // size while visible (pills, toast, launcher) must own their window
         // frame — autolayout hosting resizes windows reentrantly during
@@ -53,6 +55,7 @@ final class FloatingPanel: NSPanel {
         // measurement works, and unchanging content can never trigger the
         // reentrant resize.
         if fixedSize {
+            if acceptsFirstClick { hosting.sizingOptions = [] }
             hosting.translatesAutoresizingMaskIntoConstraints = true
             hosting.autoresizingMask = [.width, .height]
         } else {
@@ -119,4 +122,11 @@ final class FloatingPanel: NSPanel {
         setFrame(NSRect(origin: origin, size: size), display: true)
         makeKeyAndOrderFront(nil)
     }
+}
+
+/// Recording controls must respond while the recorded app has focus.
+private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var needsPanelToBecomeKey: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
 }

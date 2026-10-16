@@ -47,6 +47,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private(set) var agentSessionID: String?
     private(set) var lastSavedRecord: ScreenRecording?
     @Published private(set) var isPaused = false
+    @Published private(set) var isStopping = false
     private(set) var sessionState = "idle"
     private(set) var sessionError: [String: Any]?
     private var sessionResults: [String: [String: Any]] = [:]
@@ -70,7 +71,6 @@ final class ScreenRecorder: NSObject, ObservableObject {
         startupTask?.cancel()
         durationTask?.cancel()
         selection?.hideAll(); selection = nil
-        confirmPanel?.orderOut(nil); confirmPanel = nil
         countdownPanel?.orderOut(nil); countdownPanel = nil
         pendingRegion = nil
         if isRecording { stop() }
@@ -118,6 +118,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// "why is my voice muffled" is answerable at a glance.
     @Published private(set) var microphoneName: String?
     private let narration = NarrationTrack()
+    private var stoppedNarration: NarrationTrack.Take?
     private var micLevelTimer: Timer?
 
     static var isSupported: Bool {
@@ -139,17 +140,29 @@ final class ScreenRecorder: NSObject, ObservableObject {
             self.selection = nil
             isBusy = false
         }
-        if pendingRegion != nil || confirmPanel != nil {
+        if pendingRegion != nil {
             cancelPending()
         }
-        RecordingSourcePicker.shared.show()
+        guard !isBusy else { Toast.show("Finishing the current recording…"); return }
+        let settings = RecordingPreferences()
+        switch settings.source {
+        case .region:
+            startRegion(using: settings)
+        case .window:
+            RecordingWindowPicker.shared.show()
+        case .camera:
+            Task {
+                do { try await CameraOnlyRecorder.shared.start(microphone: settings.microphone) }
+                catch { Toast.show(error.localizedDescription, systemImage: "video.slash") }
+            }
+        }
     }
 
-    func startRegionFromPicker(microphone: Bool, systemAudio: Bool, webcam: Bool) {
-        microphoneEnabled = microphone
-        UserDefaults.standard.set(microphone, forKey: "mm.screenRecordingMicrophone")
-        UserDefaults.standard.set(webcam, forKey: "mm.webcamBubble")
-        agentSystemAudio = systemAudio
+    private func startRegion(using settings: RecordingPreferences) {
+        microphoneEnabled = settings.microphone
+        agentSystemAudio = settings.systemAudio
+        agentWantsCamera = settings.webcam
+        agentHideCamera = !settings.webcam
         beginRegionSelection()
     }
 
@@ -160,7 +173,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// The region being recorded (AppKit coords) — the webcam bubble must
     /// live INSIDE it, or it films the void.
     private(set) var activeRegion: CGRect?
-    private var confirmPanel: FloatingPanel?
+    private var controlsRegion: CGRect?
     private var countdownPanel: FloatingPanel?
     private var borderPanel: NSPanel?
 
@@ -184,7 +197,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 }
                 return
             }
-            let wantsBubble = UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true
+            let wantsBubble = !self.agentHideCamera && self.agentWantsCamera
             if wantsBubble, AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined {
                 await withCheckedContinuation { continuation in
                     AVCaptureDevice.requestAccess(for: .video) { _ in continuation.resume() }
@@ -297,10 +310,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     cgRegion.map { d.frame.contains(CGPoint(x: $0.midX, y: $0.midY)) } ?? false
                 }) ?? content.displays.first
                 let filter: SCContentFilter
+                let selectedWindowFrame: CGRect?
                 if let windowID {
                     guard let window = content.windows.first(where: { String($0.windowID) == windowID }) else { throw AgentError("NOT_FOUND", "Window is no longer available; use windows list.") }
                     filter = SCContentFilter(desktopIndependentWindow: window)
+                    // The Y-axis conversion is its own inverse.
+                    selectedWindowFrame = Self.cgRect(from: window.frame)
                 } else {
+                    selectedWindowFrame = nil
                     guard let display else { throw AgentError("NOT_FOUND", "Display is no longer available.") }
                     // On resume the Stop/Restart pill is already up; keep it out of the video.
                     filter = SCContentFilter(display: display, excludingWindows: Self.ownChrome(content, pill: self.pill))
@@ -413,6 +430,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     }
                 }
                 self.activeRegion = regionAppKit
+                self.controlsRegion = regionAppKit ?? selectedWindowFrame ?? display.map { Self.cgRect(from: $0.frame) }
                 WebcamBubble.shared.preferredRegion = regionAppKit
                 if !resuming, windowID == nil, let started = self.startedAt {
                     let region = regionAppKit ?? (NSScreen.main?.frame ?? .zero)
@@ -436,7 +454,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // The bubble comes on with the recording (prompting for
                 // camera the first time); the pill toggle remembers your
                 // last choice for next time.
-                if !agentHideCamera, agentWantsCamera || (UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true),
+                if self.isRecording, !self.isStopping, !agentHideCamera, agentWantsCamera || (UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true),
                    AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
                     WebcamBubble.shared.turnOn()
                 }
@@ -477,6 +495,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
         guard let stream, let output = recordingOutput as? SCRecordingOutput, let url = outputURL else { throw AgentError("CAPTURE_FAILED", "Recording segment is unavailable.") }
         try await stream.stopCapture()
         self.stream = nil
+        // The video has stopped. Release the microphone before waiting for
+        // the encoder to close its file, which can take noticeably longer.
+        stoppedNarration = narration.close()
         try await waitForOutput(output, finished: true)
         let final = try await finalizeSegment(url)
         let metadata = try await AgentVideo.attachment(final, preview: false)
@@ -493,7 +514,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// throws (the voice must never vanish silently); without it, the raw
     /// capture is still a complete recording, so it is kept as the segment.
     private func finalizeSegment(_ url: URL) async throws -> URL {
-        let take = narration.close()
+        let take = stoppedNarration ?? narration.close()
+        stoppedNarration = nil
         do {
             let final = try await ShareReadyMovie.finalize(
                 movie: url, narration: take?.wavURL, narrationOffsetSeconds: take?.offsetSeconds ?? 0)
@@ -549,7 +571,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         agentSessionID = nil; sessionState = state; sessionError = error
     }
     private func clearCaptureControls() {
-        isRecording = false; isPaused = false; startedAt = nil; segmentStartedAt = nil
+        isRecording = false; isPaused = false; isStopping = false; startedAt = nil; segmentStartedAt = nil
         agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false; agentHideCursor = false
         if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
         dismissPill(); borderPanel?.orderOut(nil); borderPanel = nil; activeRegion = nil; activeWindowID = nil
@@ -561,7 +583,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         if #available(macOS 15.0, *), let output = recordingOutput as? SCRecordingOutput {
             startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
         }
-        streamConfiguration = nil; recordingOutput = nil; outputURL = nil
+        streamConfiguration = nil; recordingOutput = nil; outputURL = nil; stoppedNarration = nil; controlsRegion = nil
     }
     @available(macOS 15.0, *)
     func pauseForAgent() async throws {
@@ -596,6 +618,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
     func stop() {
         guard #available(macOS 15.0, *), isRecording else { return }
+        isStopping = true
+        WebcamBubble.shared.turnOff()
         if changingSegment { stopAfterTransition = true; return }
         isRecording = false; sessionState = "finalizing"; sessionError = nil
         durationTask?.cancel(); durationTask = nil
@@ -626,7 +650,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
             } catch {
                 // A failed stop that leaves a live stream must remain stoppable.
                 if stream != nil {
-                    isRecording = true; sessionState = "recording"; sessionError = AgentActions.error(error)
+                    isStopping = false; isRecording = true; sessionState = "recording"; sessionError = AgentActions.error(error)
+                    Toast.show("Could not stop capture. Try Stop again.", systemImage: "exclamationmark.triangle")
                     return
                 }
                 if let outputURL { _ = try? await finalizeSegment(outputURL) }
@@ -670,11 +695,24 @@ final class ScreenRecorder: NSObject, ObservableObject {
     /// Throw away the current movie and return to selection. Unlike Stop this
     /// never writes a database row, transcript, or Brain entry.
     func restart() {
-        guard isRecording else { return }
+        guard isRecording, !isStopping, !changingSegment else { return }
         let region = activeRegion
+        let windowID = activeWindowID
+        let microphone = microphoneEnabled
+        let systemAudio = agentSystemAudio ?? RecordingPreferences().systemAudio
+        let webcam = allowsWebcam && WebcamBubble.shared.isOn
+        let hideCursor = agentHideCursor
         Task { @MainActor in
             do {
                 try await cancelForAgent()
+                if let windowID, #available(macOS 15.0, *) {
+                    try await startForAgent(region: nil, windowID: windowID, maximumDuration: 3600,
+                                            microphone: microphone, systemAudio: systemAudio, hideCursor: hideCursor)
+                    return
+                }
+                microphoneEnabled = microphone
+                agentSystemAudio = systemAudio; agentWantsCamera = webcam
+                agentHideCamera = !webcam; agentHideCursor = hideCursor
                 isBusy = true; pendingRegion = region ?? .zero
                 if let region { showBorder(around: region) }
                 showCountdown(for: region ?? .zero)
@@ -713,7 +751,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         catch { NSLog("My Man [Recording] timed transcription failed"); return "" }
     }
 
-    // MARK: Pill — same top-right recording indicator contract as meetings
+    // MARK: Recording controls next to the selected area
 
     /// My Man's own recording controls (the Stop/Restart pill), which never belong in the video.
     private static func ownChrome(_ content: SCShareableContent, pill: NSPanel?) -> [SCWindow] {
@@ -723,18 +761,13 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     private func showPill() {
         guard pill == nil else { return }
-        let panel = FloatingPanel(content: RecordingPillView(recorder: self), becomesKey: false, fixedSize: true)
+        let panel = FloatingPanel(content: RecordingPillView(recorder: self), becomesKey: false, fixedSize: true, acceptsFirstClick: true)
+        panel.dismissesOnResign = false
+        panel.isMovableByWindowBackground = false
         panel.onDismiss = { [weak self] in self?.pill = nil }
         pill = panel
-        let size = CGSize(width: 320, height: 40)
-        guard let screen = NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        // Below where the meeting pill lives, so both can show.
-        panel.setFrame(
-            NSRect(x: visible.maxX - size.width - 24, y: visible.maxY - size.height - 72,
-                   width: size.width, height: size.height),
-            display: true
-        )
+        panel.setFrame(RecordingControlPlacement.frame(size: RecordingControlPlacement.size,
+            selection: controlsRegion, screens: NSScreen.screens.map(\.visibleFrame)), display: true)
         panel.orderFrontRegardless()
     }
 
@@ -797,29 +830,26 @@ extension ScreenRecorder: SelectionOverlayDelegate {
             isBusy = false
             return
         }
-        // A bare click (no real drag) means the whole screen — no confirm.
+        // A bare click chooses the screen under the pointer. Both paths
+        // use the saved settings and a cancellable countdown.
         let isClick = rect.width < 10 || rect.height < 10
-        if isClick {
-            start(regionAppKit: nil)
-            return
-        }
-        // Region chosen: outline it and wait for the explicit Record click.
-        pendingRegion = rect
-        showBorder(around: rect)
+        let region = isClick ? (NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }?.frame ?? rect) : rect
+        pendingRegion = region
+        showBorder(around: region)
         // Make the webcam placement part of the selection state, not the
         // recording state. This lets people see and position themselves
         // before committing, while keeping the bubble inside the chosen
         // frame from the first recorded frame.
-        WebcamBubble.shared.preferredRegion = rect
+        WebcamBubble.shared.preferredRegion = region
         WebcamBubble.shared.resetPosition()
-        if UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true,
+        if !agentHideCamera, agentWantsCamera,
            AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
             WebcamBubble.shared.turnOn()
         }
-        showConfirm(for: rect)
+        showCountdown(for: region)
     }
 
-    // MARK: Region outline + confirm (CleanShot-style)
+    // MARK: Region outline and countdown
 
     /// The outline lives OUTSIDE the captured rect, so it frames the
     /// recording without ever appearing in it. It stays up for the whole
@@ -842,48 +872,19 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         borderPanel = panel
     }
 
-    private func showConfirm(for region: CGRect) {
-        let view = RecordConfirmView(
-            recorder: self,
-            onRecord: { [weak self] in self?.confirmRecord() },
-            onCancel: { [weak self] in self?.cancelPending() },
-            onToggleMicrophone: { [weak self] in self?.toggleMicrophone() },
-            onToggleCamera: { WebcamBubble.shared.toggle() })
-        let panel = FloatingPanel(content: view, becomesKey: false, fixedSize: true)
-        panel.onDismiss = { [weak self] in self?.confirmPanel = nil }
-        confirmPanel = panel
-        let size = CGSize(width: 262, height: 44)
-        let screen = NSScreen.main?.visibleFrame ?? .zero
-        var x = region.midX - size.width / 2
-        x = max(screen.minX + 8, min(x, screen.maxX - size.width - 8))
-        var y = region.minY - size.height - 10
-        if y < screen.minY + 8 { y = region.maxY + 10 }
-        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height),
-                       display: true)
-        panel.orderFrontRegardless()
-    }
-
-    private func confirmRecord() {
-        guard #available(macOS 15.0, *), let region = pendingRegion else { return }
-        confirmPanel?.orderOut(nil)
-        confirmPanel = nil
-        showCountdown(for: region)
-    }
 
     private func showCountdown(for region: CGRect) {
         let view = RecordCountdownView(
             onFinished: { [weak self] in self?.startAfterCountdown(region) },
             onCancel: { [weak self] in self?.cancelPending() })
-        let panel = FloatingPanel(content: view, becomesKey: false, fixedSize: true)
+        let panel = FloatingPanel(content: view, becomesKey: false, fixedSize: true, acceptsFirstClick: true)
+        panel.dismissesOnResign = false
+        panel.isMovableByWindowBackground = false
         panel.onDismiss = { [weak self] in self?.countdownPanel = nil }
         countdownPanel = panel
         let size = CGSize(width: 262, height: 44)
-        let screen = NSScreen.main?.visibleFrame ?? .zero
-        var x = region.midX - size.width / 2
-        x = max(screen.minX + 8, min(x, screen.maxX - size.width - 8))
-        var y = region.minY - size.height - 10
-        if y < screen.minY + 8 { y = region.maxY + 10 }
-        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        panel.setFrame(RecordingControlPlacement.frame(size: size, selection: region == .zero ? nil : region,
+            screens: NSScreen.screens.map(\.visibleFrame)), display: true)
         panel.orderFrontRegardless()
     }
 
@@ -899,7 +900,7 @@ extension ScreenRecorder: SelectionOverlayDelegate {
 
     var hasPendingSelection: Bool {
         !isRecording && stream == nil && !changingSegment &&
-            (selection != nil || pendingRegion != nil || confirmPanel != nil || countdownPanel != nil)
+            (selection != nil || pendingRegion != nil || countdownPanel != nil)
     }
 
     func cancelPendingSelection() {
@@ -911,8 +912,6 @@ extension ScreenRecorder: SelectionOverlayDelegate {
 
     private func cancelPending() {
         pendingRegion = nil
-        confirmPanel?.orderOut(nil)
-        confirmPanel = nil
         countdownPanel?.orderOut(nil)
         countdownPanel = nil
         borderPanel?.orderOut(nil)
@@ -1207,75 +1206,7 @@ private final class RegionBorderView: NSView {
     }
 }
 
-private struct RecordConfirmView: View {
-    @ObservedObject var recorder: ScreenRecorder
-    var onRecord: () -> Void
-    var onCancel: () -> Void
-    var onToggleMicrophone: () -> Void
-    var onToggleCamera: () -> Void
-    @ObservedObject private var webcam = WebcamBubble.shared
 
-    var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onRecord) {
-                HStack(spacing: 6) {
-                    Circle().fill(.red).frame(width: 8, height: 8)
-                    Text("Record")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.background)
-                }
-                .padding(.horizontal, 14)
-                .frame(height: 28)
-                .background(Capsule().fill(MM.Colors.textPrimary))
-                .fixedSize()
-                .clickable(minSize: 28)
-            }
-            .buttonStyle(.plain)
-            Button(action: onToggleCamera) {
-                IconView(icon: webcam.isOn ? .recordScreen : .cameraOff, size: 14,
-                         color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.danger)
-                    .clickable(minSize: 32)
-            }
-            .buttonStyle(.plain)
-            .help(webcam.isOn ? "Camera on — click to hide" : "Camera off — click to show")
-            Button(action: onToggleMicrophone) {
-                MicrophoneToggleIcon(enabled: recorder.microphoneEnabled)
-                    .clickable(minSize: 32)
-            }
-            .buttonStyle(.plain)
-            .help(recorder.microphoneEnabled ? "Microphone on — click to mute" : "Microphone off — click to include your voice")
-            IconView(icon: .close, size: 13, color: MM.Colors.textTertiary)
-                .clickable(minSize: 32)
-                .onTapGesture(perform: onCancel)
-                .help("Cancel")
-        }
-        .padding(.horizontal, 12)
-        .frame(width: 262, height: 44)
-        .background(
-            Capsule()
-                .fill(MM.Colors.background)
-                .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
-        )
-    }
-}
-
-/// The supplied My Man microphone icons, with a deliberately loud off state:
-/// red means your voice will not be included in this recording.
-private struct MicrophoneToggleIcon: View {
-    let enabled: Bool
-    @ObservedObject private var recorder = ScreenRecorder.shared
-
-    var body: some View {
-        IconView(icon: enabled ? .mic : .micOff, size: 16,
-                 color: enabled ? activeColor : MM.Colors.danger)
-            .scaleEffect(enabled ? 1 + recorder.microphoneLevel * 0.12 : 1)
-            .animation(.easeOut(duration: 0.08), value: recorder.microphoneLevel)
-    }
-
-    private var activeColor: Color {
-        recorder.microphoneLevel > 0.035 ? .green : MM.Colors.textPrimary
-    }
-}
 
 private struct RecordCountdownView: View {
     var onFinished: () -> Void
@@ -1320,57 +1251,13 @@ private struct RecordingPillView: View {
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        HStack(spacing: 10) {
-            IconView(icon: .recordScreen, size: 14, color: .red.opacity(0.85))
-            Text(recorder.isPaused ? "Paused" : elapsed)
-                .font(.system(size: 11.5, weight: .medium).monospacedDigit())
-                .foregroundStyle(MM.Colors.textSecondary)
-                .frame(width: 42, alignment: .leading)
-            IconView(icon: webcam.isOn ? .recordScreen : .cameraOff, size: 14,
-                     color: webcam.isOn ? MM.Colors.textPrimary : MM.Colors.danger)
-                .clickable(minSize: 24)
-                .onTapGesture { if recorder.allowsWebcam { webcam.toggle() } }
-                .opacity(recorder.allowsWebcam ? 1 : 0.4)
-                .help(!recorder.allowsWebcam ? "Webcam is unavailable for window-only recordings" : webcam.isOn ? "Turn webcam bubble off" : "Turn webcam bubble on")
-            Button(action: { recorder.toggleMicrophone() }) {
-                MicrophoneToggleIcon(enabled: recorder.microphoneEnabled)
-                    .clickable(minSize: 32)
-            }
-            .buttonStyle(.plain)
-            .help(recorder.microphoneEnabled
-                  ? "Recording \(recorder.microphoneName ?? "microphone") — click to mute"
-                  : "Include microphone")
-            Button {
-                recorder.stop()
-            } label: {
-                Text("Stop")
-                    .font(MM.Fonts.secondary)
-                    .foregroundStyle(MM.Colors.background)
-                    .padding(.horizontal, 10)
-                    .frame(height: 22)
-                    .background(Capsule().fill(MM.Colors.textPrimary))
-                    .fixedSize()
-                    .clickable(minSize: 24)
-            }
-            .buttonStyle(.plain)
-            Button("Restart") {
-                recorder.restart()
-            }
-            .buttonStyle(.plain)
-            .font(MM.Fonts.secondary)
-            .foregroundStyle(MM.Colors.textSecondary)
-            .clickable(minSize: 48)
-            .help("Discard this take and record again")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(
-            Capsule()
-                .fill(MM.Colors.background)
-                .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
-        )
-        .frame(width: 320, height: 40)
-        .onReceive(clock) { now = $0 }
+        RecordingControlBar(
+            elapsed: elapsed, isPaused: recorder.isPaused, isStopping: recorder.isStopping,
+            allowsWebcam: recorder.allowsWebcam, webcamOn: webcam.isOn,
+            microphoneEnabled: recorder.microphoneEnabled, microphoneLevel: recorder.microphoneLevel,
+            onCamera: { webcam.toggle() }, onMicrophone: { recorder.toggleMicrophone() },
+            onStop: { recorder.stop() }, onRestart: { recorder.restart() })
+            .onReceive(clock) { now = $0 }
     }
 
     private var elapsed: String {
