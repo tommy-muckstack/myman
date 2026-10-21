@@ -91,6 +91,8 @@ final class ScreenshotEditorTests: XCTestCase {
         }.padding(20).frame(width: 900).background(MM.Colors.background).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 740), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
         window.contentView = host; host.frame = window.contentView!.bounds
         host.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(500))
@@ -98,5 +100,28 @@ final class ScreenshotEditorTests: XCTestCase {
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: folder).appendingPathComponent("screenshot-controls.png"))
+
+        // Resize the same editor, including the smallest supported window,
+        // so visual review catches clipped tools and lost canvas space.
+        for dark in [false, true] {
+            let editor = NSHostingView(rootView: EditorView(model: model).preferredColorScheme(dark ? .dark : .light))
+            editor.sizingOptions = []
+            let editorWindow = NSWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
+            editorWindow.isReleasedWhenClosed = false
+            editorWindow.contentView = editor
+            defer { editorWindow.close() }
+            for size in [NSSize(width: 1280, height: 650), NSSize(width: 640, height: 360), NSSize(width: 900, height: 540)] {
+                editorWindow.setContentSize(size)
+                editor.frame = NSRect(origin: .zero, size: size)
+                editor.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(150))
+                editor.layoutSubtreeIfNeeded()
+                let rendered = try XCTUnwrap(editor.bitmapImageRepForCachingDisplay(in: editor.bounds))
+                editor.cacheDisplay(in: editor.bounds, to: rendered)
+                let name = "editor-\(Int(size.width))-\(dark ? "dark" : "light").png"
+                try XCTUnwrap(rendered.representation(using: .png, properties: [:]))
+                    .write(to: URL(fileURLWithPath: folder).appendingPathComponent(name))
+            }
+        }
     }
 }

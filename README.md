@@ -208,13 +208,20 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
-## Competitive workflow candidate (1.1.113)
+## Screenshot editor resizing (1.1.114 candidate)
+
+- The toolbar wraps into visible rows when the window narrows. Drawing tools stay together, and Undo, Copy, and Save remain grouped at the right.
+- Short windows shrink the canvas to keep controls visible. The translation panel opens below the toolbar, including when it spans multiple rows.
+
+Prepared for the next installer; 1.1.114 has not been published yet.
+
+## Competitive workflows (1.1.113)
 
 - Dictation adds spoken corrections, snippets, pronunciation aliases, language and microphone profiles, and guarded voice editing with undo.
 - Meetings add note templates and optional enhancement of your notes. Brain chat adds document scopes, quoted citations, and saved questions.
 - Recording adds window/camera selection, timed transcript editing, cuts, captions, redaction, rendered previews, and optional private video sharing through the updated personal sharing service.
 
-This is a release candidate; installer signing and publication are pending. See [verification and release status](docs/competitive-workflows-progress.md) for requirements and remaining checks.
+The 1.1.113 installer is published. Private video sharing requires the updated personal sharing service. See [implementation details](docs/competitive-workflows-progress.md) and [release verification](https://github.com/tommy-muckstack/myman/pull/187).
 
 ## Dismissable meeting translation windows (1.1.112)
 
