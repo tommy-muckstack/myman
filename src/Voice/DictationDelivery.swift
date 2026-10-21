@@ -159,6 +159,88 @@ import Carbon
     }
     private static func focus(_ app: AXUIElement) -> AXUIElement? { element(app, kAXFocusedUIElementAttribute) }
 
+    /// A command is tied to an exact selection, field, window and revision.
+    /// This object is transient; accessibility context is never persisted.
+    @MainActor struct SelectionSnapshot {
+        let pid: pid_t
+        let app: AXUIElement
+        let field: AXUIElement
+        let window: AXUIElement?
+        let value: String
+        let range: NSRange
+        var text: String { (value as NSString).substring(with: range) }
+        func isFocused() -> Bool {
+            guard !IsSecureEventInputEnabled(), NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                  focus(app).map({ CFEqual($0, field) }) == true,
+                  attribute(field, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole else { return false }
+            return window.map { original in element(app, kAXFocusedWindowAttribute).map { CFEqual($0, original) } == true } ?? true
+        }
+        func isCurrent() -> Bool {
+            isFocused() && attribute(field, kAXValueAttribute) as? String == value
+                && selectedRange(field) == range
+        }
+    }
+
+    private static func selectedRange(_ field: AXUIElement) -> NSRange? {
+        var range = CFRange(location: 0, length: 0)
+        guard let value = attribute(field, kAXSelectedTextRangeAttribute), CFGetTypeID(value) == AXValueGetTypeID(),
+              AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cfRange, &range),
+              range.location >= 0, range.length >= 0 else { return nil }
+        return NSRange(location: range.location, length: range.length)
+    }
+
+    static func captureSelection(requireSelection: Bool = true) -> SelectionSnapshot? {
+        guard AXIsProcessTrusted(), !IsSecureEventInputEnabled(),
+              let target = NSWorkspace.shared.frontmostApplication,
+              target.bundleIdentifier != Bundle.main.bundleIdentifier else { return nil }
+        let app = AXUIElementCreateApplication(target.processIdentifier)
+        AXUIElementSetMessagingTimeout(app, 0.15)
+        guard let field = focus(app) else { return nil }
+        AXUIElementSetMessagingTimeout(field, 0.15)
+        guard let role = attribute(field, kAXRoleAttribute) as? String,
+              [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role),
+              attribute(field, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole,
+              let value = attribute(field, kAXValueAttribute) as? String, value.utf16.count <= 50_000,
+              let range = selectedRange(field), !requireSelection || range.length > 0,
+              range.length <= 12_000, replacement(before: value, range: range, text: "") != nil else { return nil }
+        return SelectionSnapshot(pid: target.processIdentifier, app: app, field: field,
+                                 window: element(app, kAXFocusedWindowAttribute), value: value, range: range)
+    }
+
+    static func transientContextTerms() -> [String] {
+        guard UserDefaults.standard.bool(forKey: "dictationContextEnabled"),
+              let snapshot = captureSelection(requireSelection: false), snapshot.isCurrent() else { return [] }
+        let ns = snapshot.value as NSString
+        let start = max(0, snapshot.range.location - 1500)
+        let end = min(ns.length, snapshot.range.location + snapshot.range.length + 1500)
+        return DictationPersonalization.contextTerms(ns.substring(with: NSRange(location: start, length: end - start)))
+    }
+
+    private static var lastVoiceEdit: (SelectionSnapshot, String)?
+
+    static func replaceSelection(_ text: String, snapshot: SelectionSnapshot) async -> Outcome {
+        guard snapshot.isCurrent() else {
+            return Outcome(state: "clipboard", reason: "The selection or its text changed. Your rewrite is saved; select the intended text before pasting.", milliseconds: 0,
+                           clipboardAvailable: copyToClipboard(text))
+        }
+        let outcome = await deliver(text, requiring: snapshot)
+        if outcome.isVerified { lastVoiceEdit = (snapshot, text) }
+        return outcome
+    }
+
+    static func undoVoiceEdit() async -> Outcome? {
+        guard let (original, inserted) = lastVoiceEdit, original.isFocused(),
+              let expected = replacement(before: original.value, range: original.range, text: inserted),
+              attribute(original.field, kAXValueAttribute) as? String == expected else { return nil }
+        var range = CFRange(location: original.range.location, length: inserted.utf16.count)
+        guard let selection = AXValueCreate(.cfRange, &range),
+              AXUIElementSetAttributeValue(original.field, kAXSelectedTextRangeAttribute as CFString, selection) == .success else { return nil }
+        let undo = SelectionSnapshot(pid: original.pid, app: original.app, field: original.field, window: original.window,
+                                     value: expected, range: NSRange(location: range.location, length: range.length))
+        lastVoiceEdit = nil
+        return await deliver(original.text, requiring: undo)
+    }
+
     /// Match the standard Command-V shortcut rather than a localized title.
     /// Bound both IPC time and traversal: a wedged app must not hang dictation.
     private static func enabledPasteCommand(_ app: AXUIElement) -> AXUIElement? {
@@ -181,7 +263,7 @@ import Carbon
     }
     /// Called after the transcript is saved. The frontmost app is never activated
     /// or changed here, and every event is guarded by the original field identity.
-    static func deliver(_ text: String) async -> Outcome {
+    static func deliver(_ text: String, requiring snapshot: SelectionSnapshot? = nil) async -> Outcome {
         let start = Date()
         func result(_ state: String, _ reason: String) -> Outcome {
             Outcome(state: state, reason: reason, milliseconds: Int(Date().timeIntervalSince(start) * 1000))
@@ -206,6 +288,9 @@ import Carbon
         }
         guard !Task.isCancelled, NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
             return clipboard("Focus changed before insertion. Paste the saved text into the intended field.")
+        }
+        if let snapshot, !snapshot.isCurrent() {
+            return clipboard("The selection or its text changed. Your rewrite is saved; select the intended text before pasting.")
         }
         let field = focus(app)
         let window = element(app, kAXFocusedWindowAttribute)
@@ -320,6 +405,8 @@ import Carbon
         var createdAt: Date
         var outcome: DictationDelivery.Outcome
         var correctedText: String?
+        var originalSelection: String?
+        var commandInstruction: String?
     }
     @Published private(set) var entries: [Entry] = []
     private var loadFailed = false

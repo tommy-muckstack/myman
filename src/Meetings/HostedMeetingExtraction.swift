@@ -80,6 +80,7 @@ enum HostedMeetingNotes {
     /// Throws on any provider or decode failure so the caller can fall back.
     static func extract(prepared: [MeetingSourceTurn], sources: [Int: MeetingSourceTurn], meeting: Meeting,
                         provider: WritingModelProvider, cacheURL: URL?,
+                        noteInput: MeetingNoteInput = .empty,
                         progress: MeetingNotesService.Progress) async throws -> Result {
         let listening = meeting.captureKind == .listening
         let debug = ProcessInfo.processInfo.environment["MAN_NOTES_DEBUG"] == "1"
@@ -89,13 +90,13 @@ enum HostedMeetingNotes {
         for (index, window) in windows.enumerated() {
             try Task.checkCancellation()
             await progress(windows.count == 1 ? "Reading the whole transcript…" : "Reading the transcript · \(index + 1) of \(windows.count)…")
-            let cacheKey = "hosted-v1:" + provider.id + ":" + meeting.kind + ":" + window
+            let cacheKey = "hosted-v2:" + noteInput.fingerprint + ":" + provider.id + ":" + meeting.kind + ":" + window
             if let cached = await MeetingNotesCache.shared.value(for: cacheKey, at: cacheURL) {
                 result.facts += cached.facts; result.actions += cached.actions; result.unclear += cached.unclear
                 if let overview = cached.overview { overviews.append(overview) }
                 continue
             }
-            let response = try await provider.generate(WritingRequest(instructions: HostedExtraction.instructions(listening: listening),
+            let response = try await provider.generate(WritingRequest(instructions: HostedExtraction.instructions(listening: listening) + noteInput.guidance,
                                                                       input: window, jsonSchema: HostedExtraction.schema,
                                                                       deadline: 120, purpose: .meetingNotes))
             result.inputTokens += response.inputTokens; result.outputTokens += response.outputTokens

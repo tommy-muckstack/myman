@@ -1,5 +1,6 @@
 {
   "rewrites": [{ "source": "/s/:id", "destination": "/api/shares?id=:id" }],
-  "functions": { "api/shares.mjs": { "maxDuration": 30 } },
+  "functions": { "api/shares.mjs": { "maxDuration": 30 }, "api/videos.mjs": { "maxDuration": 300 }, "api/video-cleanup.mjs": { "maxDuration": 300 } },
+  "crons": [{ "path": "/api/video-cleanup", "schedule": "0 5 * * *" }],
   "headers": [{ "source": "/(.*)", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }] }]
 }

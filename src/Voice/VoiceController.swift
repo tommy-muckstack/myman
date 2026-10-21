@@ -46,6 +46,10 @@ final class VoiceController: ObservableObject {
     }
     private var lingerTask: Task<Void, Never>?
     private var targetApp: NSRunningApplication?
+    private var commandSelection: DictationDelivery.SelectionSnapshot?
+    private var contextTerms: [String] = []
+    private var personalization = DictationPersonalization()
+    private var language = "en"
     private var pressBegan: Date?
     private var escHotkeyID: UInt32?
     /// Why the recording ended — silence / release / toggle / pill.
@@ -63,6 +67,7 @@ final class VoiceController: ObservableObject {
     func toggle() {
         switch phase {
         case .idle, .done:
+            commandSelection = nil
             start()
         case .recording:
             endReason = "toggle"
@@ -70,6 +75,19 @@ final class VoiceController: ObservableObject {
         case .preparing, .transcribing:
             break
         }
+    }
+
+    func toggleCommand() {
+        if case .recording = phase, commandSelection != nil {
+            endReason = "command"; stopAndTranscribe(); return
+        }
+        guard !starting, phase == .idle || { if case .done = phase { return true }; return false }() else { return }
+        guard let selection = DictationDelivery.captureSelection() else {
+            Toast.show("Select editable text first. Secure fields and unreadable selections are excluded.")
+            return
+        }
+        commandSelection = selection
+        start()
     }
 
     /// Push-to-talk: hold ⌥⇧V to speak, release to transcribe + paste.
@@ -128,6 +146,9 @@ final class VoiceController: ObservableObject {
         // Keep the starting app only as cleanup context; delivery targets
         // whichever focused control the user has when transcription finishes.
         targetApp = NSWorkspace.shared.frontmostApplication
+        contextTerms = commandSelection == nil ? DictationDelivery.transientContextTerms() : []
+        personalization = DictationPersonalizationStore.shared.value
+        language = DictationProfile.language
         DictationCleanup.prepare(tone: DictationAppStyles.tone(for: targetApp?.bundleIdentifier,
                                                                fallback: SettingsStore.shared.dictationTone))
 
@@ -178,6 +199,11 @@ final class VoiceController: ObservableObject {
                     if case .preparing = self.phase { self.phase = .preparing(progress) }
                 }
             }
+        }
+        guard TranscriptionService.shared.kind != .parakeet || DictationProfile.parakeetLanguages.contains(language) else {
+            starting = false; contextTerms = []; commandSelection = nil; phase = .idle; dismissPill()
+            Toast.show("This language needs Qwen3 on macOS 15 or later, or an available Apple Speech language. Check Settings → Voice.")
+            return
         }
         // If a call app already owns the mic (Zoom, Meet, …), our voice
         // processing would corrupt what the other side hears — join raw.
@@ -258,7 +284,7 @@ final class VoiceController: ObservableObject {
 
     /// The quietest 0.15s frame in the window around the ideal chunk edge —
     /// splitting speech at silence keeps every word in exactly one chunk.
-    private static func silenceAlignedEnd(samples: [Float], from index: Int,
+    nonisolated static func silenceAlignedEnd(samples: [Float], from index: Int,
                                           chunkSamples: Int) -> Int {
         let ideal = index + chunkSamples
         guard ideal < samples.count else { return samples.count }
@@ -314,6 +340,7 @@ final class VoiceController: ObservableObject {
         }
 
         transcriptionTask = Task { @MainActor in
+            defer { contextTerms = []; commandSelection = nil }
             let recognitionStarted = Date()
             // Long takes NEVER go to the ASR in one piece — models sized for
             // utterances hang or truncate on minutes of audio. 60s chunks,
@@ -332,13 +359,13 @@ final class VoiceController: ObservableObject {
                     // mid-word — hard cuts amputated phrases on both sides.
                     let end = Self.silenceAlignedEnd(
                         samples: samples, from: index, chunkSamples: 16000 * chunkSeconds)
-                    let piece = await TranscriptionService.shared.transcribe(Array(samples[index..<end]))
+                    let piece = await TranscriptionService.shared.transcribe(Array(samples[index..<end]), language: language)
                     if !piece.isEmpty { parts.append(piece) }
                     index = end
                 }
                 rawText = parts.joined(separator: " ")
             } else {
-                rawText = await TranscriptionService.shared.transcribe(samples)
+                rawText = await TranscriptionService.shared.transcribe(samples, language: language)
             }
             guard !rawText.isEmpty else {
                 // >5s of speech that transcribed to nothing is a FAILURE, not
@@ -366,8 +393,25 @@ final class VoiceController: ObservableObject {
             guard !Task.isCancelled, !isShuttingDown else { return }
             let recognitionMS = Int(Date().timeIntervalSince(recognitionStarted) * 1000)
             let cleanupStarted = Date()
-            let text = await DictationCleanup.clean(rawText, tone: DictationAppStyles.tone(for: targetApp?.bundleIdentifier, fallback: SettingsStore.shared.dictationTone),
-                                                    targetBundleID: targetApp?.bundleIdentifier)
+            let text: String
+            if let selection = commandSelection {
+                do {
+                    text = try await VoiceTransform.rewrite(selection.text, instruction: VoiceTransform.instruction(rawText, transforms: personalization.transforms))
+                } catch {
+                    Toast.show(error is AsyncDeadline.TimedOut ? "The rewrite timed out. Your original text is unchanged." : error.localizedDescription)
+                    dismissPill(); phase = .idle; commandSelection = nil; return
+                }
+            } else if language == "en" {
+                text = await DictationCleanup.personalizedClean(rawText,
+                    tone: DictationAppStyles.tone(for: targetApp?.bundleIdentifier, fallback: SettingsStore.shared.dictationTone),
+                    targetBundleID: targetApp?.bundleIdentifier, personalization: personalization, contextTerms: contextTerms)
+            } else {
+                // English formatting rules and spelling heuristics must not
+                // rewrite other languages. Exact aliases/snippets still apply.
+                let prepared = personalization.prepare(rawText)
+                text = prepared.restore(prepared.text) ?? rawText
+            }
+            contextTerms = []
             let cleanupMS = Int(Date().timeIntervalSince(cleanupStarted) * 1000)
             guard !Task.isCancelled, !isShuttingDown else { return }
             let dictationID = UUID().uuidString
@@ -385,9 +429,12 @@ final class VoiceController: ObservableObject {
             guard !Task.isCancelled, !isShuttingDown else { return }
             var delivery = DictationDelivery.Outcome(state: "clipboard", reason: "Your text was copied. Recovery history could not be saved.", milliseconds: 0)
             var entry = DictationHistory.Entry(id: dictationID, text: text, targetBundle: targetApp?.bundleIdentifier ?? "", createdAt: Date(), outcome: delivery)
+            entry.originalSelection = commandSelection?.text
+            entry.commandInstruction = commandSelection == nil ? nil : rawText
             do {
                 try DictationHistory.shared.save(entry)
-                delivery = await DictationDelivery.deliver(text)
+                if let selection = commandSelection { delivery = await DictationDelivery.replaceSelection(text, snapshot: selection) }
+                else { delivery = await DictationDelivery.deliver(text) }
                 entry.outcome = delivery
                 try DictationHistory.shared.save(entry)
             } catch {
@@ -398,7 +445,10 @@ final class VoiceController: ObservableObject {
                     : "Could not update recovery history or the clipboard. Use Copy to recover this dictation."
             }
             deliveryOutcome = delivery
-            TaskExtractor.run(text: text, source: .dictation)
+            if commandSelection == nil { TaskExtractor.run(text: text, source: .dictation) }
+            commandSelection = nil
+            DictationLatency.record(recognition: recognitionMS, cleanup: cleanupMS, delivery: delivery.milliseconds,
+                                    total: Int(Date().timeIntervalSince(releasedAt) * 1000))
             Analytics.track("dictation_completed", [
                 "chars": text.count,
                 "duration_s": Int(samples.count / 16000),

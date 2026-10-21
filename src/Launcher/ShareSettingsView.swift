@@ -22,6 +22,15 @@ struct ShareSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(receipt.title).font(MM.Fonts.body)
                     Text("\(receipt.state.replacingOccurrences(of: "_", with: " ").capitalized) · Expires \(receipt.expiresAt.formatted())").font(MM.Fonts.metadata)
+                    if let progress = sharing.uploadProgress[receipt.id] {
+                        ProgressView(value: progress)
+                        Button("Cancel upload") { sharing.cancelUpload(receipt.id) }.clickable()
+                    } else if receipt.videoPath != nil, ["upload_interrupted", "uploading", "unconfirmed"].contains(receipt.state) {
+                        Button("Retry upload") {
+                            busy.insert(receipt.id)
+                            Task { do { _ = try await sharing.retryVideo(receipt.id); message = "Recording published." } catch { message = error.localizedDescription }; busy.remove(receipt.id) }
+                        }.disabled(busy.contains(receipt.id)).clickable()
+                    }
                     if receipt.state == "published", receipt.expiresAt > Date() {
                         Text(receipt.url).textSelection(.enabled).font(MM.Fonts.secondary)
                         Button("Copy link") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(receipt.url, forType: .string) }.clickable()
@@ -40,13 +49,20 @@ struct ShareSettingsView: View {
     static func open(_ item: CaptureItem) {
         guard !SharePublishing.shared.endpoint.isEmpty else { WorkflowCenter.shared.open(tab: "sharing"); return }
         let alert = NSAlert(); alert.messageText = "Share this capture?"
-        alert.informativeText = "\(item.title)\n\n\(item.kind == "screenshot" ? "The original screenshot" : "The title and captured text") will be uploaded. Anyone with the link can view it. The link expires in 24 hours, and you can revoke it in Workflows → Sharing."
+        alert.informativeText = "\(item.title)\n\n\(item.kind == "recording" ? "The video and its captions" : item.kind == "screenshot" ? "The original screenshot" : "The title and captured text") will be uploaded. Anyone with the link can view it. The link expires in 24 hours, and you can revoke it in Workflows → Sharing."
+        let engagement = NSButton(checkboxWithTitle: "Allow timestamped comments and reactions", target: nil, action: nil)
+        if item.kind == "recording" { alert.accessoryView = engagement }
         alert.addButton(withTitle: "Publish for 24 hours"); alert.addButton(withTitle: "Preview first"); alert.addButton(withTitle: "Cancel")
         let result = alert.runModal()
         if result == .alertSecondButtonReturn { CaptureDetailController.shared.open(item); return }
         guard result == .alertFirstButtonReturn else { return }
         Task {
-            do { let receipt = try await SharePublishing.shared.publish(item: item, seconds: 86400); NSPasteboard.general.clearContents(); NSPasteboard.general.setString(receipt.url, forType: .string); Toast.show("Share link copied. Expires in 24 hours.", actionLabel: "Manage", action: { WorkflowCenter.shared.open(tab: "sharing") }) }
+            do {
+                let receipt: SharePublishing.Receipt
+                if item.kind == "recording" { WorkflowCenter.shared.open(tab: "sharing"); receipt = try await SharePublishing.shared.publishVideo(item: item, seconds: 86400, engagement: engagement.state == .on) }
+                else { receipt = try await SharePublishing.shared.publish(item: item, seconds: 86400) }
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(receipt.url, forType: .string); Toast.show("Share link copied. Expires in 24 hours.", actionLabel: "Manage", action: { WorkflowCenter.shared.open(tab: "sharing") })
+            }
             catch { Toast.show(error.localizedDescription, actionLabel: "Review", action: { WorkflowCenter.shared.open(tab: "sharing") }, duration: 12) }
         }
     }

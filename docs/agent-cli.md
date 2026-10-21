@@ -361,3 +361,13 @@ lookup. Linux/Omarchy returns `unsupported_on_platform`.
 Each input returns a status, candidate names and stored emails, source labels, total matches and a truncation flag. Present `ambiguous` or `needs_confirmation` results for human selection; ask for an address on `missing_email`. No guessed addresses, Contacts access, live calendar reads, booking or invitations. See [matching rules, limits and privacy](people-resolve.md).
 
 Launcher scheduling (step 5): `myman invoke app.open '{"surface":"schedule"}' --json` / MCP `myman_app_app_open` opens an empty native scheduling view on Mac. Type a meeting request to show guest chips, own availability, time pills and an editable preview. Existing human-only parsing/calendar/people grants still apply. No event is created in this step. Linux returns `unsupported_on_platform` for this surface. See docs/launcher-scheduling.md.
+
+### Native voice-edit recovery (candidate 0.17.2)
+
+On macOS, `dictation.history` entries from a person-initiated voice edit may include
+`originalSelection` and `commandInstruction`. They contain the selected source text
+and spoken editing instruction, so treat them as private captured content. The
+existing library permission still applies. Ordinary entries and Linux entries
+may omit both fields. No new tool, grant or agent ability to invoke selection
+editing is introduced. Agent recording shares retain the existing text-publication
+contract; the native video's direct-upload workflow is initiated by the person.

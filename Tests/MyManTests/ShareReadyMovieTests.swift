@@ -56,6 +56,49 @@ final class ShareReadyMovieTests: XCTestCase {
         XCTAssertEqual(output.pathExtension, "mp4")
     }
 
+    @MainActor func testWorkspaceExportsCutsRedactionAndCaptionTitleOffsetWithoutChangingOriginal() async throws {
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("man-workspace-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("synthetic.mov"), output = folder.appendingPathComponent("edited.mp4")
+        try await fixtureMovie(source, seconds: 4, systemTone: 440)
+        let fingerprint = try SharePublishing.fileFingerprint(source)
+        let words: [RecordingTranscript.Segment] = [.init(start: 0, end: 0.4, text: "First."), .init(start: 3, end: 3.5, text: "Last.")]
+        try RecordingTranscript.save(words, for: source)
+        var project = RecordingProject(edits: .init(cuts: [.init(start: 0.5, end: 1), .init(start: 2, end: 2.5)]), captions: words, title: "Synthetic demo")
+        project.overlays = [.init(kind: "redact", start: 0, end: 4, x: 80, y: 40, width: 120, height: 80)]
+        var options = PolishOptions(); options.backdrop = .none; options.zoomOnClicks = false; options.motionBlur = false
+        try await RecordingWorkspaceExport.export(source: source, destination: output, project: project, options: options) { _ in }
+        XCTAssertEqual(try SharePublishing.fileFingerprint(source), fingerprint)
+        let asset = AVURLAsset(url: output)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, 6, accuracy: 0.16)
+        let audioCount = try await asset.loadTracks(withMediaType: .audio).count
+        XCTAssertEqual(audioCount, 1)
+        let transcript = try XCTUnwrap(RecordingTranscript.load(for: output))
+        XCTAssertEqual(transcript.segments.map(\.start), [3, 5])
+        let saved = try XCTUnwrap(RecordingProject.load(for: source))
+        XCTAssertEqual(saved.edits, project.edits)
+        XCTAssertEqual(saved.polish?.backdrop, BackdropStyle.none.rawValue)
+        let generator = AVAssetImageGenerator(asset: asset); generator.appliesPreferredTrackTransform = true
+        // The default infinite tolerance can return a title-card keyframe.
+        // Inspect exact content frames on both sides of the removed ranges.
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        for seconds in [3.2, 5.2] {
+            let frame = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600))
+            XCTAssertEqual(frame.actualTime.seconds, seconds, accuracy: 0.05)
+            XCTAssertEqual(frame.image.width, 320)
+            XCTAssertEqual(frame.image.height, 200)
+            let image = NSBitmapImageRep(cgImage: frame.image)
+            let redacted = try XCTUnwrap(image.colorAt(x: 140, y: 80)?.usingColorSpace(.deviceRGB))
+            let visible = try XCTUnwrap(image.colorAt(x: 260, y: 150)?.usingColorSpace(.deviceRGB))
+            XCTAssertLessThan(redacted.redComponent + redacted.greenComponent + redacted.blueComponent, 0.15)
+            XCTAssertGreaterThan(visible.blueComponent, 0.6, "unredacted blue fixture remains visible at \(seconds)s")
+        }
+    }
+
     // MARK: Fixtures
 
     /// H.264 video with an optional AAC system-audio sine (what SCK hands us).
@@ -69,7 +112,7 @@ final class ShareReadyMovieTests: XCTestCase {
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 128_000])
             writer.add(input); audio = input
         }
-        XCTAssertTrue(writer.startWriting()); writer.startSession(atSourceTime: .zero)
+        guard writer.startWriting() else { throw writer.error ?? AgentError("TEST_WRITER", "Synthetic video writer could not start") }; writer.startSession(atSourceTime: .zero)
         // Audio goes in FIRST: the writer interleaves tracks and holds the
         // video input "not ready" until audio for the same span exists.
         if let audio, let tone = systemTone {
@@ -97,7 +140,7 @@ final class ShareReadyMovieTests: XCTestCase {
         for index in 0..<frames {
             try await waitReady(video)
             var value: CVPixelBuffer?
-            XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, adapter.pixelBufferPool!, &value), kCVReturnSuccess)
+            XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adapter.pixelBufferPool), &value), kCVReturnSuccess)
             let buffer = try XCTUnwrap(value); CVPixelBufferLockBaseAddress(buffer, [])
             let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: 320, height: 200, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue))
             context.setFillColor(NSColor.blue.cgColor); context.fill(CGRect(x: 0, y: 0, width: 320, height: 200))
