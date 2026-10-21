@@ -83,9 +83,11 @@ struct DictationPersonalization: Codable, Equatable {
         var text: String
         var tokens: [(String, String)]
         func restore(_ candidate: String) -> String? {
-            guard tokens.allSatisfy({ candidate.components(separatedBy: $0.0).count == 2 }) else { return nil }
+            guard tokens.allSatisfy({ candidate.components(separatedBy: $0.0).count == text.components(separatedBy: $0.0).count }) else { return nil }
             // A single pass prevents snippet contents from expanding each other.
-            return DictationPersonalization.replace(candidate, rules: tokens)
+            let restored = DictationPersonalization.replace(candidate, rules: tokens)
+            guard !tokens.contains(where: { restored.contains($0.0) }) else { return nil }
+            return restored
         }
     }
 

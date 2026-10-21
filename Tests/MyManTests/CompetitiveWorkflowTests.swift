@@ -50,6 +50,18 @@ final class CompetitiveWorkflowTests: XCTestCase {
         XCTAssertEqual(store.value, value)
     }
 
+    func testRepeatedSnippetCuesExpandWithoutAcceptingLostOrDuplicatedOccurrences() {
+        var value = DictationPersonalization()
+        value.snippets = [.init(cue: "my signature", expansion: "Alex\n$1 \\path")]
+        let plan = value.prepare("my signature and my signature")
+        XCTAssertEqual(plan.restore(plan.text), "Alex\n$1 \\path and Alex\n$1 \\path")
+        let token = plan.tokens[0].0
+        XCTAssertNil(plan.restore(token), "Cleanup must not drop an occurrence")
+        XCTAssertNil(plan.restore(plan.text + " " + token), "Cleanup must not invent an occurrence")
+        XCTAssertNil(plan.restore(plan.text.replacingOccurrences(of: token, with: token + "suffix")),
+                     "A damaged token boundary must not leak a placeholder")
+    }
+
     func testRetrievalFindsLateEvidenceAndHonorsScope() throws {
         let db = try DatabaseQueue(); try Database.migrator.migrate(db)
         let date = Date(timeIntervalSince1970: 1000)

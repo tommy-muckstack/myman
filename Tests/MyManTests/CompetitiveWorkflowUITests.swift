@@ -13,7 +13,7 @@ final class CompetitiveWorkflowUITests: XCTestCase {
         MM.Fonts.registerFonts()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try await render(BrainChatView(initialScope: .init(), onDismiss: {}), size: NSSize(width: 620, height: 720), name: "brain-chat", root: root)
-        try await render(RecordingSourceView(dismiss: {}), size: NSSize(width: 520, height: 490), name: "recording-sources", root: root)
+        try await render(RecordingSettingsView().padding(MM.Layout.paddingLarge), size: NSSize(width: 420, height: 490), name: "recording-settings", root: root)
         try await render(DictationPersonalizationSettings().padding(MM.Layout.paddingLarge).background(MM.Colors.background), size: NSSize(width: 620, height: 480), name: "dictation-profile", root: root)
         let movie = root.appendingPathComponent("Synthetic demo.mp4")
         try Data("synthetic placeholder; no microphone or screen captured".utf8).write(to: movie)

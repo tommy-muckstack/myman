@@ -10,69 +10,45 @@ enum RecordingDevices {
     }
 }
 
-@MainActor final class RecordingSourcePicker {
-    static let shared = RecordingSourcePicker()
+@MainActor final class RecordingWindowPicker {
+    static let shared = RecordingWindowPicker()
     private var panel: FloatingPanel?
     func show() {
         if let panel { panel.present(); return }
-        let view = RecordingSourceView { [weak self] in self?.panel?.dismiss() }
+        let view = RecordingWindowView { [weak self] in self?.panel?.dismiss() }
         let panel = FloatingPanel(content: view, fixedSize: true)
-        panel.setContentSize(NSSize(width: 520, height: 490)); panel.dismissesOnResign = false
+        panel.setContentSize(NSSize(width: 520, height: 240)); panel.dismissesOnResign = false
         panel.onDismiss = { [weak self] in self?.panel = nil }
         self.panel = panel; panel.present()
     }
 }
 
-struct RecordingSourceView: View {
+struct RecordingWindowView: View {
     var dismiss: () -> Void
-    @State private var source = "region"
     @State private var windows: [SCWindow] = []
     @State private var windowID = ""
-    @State private var microphone = true
-    @State private var systemAudio = true
-    @State private var webcam = true
     @State private var status = ""
     @State private var busy = false
-    @AppStorage("recordingCameraUID") private var cameraUID = ""
-    @AppStorage("microphoneUID") private var microphoneUID = ""
     var body: some View {
         VStack(alignment: .leading, spacing: MM.Layout.spacing) {
-            Text("Record something").font(MM.Fonts.title)
-            Picker("Source", selection: $source) {
-                Text("Screen or region").tag("region"); Text("Window").tag("window"); Text("Camera only").tag("camera")
-            }.pickerStyle(.segmented).clickable()
-            if source == "window" {
-                Picker("Window", selection: $windowID) {
-                    Text("Choose a window").tag("")
-                    ForEach(windows, id: \.windowID) { Text(($0.owningApplication?.applicationName ?? "App") + " — " + ($0.title ?? "Window")).tag(String($0.windowID)) }
-                }.clickable()
-                Button("Refresh windows") { loadWindows() }.clickable()
-            }
-            Toggle("Microphone", isOn: $microphone).clickable()
-            Picker("Input", selection: $microphoneUID) {
-                Text("System default").tag("")
-                ForEach(AVCaptureDevice.devices(for: .audio), id: \.uniqueID) { Text($0.localizedName).tag($0.uniqueID) }
-            }.clickable().disabled(!microphone)
-            if source != "camera" { Toggle("System audio", isOn: $systemAudio).clickable() }
-            if source == "region" { Toggle("Camera bubble", isOn: $webcam).clickable() }
-            if source == "camera" || source == "region" && webcam {
-                Picker("Camera", selection: $cameraUID) {
-                    Text("Default camera").tag("")
-                    ForEach(AVCaptureDevice.devices(for: .video), id: \.uniqueID) { Text($0.localizedName).tag($0.uniqueID) }
-                }.clickable()
-            }
-            Text(source == "window" ? "Only the selected window is captured. The camera bubble is available with screen/region capture." : "Recordings are saved locally. Sharing is a separate action.")
+            Text("Choose a window").font(MM.Fonts.title)
+            Picker("Window", selection: $windowID) {
+                Text("Choose a window").tag("")
+                ForEach(windows, id: \.windowID) { Text(($0.owningApplication?.applicationName ?? "App") + " — " + ($0.title ?? "Window")).tag(String($0.windowID)) }
+            }.clickable()
+            Button("Refresh windows") { loadWindows() }.clickable()
+            Text("Audio defaults come from Settings → General → Recording. Only the selected window is captured.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             if !status.isEmpty { Text(status).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.danger) }
             Spacer()
             HStack {
                 Button("Cancel", action: dismiss).clickable()
                 Spacer()
-                Button(busy ? "Preparing…" : source == "region" ? "Choose area" : "Record") { start() }
-                    .clickable().disabled(busy || source == "window" && windowID.isEmpty)
+                Button(busy ? "Preparing…" : "Record") { start() }
+                    .clickable().disabled(busy || windowID.isEmpty)
             }
         }.padding(MM.Layout.paddingLarge).font(MM.Fonts.body).background(MM.Colors.background)
-            .onChange(of: source) { _, value in if value == "window", windows.isEmpty { loadWindows() } }
+            .task { loadWindows() }
     }
     private func loadWindows() {
         Task {
@@ -85,13 +61,12 @@ struct RecordingSourceView: View {
         }
     }
     private func start() {
+        guard #available(macOS 15.0, *) else { return }
         busy = true
         Task {
             do {
-                if source == "camera" { try await CameraOnlyRecorder.shared.start(microphone: microphone) }
-                else if source == "window", #available(macOS 15.0, *) {
-                    try await ScreenRecorder.shared.startForAgent(region: nil, windowID: windowID, maximumDuration: 3600, microphone: microphone, systemAudio: systemAudio)
-                } else { ScreenRecorder.shared.startRegionFromPicker(microphone: microphone, systemAudio: systemAudio, webcam: webcam) }
+                let settings = RecordingPreferences()
+                try await ScreenRecorder.shared.startForAgent(region: nil, windowID: windowID, maximumDuration: 3600, microphone: settings.microphone, systemAudio: settings.systemAudio)
                 dismiss()
             } catch { status = error.localizedDescription; busy = false }
         }

@@ -29,9 +29,13 @@ private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate, @unch
     private var uploads: [String: Task<Receipt, Error>] = [:]
     private var loadFailed = false
     private let file: URL
-    private let session = URLSession(configuration: .ephemeral, delegate: ShareRedirectPolicy(), delegateQueue: nil)
+    private let session: URLSession
+    private let credential: ((String) throws -> String)?
     var endpoint: String { UserDefaults.standard.string(forKey: "shareServiceEndpoint") ?? "" }
-    init(root: URL? = nil) {
+    init(root: URL? = nil, configuration: URLSessionConfiguration = .ephemeral,
+         credential: ((String) throws -> String)? = nil) {
+        session = URLSession(configuration: configuration, delegate: ShareRedirectPolicy(), delegateQueue: nil)
+        self.credential = credential
         let root = root ?? VerificationPaths.root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("MyMan")
         file = root.appendingPathComponent("Shares/receipts.json")
         if FileManager.default.fileExists(atPath: file.path) {
@@ -56,6 +60,7 @@ private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate, @unch
         UserDefaults.standard.set(endpoint, forKey: "shareServiceEndpoint")
     }
     private func token(for endpoint: String) throws -> String {
+        if let credential { return try credential(endpoint) }
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.muckstack.myman.share", kSecAttrAccount as String: Self.account(endpoint), kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else { throw AgentError("SHARING_NOT_CONFIGURED", "Configure sharing in Workflows → Sharing first.") }
@@ -103,11 +108,10 @@ private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate, @unch
         do {
             let result = try await request(endpoint: endpoint, method: "POST", body: ["id": id, "content": data.base64EncodedString(), "mime_type": mime, "ttl_seconds": seconds])
             try Task.checkCancellation()
-                guard let current = CaptureIndex.item(receipt.sourceID), !current.excluded, current.revision == receipt.sourceRevision else {
-                    try await revoke(id, human: human)
-                    throw AgentError("CONTENT_CHANGED", "The source changed during publication. The link was revoked.")
-                }
-                guard result["id"] as? String == id, let timestamp = result["expires_at"] as? String, let expiry = Self.parseDate(timestamp) else { throw AgentError("SHARING_FAILED", "The service returned an invalid receipt.") }
+            // This entry point also publishes generated brief pages, whose IDs
+            // need not be captures. Capture validation belongs to publish(item:)
+            // and video uploads, where the original source is available.
+            guard result["id"] as? String == id, let timestamp = result["expires_at"] as? String, let expiry = Self.parseDate(timestamp) else { throw AgentError("SHARING_FAILED", "The service returned an invalid receipt.") }
             if receipts.first(where: { $0.id == id })?.state != "pending" {
                 try await revoke(id, human: human)
                 throw AgentError("CONTENT_CHANGED", "Sharing was cancelled while publication was in progress. The link was revoked.")
