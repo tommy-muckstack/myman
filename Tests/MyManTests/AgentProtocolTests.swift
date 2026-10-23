@@ -3,6 +3,18 @@ import Foundation
 @testable import MyMan
 
 final class AgentProtocolTests: XCTestCase {
+    func testBrainExportRootIsPrivateOnExistingInstall() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("man-brain-mode-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+        try Brain.prepareRoot(directory)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? Int, 0o700)
+        let link = directory.deletingLastPathComponent().appendingPathComponent("man-brain-link-" + UUID().uuidString)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: directory)
+        defer { try? FileManager.default.removeItem(at: link) }
+        XCTAssertThrowsError(try Brain.prepareRoot(link))
+    }
     @MainActor func testCatalogRejectsUnknownKeysAndUnsafeShapes() throws {
         let actions = try XCTUnwrap(AgentActions.catalog["actions"] as? [[String: Any]])
         XCTAssertGreaterThan(actions.count, 40)

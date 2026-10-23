@@ -54,6 +54,29 @@ final class AgentCollaborationTests: XCTestCase {
         XCTAssertFalse(registry.ensureBrainzCredential())
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
+    @MainActor func testBrainzCredentialRotatesWhenFileIsExposedOrLinked() throws {
+        let root = try root(), registry = AgentIdentity(root: root)
+        XCTAssertTrue(registry.ensureBrainzCredential())
+        let file = registry.brainzCredentialFile
+        let original = try String(contentsOf: file, encoding: .utf8)
+        let originalToken = String(original.split(separator: "\n")[0].dropFirst("MYMAN_AGENT_TOKEN=".count))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        XCTAssertTrue(registry.ensureBrainzCredential())
+        XCTAssertThrowsError(try registry.authenticate(["credential": originalToken]))
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int, 0o600)
+
+        let marker = root.appendingPathComponent("outside.txt")
+        try "untouched".write(to: marker, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: marker)
+        XCTAssertTrue(registry.ensureBrainzCredential())
+        XCTAssertEqual(try String(contentsOf: marker, encoding: .utf8), "untouched")
+        XCTAssertEqual(try file.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink, false)
+        let replacement = try String(contentsOf: file, encoding: .utf8)
+        let replacementToken = String(replacement.split(separator: "\n")[0].dropFirst("MYMAN_AGENT_TOKEN=".count))
+        XCTAssertEqual(try registry.authenticate(["credential": replacementToken]).name, AgentIdentity.brainzAgentName)
+    }
     @MainActor func testCorruptIdentityRegistryFailsClosed() throws {
         let root = try root(), registry = AgentIdentity(root: root)
         _ = try registry.issue(name: "Capture Agent", scopes: [])
