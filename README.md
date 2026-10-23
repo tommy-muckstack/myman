@@ -208,12 +208,12 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
-## Local privacy hardening (1.1.115 candidate)
+## Local privacy hardening (1.1.115)
 
 - The Brain export folder is kept private to the current macOS login, including existing exports created with wider folder permissions.
 - My Man checks the built-in Brainz credential file on launch and rotates its token if the file is altered, linked, or too widely readable.
 
-Prepared for the next signed installer and Sparkle update.
+The 1.1.115 signed and notarized installer and Sparkle update are published.
 
 ## Capture controls (1.1.114)
 
