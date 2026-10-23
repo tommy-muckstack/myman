@@ -30,6 +30,13 @@ final class VoiceController: ObservableObject {
     var activeRecordingID: UUID? { if case .recording = phase { return session }; return nil }
     private var panel: FloatingPanel?
     private var levelTimer: Timer?
+    /// Phrases already recognized during this take, and where (in native
+    /// frames) the audio they cover ends. Release only decodes the rest.
+    private var streamTask: Task<Void, Never>?
+    private var streamTake = UUID()
+    private var streamParts: [String] = []
+    private var streamCommitted = 0
+    private var streamRate: Double = 0
     private var hasDetectedSpeech = false
     private var silenceBegan: Date?
     /// Energy endpointing: once you've spoken, sustained quiet auto-stops the
@@ -249,6 +256,7 @@ final class VoiceController: ObservableObject {
         silenceBegan = nil
         sessionPeakLevel = 0
         Analytics.track("dictation_started", ["engine": TranscriptionService.shared.kind.rawValue])
+        startStreaming(session: started)
         levels = Array(repeating: 0, count: 24)
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -278,6 +286,31 @@ final class VoiceController: ObservableObject {
                         self.silenceBegan = Date()
                     }
                 }
+            }
+        }
+    }
+
+    /// Recognize each finished phrase at its pause while the take goes on.
+    /// One recognition at a time, on the same engine the final pass uses.
+    private func startStreaming(session id: UUID) {
+        let take = UUID()
+        streamTake = take
+        streamParts = []
+        streamCommitted = 0
+        streamRate = 0
+        let language = language
+        streamTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard let self, self.streamTake == take, case .recording = self.phase, self.session == id else { return }
+                let peek = self.audio.peek(id, from: self.streamCommitted)
+                guard peek.sampleRate > 0, let cut = DictationSegmenter.cut(in: peek.raw, sampleRate: peek.sampleRate) else { continue }
+                let phrase = AudioCapture.prepareForRecognition(Array(peek.raw[..<cut]), sampleRate: peek.sampleRate)
+                let text = await TranscriptionService.shared.transcribe(phrase, language: language)
+                guard self.streamTake == take else { return }
+                if !text.isEmpty { self.streamParts.append(text) }
+                self.streamCommitted += cut
+                self.streamRate = peek.sampleRate
             }
         }
     }
@@ -317,8 +350,9 @@ final class VoiceController: ObservableObject {
         levelTimer = nil
         phase = .transcribing
         recenterPill()
-        let samples = session.map { audio.end($0) } ?? []
+        let fullTake = session.map { audio.end($0) } ?? []
         session = nil
+        let samples = fullTake
 
         guard samples.count > 3200 else { // < 0.2s — nothing said
             dismissPill()
@@ -339,9 +373,17 @@ final class VoiceController: ObservableObject {
             return
         }
 
+        let streaming = streamTask
+        let take = streamTake
         transcriptionTask = Task { @MainActor in
             defer { contextTerms = []; commandSelection = nil }
             let recognitionStarted = Date()
+            // A phrase being recognized at release finishes first (the engine
+            // is serial); everything before the committed point is done.
+            await streaming?.value
+            let recognized = streamTake == take ? streamParts : []
+            let committed = streamTake == take && streamRate > 0 ? Int(Double(streamCommitted) * 16000 / streamRate) : 0
+            let samples = committed > 0 ? Array(fullTake[min(committed, fullTake.count)...]) : fullTake
             // Long takes NEVER go to the ASR in one piece — models sized for
             // utterances hang or truncate on minutes of audio. 60s chunks,
             // like meetings.
@@ -349,7 +391,7 @@ final class VoiceController: ObservableObject {
             // truncate their tails (the "long dictation drops words" bug).
             // Parakeet handles 60s comfortably.
             let chunkSeconds = TranscriptionService.shared.kind == .qwen3 ? 30 : 60
-            let rawText: String
+            let tailText: String
             if samples.count > Int(Double(16000 * chunkSeconds) * 1.25) {
                 var parts: [String] = []
                 var index = 0
@@ -363,25 +405,26 @@ final class VoiceController: ObservableObject {
                     if !piece.isEmpty { parts.append(piece) }
                     index = end
                 }
-                rawText = parts.joined(separator: " ")
+                tailText = parts.joined(separator: " ")
             } else {
-                rawText = await TranscriptionService.shared.transcribe(samples, language: language)
+                tailText = samples.count > 3200 ? await TranscriptionService.shared.transcribe(samples, language: language) : ""
             }
+            let rawText = (recognized + [tailText]).filter { !$0.isEmpty }.joined(separator: " ")
             guard !rawText.isEmpty else {
                 // >5s of speech that transcribed to nothing is a FAILURE, not
                 // silence — keep the audio and say so. Never silently eat a take.
-                if samples.count > 16000 * 5 {
+                if fullTake.count > 16000 * 5 {
                     let formatter = DateFormatter()
                     formatter.dateFormat = "yyyy-MM-dd HH.mm.ss" // fixed: locale slashes break paths
                     let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                         .appendingPathComponent("MyMan/dictation-recovery", isDirectory: true)
                         .appendingPathComponent("dictation \(formatter.string(from: Date())).wav")
                     if let writer = WavWriter(url: url) {
-                        writer.append(samples)
+                        writer.append(fullTake)
                         _ = writer.close()
                     }
                     Analytics.track("dictation_transcription_failed",
-                                    ["duration_s": samples.count / 16000])
+                                    ["duration_s": fullTake.count / 16000])
                     Toast.show("Transcription failed — audio saved",
                                actionLabel: "Show",
                                action: { NSWorkspace.shared.activateFileViewerSelecting([url]) })
@@ -451,7 +494,8 @@ final class VoiceController: ObservableObject {
                                     total: Int(Date().timeIntervalSince(releasedAt) * 1000))
             Analytics.track("dictation_completed", [
                 "chars": text.count,
-                "duration_s": Int(samples.count / 16000),
+                "duration_s": Int(fullTake.count / 16000),
+                "streamed_phrases": recognized.count,
                 "engine": TranscriptionService.shared.kind.rawValue,
                 "end_reason": endReason,
                 "cleanup_changed": text != rawText,
