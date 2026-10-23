@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import Security
 import Combine
+import Darwin
 
 /// Credentials distinguish cooperating clients. They do not sandbox processes
 /// running under the same macOS login or restrict direct access to Brain files.
@@ -45,6 +46,7 @@ enum AgentContext {
     }
     private func save() throws {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.deletingLastPathComponent().path)
         try JSONEncoder().encode(state).write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
@@ -80,6 +82,23 @@ enum AgentContext {
     /// agent there removes the file and is final until the person adds it back.
     static let brainzAgentName = "Brainz"
     var brainzCredentialFile: URL { file.deletingLastPathComponent().appendingPathComponent("brainz.env") }
+    private func validBrainzCredential(_ registration: Registration) -> Bool {
+        var info = stat()
+        let path = brainzCredentialFile.path
+        let directory = brainzCredentialFile.deletingLastPathComponent().path
+        guard lstat(directory, &info) == 0, info.st_uid == getuid(),
+              info.st_mode & S_IFMT == S_IFDIR, info.st_mode & 0o777 == 0o700 else { return false }
+        guard lstat(path, &info) == 0, info.st_uid == getuid(),
+              info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o777 == 0o600,
+              info.st_nlink == 1, info.st_size > 0, info.st_size <= 1024,
+              let contents = try? String(contentsOf: brainzCredentialFile, encoding: .utf8) else { return false }
+        let lines = contents.split(separator: "\n").map(String.init)
+        guard lines.count == 2,
+              lines[0].hasPrefix("MYMAN_AGENT_TOKEN="),
+              lines[1] == "MYMAN_MACHINE_ID=\(state.machineID)" else { return false }
+        let token = String(lines[0].dropFirst("MYMAN_AGENT_TOKEN=".count))
+        return !token.isEmpty && Self.digest(token) == registration.digest
+    }
     @discardableResult func ensureBrainzCredential() -> Bool {
         guard !unavailable else { return false }
         let registrations = state.agents.filter { $0.name == Self.brainzAgentName }
@@ -89,12 +108,16 @@ enum AgentContext {
             return false
         }
         if let live {
-            if FileManager.default.fileExists(atPath: brainzCredentialFile.path) { return true }
-            // The file went missing; the old credential cannot be recovered
-            // from its digest, so retire it and issue a fresh one.
+            if validBrainzCredential(live) { return true }
+            // A missing, altered, linked, or exposed file cannot be trusted.
+            // Retire its credential before writing a replacement.
             let old = state
             if let index = state.agents.firstIndex(where: { $0.id == live.id }) { state.agents[index].revoked = true }
             do { try save() } catch { state = old; return false }
+            var info = stat()
+            if lstat(brainzCredentialFile.path, &info) == 0 {
+                do { try FileManager.default.removeItem(at: brainzCredentialFile) } catch { return false }
+            } else if errno != ENOENT { return false }
         }
         guard let (_, token) = try? issue(name: Self.brainzAgentName, scopes: AgentPrincipal.local.scopes, requireNamed: false) else { return false }
         let contents = "MYMAN_AGENT_TOKEN=\(token)\nMYMAN_MACHINE_ID=\(state.machineID)\n"

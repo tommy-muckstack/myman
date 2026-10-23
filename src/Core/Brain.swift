@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import GRDB
 import CryptoKit
+import Darwin
 
 // The user's brain: a plain folder of markdown files mirroring everything
 // My Man captures — notes, meeting summaries + transcripts, tasks. It's a
@@ -24,6 +25,11 @@ enum Brain {
         queue.async {
             let fm = FileManager.default
             let existed = fm.fileExists(atPath: root.path)
+            do { try prepareRoot(root) }
+            catch {
+                NSLog("Man: Brain export is unavailable until its folder can be made private: %@", error.localizedDescription)
+                return
+            }
             for sub in ["notes", "meetings", "screenshots", "recordings", "dictations", "task-items", "themes"] {
                 try? fm.createDirectory(at: root.appendingPathComponent(sub),
                                         withIntermediateDirectories: true)
@@ -353,6 +359,17 @@ enum Brain {
 
     // MARK: Plumbing (all on `queue`)
 
+    static func prepareRoot(_ directory: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var info = stat()
+        guard lstat(directory.path, &info) == 0, info.st_uid == getuid(),
+              info.st_mode & S_IFMT == S_IFDIR else { throw CocoaError(.fileWriteNoPermission) }
+        // Older installs used the process umask, which could leave the entire
+        // transcript export traversable by other local accounts.
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    }
+
     private static var pendingAgentExport: DispatchWorkItem?
     private static var writtenHashes: [String: SHA256.Digest] = [:]
     static func scheduleAgentExport() {
@@ -360,6 +377,7 @@ enum Brain {
             pendingAgentExport?.cancel()
             let work = DispatchWorkItem {
                 do {
+                    try prepareRoot(root)
                     let source = try Database.shared.read { try BrainAgentExport.source(in: $0) }
                     let snapshot = BrainAgentExport.snapshot(source: source)
                     let previous = (try? Data(contentsOf: root.appendingPathComponent("catalog.json")))
@@ -402,6 +420,7 @@ enum Brain {
     }
 
     private static func writeAgentData(_ data: Data, to relativePath: String) throws {
+        try prepareRoot(root)
         let hash = SHA256.hash(data: data)
         let url = root.appendingPathComponent(relativePath)
         guard url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path + "/"),
@@ -415,6 +434,7 @@ enum Brain {
     }
 
     private static func write(_ content: String, to relativePath: String) {
+        guard (try? prepareRoot(root)) != nil else { return }
         let url = root.appendingPathComponent(relativePath)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)

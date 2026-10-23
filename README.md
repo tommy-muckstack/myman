@@ -208,14 +208,21 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
-## Capture controls (1.1.114 candidate)
+## Local privacy hardening (1.1.115 candidate)
+
+- The Brain export folder is kept private to the current macOS login, including existing exports created with wider folder permissions.
+- My Man checks the built-in Brainz credential file on launch and rotates its token if the file is altered, linked, or too widely readable.
+
+Prepared for the next signed installer and Sparkle update.
+
+## Capture controls (1.1.114)
 
 - The toolbar wraps into visible rows when the window narrows. Drawing tools stay together, and Undo, Copy, and Save remain grouped at the right.
 - Short windows shrink the canvas to keep controls visible. The translation panel opens below the toolbar, including when it spans multiple rows.
 - Recording defaults live in **Settings → General → Recording**: source, microphone/input, system audio, camera bubble/device, and cursor effects. Screen/region recording opens area selection immediately, then starts after a cancellable three-second countdown.
 - Recording controls appear below the selected area when space allows, or at the nearest available edge on the same display. Stop responds without activating My Man and shows progress while the recording is saved.
 
-Prepared for the next installer; 1.1.114 has not been published yet.
+The 1.1.114 installer and Sparkle update are published.
 
 ## Competitive workflows (1.1.113)
 
