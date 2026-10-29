@@ -208,6 +208,13 @@ MyMan can coordinate named agents through human-issued credentials, shared sourc
 
 The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this demo into a launch kit** workflows. Create a brief from a recording, assign a worker and independent reviewer, and return saved visual evidence for every acceptance criterion. The native workspace also exports selected results as a portable share page with a reusable starter prompt. [Setup, recipes and host verification](docs/visual-brief-workflows.md). Requires the corresponding updated app; 1.1.65 does not advertise brief actions. Public GrokBot template links and actual host dispatch/delivery remain to be verified.
 
+## Recording highlights and drawing (1.1.116)
+
+- Shake the mouse back and forth over a button or a line of text while recording and a rounded highlight appears around it, then fades once you stop. It is part of the cursor effects setting.
+- **Draw** and **Box** on the recording pill let you scribble or draw rounded boxes on the screen; they are recorded in the video. Click the lit tool again to hand the mouse back and fade the drawings out. Window recordings capture only the window, so drawing is off there.
+
+Prepared for the next signed installer and Sparkle update.
+
 ## Local privacy hardening (1.1.115)
 
 - The Brain export folder is kept private to the current macOS login, including existing exports created with wider folder permissions.

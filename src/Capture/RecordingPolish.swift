@@ -50,7 +50,11 @@ final class ClickRecorder {
             Task { @MainActor in self?.record(location) }
         }
         if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: record) { monitors.append(global) }
-        if let local = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { event in record(event); return event }) { monitors.append(local) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { event in
+            // Drawing strokes are not clicks worth zooming in on.
+            if !CursorEffects.shared.isDrawingSurface(event.window) { record(event) }
+            return event
+        }) { monitors.append(local) }
     }
 
     func record(_ location: CGPoint, at date: Date = Date()) {
