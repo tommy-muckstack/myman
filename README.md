@@ -213,7 +213,7 @@ The 0.9.0 agent candidate adds **Watch this bug and fix it** and **Turn this dem
 - Shake the mouse back and forth over a button or a line of text while recording and a rounded highlight appears around it, then fades once you stop. It is part of the cursor effects setting.
 - **Draw** and **Box** on the recording pill let you scribble or draw rounded boxes on the screen; they are recorded in the video. Click the lit tool again to hand the mouse back and fade the drawings out. Window recordings capture only the window, so drawing is off there.
 
-Prepared for the next signed installer and Sparkle update.
+The 1.1.116 signed and notarized installer and Sparkle update are published.
 
 ## Local privacy hardening (1.1.115)
 
