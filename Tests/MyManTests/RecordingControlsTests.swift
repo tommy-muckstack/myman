@@ -81,7 +81,7 @@ final class RecordingControlsTests: XCTestCase {
         try save(host, to: root.appendingPathComponent("recording-controls.png"))
         // Click the visible Stop pill in the rendered fixture, through the
         // non-key window's event path rather than invoking its callback.
-        let point = NSPoint(x: host.bounds.width * 0.66, y: host.bounds.midY)
+        let point = NSPoint(x: host.bounds.width * 0.72, y: host.bounds.midY)
         let location = host.convert(point, to: nil)
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             panel.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],

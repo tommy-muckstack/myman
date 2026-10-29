@@ -439,8 +439,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
                                                               separate: SettingsStore.shared.recordCursorSeparately || self.agentHideCursor)
                     self.keystrokeRecorder = KeystrokeRecorder(startedAt: started)
                 }
-                if windowID == nil, SettingsStore.shared.cursorEffects {
-                    CursorEffects.shared.show(regionAppKit: regionAppKit)
+                if windowID == nil {
+                    CursorEffects.shared.show(regionAppKit: regionAppKit,
+                                              cursorEffects: SettingsStore.shared.cursorEffects)
                 }
                 Analytics.track("screen_recording_started",
                                 ["cursor_effects": SettingsStore.shared.cursorEffects])
@@ -1247,6 +1248,7 @@ private struct RecordCountdownView: View {
 private struct RecordingPillView: View {
     @ObservedObject var recorder: ScreenRecorder
     @ObservedObject var webcam = WebcamBubble.shared
+    @ObservedObject var effects = CursorEffects.shared
     @State private var now = Date()
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -1255,7 +1257,9 @@ private struct RecordingPillView: View {
             elapsed: elapsed, isPaused: recorder.isPaused, isStopping: recorder.isStopping,
             allowsWebcam: recorder.allowsWebcam, webcamOn: webcam.isOn,
             microphoneEnabled: recorder.microphoneEnabled, microphoneLevel: recorder.microphoneLevel,
+            canDraw: effects.canDraw, drawTool: effects.tool,
             onCamera: { webcam.toggle() }, onMicrophone: { recorder.toggleMicrophone() },
+            onDraw: { effects.toggle($0) },
             onStop: { recorder.stop() }, onRestart: { recorder.restart() })
             .onReceive(clock) { now = $0 }
     }

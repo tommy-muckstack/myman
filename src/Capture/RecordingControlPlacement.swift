@@ -1,7 +1,7 @@
 import AppKit
 
 enum RecordingControlPlacement {
-    static var size: CGSize { CGSize(width: 360 * MM.Fonts.interfaceScale, height: 48 * MM.Fonts.interfaceScale) }
+    static var size: CGSize { CGSize(width: 448 * MM.Fonts.interfaceScale, height: 48 * MM.Fonts.interfaceScale) }
 
     /// AppKit coordinates: below the selected area first, then the nearest
     /// available edge. Clamp to the same display, including negative origins.

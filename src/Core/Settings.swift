@@ -471,7 +471,7 @@ struct SettingsPanelView: View {
         VStack(alignment: .leading, spacing: 0) {
             settingSection("Recording") {
                 RecordingSettingsView()
-                Toggle("Cursor trail and click ripple", isOn: $store.cursorEffects)
+                Toggle("Cursor trail, click ripple and shake to highlight", isOn: $store.cursorEffects)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
                 Toggle("Record the cursor separately so Polish can smooth and resize it", isOn: $store.recordCursorSeparately)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
