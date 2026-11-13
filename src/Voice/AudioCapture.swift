@@ -305,6 +305,21 @@ final class AudioCapture: @unchecked Sendable {
         return Self.finalize(raw, sampleRate: rate)
     }
 
+    /// The session's raw audio from `offset` (native frames) onward, without
+    /// consuming it: dictation recognizes finished phrases mid-take.
+    func peek(_ id: UUID, from offset: Int) -> (raw: [Float], sampleRate: Double) {
+        let rate = inputRate()
+        lock.lock()
+        defer { lock.unlock() }
+        guard let buffer = buffers[id], offset < buffer.count else { return ([], rate) }
+        return (Array(buffer[max(0, offset)...]), rate)
+    }
+
+    /// Native audio prepared exactly as a finished take is (gain, 16 kHz).
+    static func prepareForRecognition(_ raw: [Float], sampleRate: Double) -> [Float] {
+        finalize(raw, sampleRate: sampleRate)
+    }
+
     /// End a session: final drain, then stop the engine only when it was the
     /// last session (a remaining session may flip processing mode back).
     /// The input's real sample rate (engine must exist — begin() first).

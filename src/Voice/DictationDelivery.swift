@@ -32,10 +32,11 @@ import Carbon
         var readValue: () -> String?
         var replaceSelection: (String) -> Bool
         var typeChunk: (String) -> Bool
-        var paste: () -> PasteResult
+        var paste: () async -> PasteResult
     }
 
-    enum PasteResult { case sent, failed, uncertain }
+    /// `confirmed`: the destination read the promised text, so the paste landed.
+    enum PasteResult { case sent, confirmed, failed, uncertain }
 
     /// A native menu action avoids shortcut interception in custom editors.
     /// A timeout may have executed the action, so never follow it with ⌘V.
@@ -52,7 +53,9 @@ import Carbon
     }
 
     static func prefersPaste(bundleID: String?, bundleURL: URL?) -> Bool {
-        if ["dev.zed.Zed", "dev.zed.Zed-Preview", "dev.zed.Zed-Nightly"].contains(bundleID ?? "") { return true }
+        // GPUI editors (Zed and forks such as Brainz) take keystrokes through
+        // their own input layer and drop synthetic Unicode key events.
+        if ["dev.zed.Zed", "dev.zed.Zed-Preview", "dev.zed.Zed-Nightly", "app.brainz.desktop"].contains(bundleID ?? "") { return true }
         return isElectron(bundleID: bundleID, bundleURL: bundleURL)
     }
 
@@ -103,8 +106,10 @@ import Carbon
             guard !Task.isCancelled, target.isFocused() else {
                 return finish("clipboard", "Could not paste into the focused field. Your text is copied; paste it into the intended field.")
             }
-            switch target.paste() {
+            switch await target.paste() {
             case .sent: break
+            case .confirmed:
+                return finish("verified", "Pasted. The app read the text from the clipboard.")
             case .failed:
                 return finish("clipboard", "Could not paste into the focused field. Your text is copied; paste it into the intended field.")
             case .uncertain:
@@ -243,7 +248,14 @@ import Carbon
 
     /// Match the standard Command-V shortcut rather than a localized title.
     /// Bound both IPC time and traversal: a wedged app must not hang dictation.
-    private static func enabledPasteCommand(_ app: AXUIElement) -> AXUIElement? {
+    /// GPUI apps (Zed, Brainz) report their Paste item as disabled until the
+    /// menu is opened, so "has a Paste command" and "enabled now" differ.
+    private static func pasteMenuItem(_ app: AXUIElement) -> (item: AXUIElement, enabled: Bool)? {
+        guard let item = enabledPasteCommand(app, requireEnabled: false) else { return nil }
+        return (item, (attribute(item, kAXEnabledAttribute) as? NSNumber)?.boolValue == true)
+    }
+
+    private static func enabledPasteCommand(_ app: AXUIElement, requireEnabled: Bool = true) -> AXUIElement? {
         guard let menu = element(app, kAXMenuBarAttribute) else { return nil }
         let deadline = Date().addingTimeInterval(0.2)
         var remaining = 120
@@ -253,7 +265,7 @@ import Carbon
             AXUIElementSetMessagingTimeout(item, 0.04)
             if (attribute(item, kAXMenuItemCmdCharAttribute) as? String)?.lowercased() == "v",
                (attribute(item, kAXMenuItemCmdModifiersAttribute) as? NSNumber)?.intValue == 0,
-               (attribute(item, kAXEnabledAttribute) as? NSNumber)?.boolValue == true { return item }
+               !requireEnabled || (attribute(item, kAXEnabledAttribute) as? NSNumber)?.boolValue == true { return item }
             for child in attribute(item, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
                 if let command = visit(child, depth: depth + 1) { return command }
             }
@@ -276,6 +288,8 @@ import Carbon
         }
         guard AXIsProcessTrusted() else { return clipboard("Allow Accessibility to insert text automatically, or paste the saved text yourself.") }
         guard let target = NSWorkspace.shared.frontmostApplication, target.bundleIdentifier != Bundle.main.bundleIdentifier else { return clipboard("Choose a text field, then paste. Your dictation is saved.") }
+        // What the person had copied, before anything here touches the clipboard.
+        let previousClipboard = ConfirmedPaste.snapshot()
         let app = AXUIElementCreateApplication(target.processIdentifier)
         AXUIElementSetMessagingTimeout(app, 0.25)
         var usePaste = prefersPaste(bundleID: target.bundleIdentifier, bundleURL: target.bundleURL)
@@ -304,9 +318,12 @@ import Carbon
         if support == .unavailable, !secure, subrole != kAXSecureTextFieldSubrole {
             // Paste availability may depend on the clipboard containing text.
             guard copyToClipboard(text) else { return clipboard("Could not copy the dictation. Use Copy to try again.") }
-            pasteCommand = enabledPasteCommand(app)
+            // An app that offers Paste at all can take ⌘V, even when its menu
+            // reports the item disabled (GPUI only updates it on open).
+            let menu = pasteMenuItem(app)
+            pasteCommand = menu?.enabled == true ? menu?.item : nil
             support = insertionSupport(role: role, subrole: subrole, secureInput: secure,
-                                       hasWindow: window != nil, pasteEnabled: pasteCommand != nil)
+                                       hasWindow: window != nil, pasteEnabled: menu != nil || usePaste)
         }
         guard support != .unavailable else { return clipboard("Choose an editable field, then paste the saved text.") }
         if support == .pasteCommand { usePaste = true }
@@ -351,13 +368,18 @@ import Carbon
                 down.post(tap: .cgSessionEventTap); up.post(tap: .cgSessionEventTap)
                 return true
             }, paste: {
+                // Promise the text and watch for the destination to read it:
+                // that read is the proof the paste landed, in any app.
+                await ConfirmedPaste.waitForModifierRelease()
+                let promise = ConfirmedPaste(text, restoring: previousClipboard)
+                guard promise.write() else { return .failed }
                 let menuAction: (() -> AXError)? = pasteCommand.map { command in
                     {
                         AXUIElementSetMessagingTimeout(command, 0.25)
                         return AXUIElementPerformAction(command, kAXPressAction as CFString)
                     }
                 }
-                return sendPasteCommand(menuAction: menuAction) {
+                let result = sendPasteCommand(menuAction: menuAction) {
                     // ANSI V, with explicit flags so a held dictation modifier does
                     // not turn this into a different shortcut.
                     guard let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
@@ -366,6 +388,13 @@ import Carbon
                     down.post(tap: .cgSessionEventTap); up.post(tap: .cgSessionEventTap)
                     return true
                 }
+                if result != .failed, await promise.waitForRead() {
+                    promise.restoreAfterPaste()
+                    return .confirmed
+                }
+                // Nobody read it: leave a durable copy for a manual paste.
+                _ = promise.keepTextOnClipboard()
+                return result
             })
         DictationCorrectionWatch.shared.stop()
         var outcome = await deliver(text, to: destination, copy: copyToClipboard)
