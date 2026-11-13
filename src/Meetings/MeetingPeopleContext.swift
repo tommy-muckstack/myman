@@ -26,9 +26,17 @@ enum MeetingPeopleContext {
         }
         names.formUnion(corroborated.filter { $0.value >= 2 }.map(\.key))
         let blocked = Set(MeetingVocabulary.commonTerms.map { $0.lowercased() })
-        return Set(names.flatMap { $0.split(separator: " ").map(String.init) })
-            .filter { $0.count >= 4 && $0.first?.isUppercase == true && $0.allSatisfy(\.isLetter)
-                && !blocked.contains($0.lowercased()) }.sorted()
+        // Spelled out step by step: older compilers time out on the chained form.
+        var words = Set<String>()
+        for name in names {
+            for part in name.split(separator: " ") {
+                let word = String(part)
+                guard word.count >= 4, let first = word.first, first.isUppercase else { continue }
+                guard word.allSatisfy({ $0.isLetter }), !blocked.contains(word.lowercased()) else { continue }
+                words.insert(word)
+            }
+        }
+        return words.sorted()
     }
 
     static func personNames(in text: String) -> Set<String> {
