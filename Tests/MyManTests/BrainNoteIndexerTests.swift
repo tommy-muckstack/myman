@@ -101,6 +101,18 @@ final class BrainNoteIndexerTests: XCTestCase {
         XCTAssertEqual(fm.title, "Heading wins")
         XCTAssertFalse(fm.body.contains("type: reference"))
     }
+
+    func testGeneratedBuildTreesAreSkippedWithExistingUserExclusions() throws {
+        try write("notes/keep.md", "# Useful note")
+        try write("project/target/debug/generated.md", "# Rust output")
+        try write("project/DerivedData/checkouts/generated.md", "# Xcode output")
+        try write("project/.build/checkouts/generated.md", "# Swift output")
+        var configuration = options()
+        configuration.excludedFolders = ["finances"]
+        let result = try indexer.scan(configuration)
+        XCTAssertEqual(result.scanned, 1)
+        XCTAssertEqual(try rows().map(\.title), ["Useful note"])
+    }
 }
 
 final class BrainWorkspaceTests: XCTestCase {

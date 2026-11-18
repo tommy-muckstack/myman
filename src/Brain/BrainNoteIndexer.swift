@@ -19,6 +19,7 @@ final class BrainNoteIndexer: @unchecked Sendable {
     static let shared = BrainNoteIndexer()
     static let defaultExcludedFolders = ["finances", "health", "family", ".claude", ".git", "node_modules"]
     static let scanInterval: TimeInterval = 600
+    static let generatedFolders: Set<String> = [".build", "target", "deriveddata", "node_modules", ".git"]
 
     struct Options: Sendable {
         var root: URL
@@ -46,19 +47,27 @@ final class BrainNoteIndexer: @unchecked Sendable {
     private let fileManager: FileManager
     private let queue = DispatchQueue(label: "com.muckstack.myman.brain-notes", qos: .utility)
     private var timer: DispatchSourceTimer?
+    private let startLock = NSLock()
+    private var maintenance: CoalescingMaintenance!
     private var settingsObserver: Any?
 
     init(database: DatabaseQueue = Database.shared, fileManager: FileManager = .default) {
         self.database = database
         self.fileManager = fileManager
+        maintenance = CoalescingMaintenance(label: "com.muckstack.myman.brain-scan") { [weak self] reason in
+            self?.performScan(reason: reason)
+        }
     }
 
     /// Scans once now and every ten minutes after. Safe to call once at launch.
     func start() {
+        startLock.lock()
+        defer { startLock.unlock() }
+        guard timer == nil else { return }
         rescan(reason: "launch")
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + Self.scanInterval, repeating: Self.scanInterval)
-        timer.setEventHandler { [weak self] in self?.performScan(reason: "periodic") }
+        timer.schedule(deadline: .now() + Self.scanInterval, repeating: Self.scanInterval, leeway: .seconds(30))
+        timer.setEventHandler { [weak self] in self?.rescan(reason: "periodic") }
         timer.resume()
         self.timer = timer
     }
@@ -66,7 +75,7 @@ final class BrainNoteIndexer: @unchecked Sendable {
     /// Runs a scan off the main thread. Settings changes and meeting starts
     /// call this so fresh notes are available right away.
     func rescan(reason: String) {
-        queue.async { [weak self] in self?.performScan(reason: reason) }
+        maintenance.request(reason: reason)
     }
 
     private func performScan(reason: String) {
@@ -86,6 +95,8 @@ final class BrainNoteIndexer: @unchecked Sendable {
         options.excludedFolders = Set(settings.1.map { $0.lowercased() })
         do {
             let report = try scan(options)
+            NSLog("My Man maintenance: brain_scan files=%d changed=%d duration_ms=%d", report.scanned,
+                  report.added + report.updated + report.removed, Int(report.duration * 1000))
             let count = (try? database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM brainNote") }) ?? 0
             DispatchQueue.main.async {
                 let status = BrainIndexStatus.shared
@@ -147,7 +158,7 @@ final class BrainNoteIndexer: @unchecked Sendable {
             let path = url.standardizedFileURL.path
             if values.isDirectory == true {
                 let name = (values.name ?? url.lastPathComponent).lowercased()
-                if options.excludedFolders.contains(name) || skipRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+                if Self.generatedFolders.contains(name) || options.excludedFolders.contains(name) || skipRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
                     enumerator.skipDescendants()
                     report.skipped += 1
                 }
