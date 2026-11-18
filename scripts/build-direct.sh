@@ -31,8 +31,8 @@ APP_NAME="My Man"
 EXEC_NAME="MyMan"
 SLUG="myman"
 BUNDLE_ID="com.muckstack.myman"
-VERSION="${RELEASE_VERSION:-1.1.116}"
-BUILD_NUMBER="${RELEASE_BUILD:-128}"
+VERSION="${RELEASE_VERSION:-1.1.117}"
+BUILD_NUMBER="${RELEASE_BUILD:-129}"
 TEAM_ID="${APPLE_TEAM_ID:-K8NAZ76CBQ}"
 NOTARY_PROFILE="mumbls-notary"
 SPARKLE_ACCOUNT="myman"
@@ -94,9 +94,9 @@ fi
 echo "==> Building $EXEC_NAME (release, universal)..."
 # Universal so Intel Macs can run it. Ask SwiftPM for the products directory;
 # its layout differs between Xcode/SwiftPM versions.
-swift build -c release --arch arm64 --arch x86_64
+swift build -c release --arch arm64 --arch x86_64 --jobs "${MYMAN_BUILD_JOBS:-2}"
 
-PRODUCTS_DIR="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+PRODUCTS_DIR="$(swift build -c release --arch arm64 --arch x86_64 --jobs "${MYMAN_BUILD_JOBS:-2}" --show-bin-path)"
 BINARY="$PRODUCTS_DIR/$EXEC_NAME"
 if [[ ! -f "$BINARY" ]]; then
     echo "ERROR: Binary not found at $BINARY"

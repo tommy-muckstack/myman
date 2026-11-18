@@ -33,7 +33,7 @@ actor ConceptThemeWorker {
     private func waitForIdle() async {
         while enabled && !Task.isCancelled {
             let busy = await MainActor.run { Self.foregroundBusy() }
-            if !busy { return }
+            if !busy && !BackgroundMaintenance.shouldDefer { return }
             try? await Task.sleep(nanoseconds: 15_000_000_000)
         }
     }

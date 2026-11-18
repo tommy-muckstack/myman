@@ -88,6 +88,9 @@ enum OCRStore {
                 try Screenshot.fetchAll(db, sql: "SELECT s.* FROM screenshot s JOIN captureItem c ON c.sourceID = s.id AND c.kind = 'screenshot' WHERE c.excluded = 0 ORDER BY s.createdAt DESC")
             }) ?? []
             for record in records {
+                while BackgroundMaintenance.shouldDefer, !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(30))
+                }
                 guard !Task.isCancelled else { break }
                 let url = URL(fileURLWithPath: record.path)
                 guard let expected = version(url) else { continue }

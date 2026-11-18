@@ -320,3 +320,14 @@ myman screenshot --display main --json
 ```
 
 The installer lists optional Ubuntu and Arch packages and never runs sudo. [Linux setup, permissions, annotations, Omarchy, Xvfb and MCP](docs/linux-agents.md).
+
+## Background performance (1.1.117)
+
+Optional indexing yields during heavy system load, Low Power Mode, and serious
+thermal pressure. Bursts of note scans and capture enrichment are coalesced.
+Relationship enrichment reuses unchanged evidence and updates affected sources
+instead of replacing the full relationship table. Generated Rust, Swift and
+Xcode build trees are skipped by the Brain note indexer. Local diagnostics record
+maintenance durations and counts without note content or file paths.
+
+Published installers are listed on the [releases page](https://github.com/tommy-muckstack/myman/releases).

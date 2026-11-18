@@ -4,16 +4,22 @@ import GRDB
 
 final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
     static let shared = CaptureEnrichment()
-    private let queue = DispatchQueue(label: "man.capture.enrichment", qos: .utility)
-    private var pending: DispatchWorkItem?
+    private let database: DatabaseQueue
+    private var maintenance: CoalescingMaintenance!
+    private var relationships = CaptureRelationships()
     private var changed = false // Only touched on GRDB's transaction queue.
     private var deleted = false
     private var started = false
 
+    init(database: DatabaseQueue = Database.shared) {
+        self.database = database
+        maintenance = CoalescingMaintenance(label: "man.capture.enrichment") { [weak self] _ in self?.process() }
+    }
+
     func start() {
         guard !started else { return }
         started = true
-        Database.shared.add(transactionObserver: self)
+        database.add(transactionObserver: self)
         schedule()
         OCRStore.backfill()
     }
@@ -31,15 +37,7 @@ final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
     }
     func databaseDidRollback(_ db: GRDB.Database) { changed = false; deleted = false }
 
-    func schedule() {
-        queue.async { [weak self] in
-            guard let self else { return }
-            self.pending?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.process() }
-            self.pending = work
-            self.queue.asyncAfter(deadline: .now() + 0.35, execute: work)
-        }
-    }
+    func schedule() { maintenance.request() }
 
     static func chunks(_ item: CaptureItem) -> [(String, String)] {
         var output: [(String, String)] = []
@@ -69,18 +67,20 @@ final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
     }
 
     private func process() {
+        let started = ProcessInfo.processInfo.systemUptime
         do {
-            let batch = try Database.shared.read { db in
+            let batch = try database.read { db in
                 try CaptureItem.fetchAll(db, sql: "SELECT c.* FROM capturePending p JOIN captureItem c ON c.id = p.id WHERE c.excluded = 0 ORDER BY c.capturedAt DESC LIMIT 8")
             }
             let semantics = UserDefaults.standard.object(forKey: "captureSemanticSearch") as? Bool ?? true
             for item in batch {
+                if BackgroundMaintenance.shouldDefer { schedule(); return }
                 let chunks = Self.chunks(item).map { field, text in (field, text, semantics ? SearchService.embedding(for: text) : nil) }
                 let title: String
-                if item.kind == "screenshot", let context = try Database.shared.read({ try ScreenshotContext.fetchOne($0, key: item.id) }), !context.imageVersion.isEmpty {
+                if item.kind == "screenshot", let context = try database.read({ try ScreenshotContext.fetchOne($0, key: item.id) }), !context.imageVersion.isEmpty {
                     title = item.generatedTitle.isEmpty ? ScreenshotIntelligence.title(text: item.body, window: context.windowTitle) : item.generatedTitle
                 } else { title = Self.generatedTitle(item) }
-                try Database.shared.write { db in
+                try database.write { db in
                     // Edits/deletes during inference must not reintroduce stale
                     // text or resurrect a deleted capture.
                     guard let current = try CaptureItem.fetchOne(db, key: item.id), current.revision == item.revision, !current.excluded else { return }
@@ -89,11 +89,17 @@ final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
                     for (index, chunk) in chunks.enumerated() {
                         try db.execute(sql: "INSERT INTO captureChunk(itemID,ordinal,field,text,embedding) VALUES (?,?,?,?,?)", arguments: [item.id, index, chunk.0, chunk.1, stillSemantic ? chunk.2 : nil])
                     }
-                    try db.execute(sql: "UPDATE captureItem SET generatedTitle = ? WHERE id = ?", arguments: [title, item.id])
+                    if current.generatedTitle != title {
+                        try db.execute(sql: "UPDATE captureItem SET generatedTitle = ? WHERE id = ?", arguments: [title, item.id])
+                    }
                     try db.execute(sql: "DELETE FROM capturePending WHERE id = ?", arguments: [item.id])
                 }
             }
-            let more = try Database.shared.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM capturePending") ?? 0 }
+            let more = try database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM capturePending p JOIN captureItem c ON c.id = p.id WHERE c.excluded = 0") ?? 0 }
+            if !batch.isEmpty {
+                NSLog("My Man maintenance: enrichment items=%d duration_ms=%d", batch.count,
+                      Int((ProcessInfo.processInfo.systemUptime - started) * 1000))
+            }
             if more > 0 { schedule(); return }
             try rebuildRelationships()
             Task(priority: .background) { await ConceptThemeWorker.shared.schedule() }
@@ -101,45 +107,31 @@ final class CaptureEnrichment: TransactionObserver, @unchecked Sendable {
         } catch { NSLog("Man: capture enrichment will retry after the next change: %@", error.localizedDescription) }
     }
 
-    private func rebuildRelationships() throws {
-        let snapshot = try Database.shared.read { try CaptureItem.filter(Column("excluded") == false).fetchAll($0) }
-        // Compute thematic evidence off the DB queue, then apply short writes.
-        // Candidate pruning uses shared terms or nearby dates, not every pair.
-        var inverted: [String: Set<Int>] = [:]
-        var terms: [Set<String>] = []
-        let domains = snapshot.map { CaptureSignals.domains($0.text) }
-        var domainPeers: [String: Set<Int>] = [:]
-        for (index, item) in snapshot.enumerated() {
-            let words = CaptureSignals.terms(item)
-            terms.append(words)
-            for term in words { inverted[term, default: []].insert(index) }
-            for domain in domains[index] { domainPeers[domain, default: []].insert(index) }
-        }
-        var edges: [(String, String, Double, String, String)] = []
-        for (index, item) in snapshot.enumerated() {
-            var counts: [Int: Int] = [:]
-            for domain in domains[index] {
-                for peer in (domainPeers[domain] ?? []) where peer != index { counts[peer, default: 0] += 2 }
-            }
-            for term in terms[index] {
-                guard let peers = inverted[term], peers.count <= max(20, snapshot.count / 3) else { continue }
-                for peer in peers where peer != index { counts[peer, default: 0] += 1 }
-            }
-            let candidates = counts.filter { $0.value >= 2 }.sorted { $0.value > $1.value }.prefix(30)
-            for (peer, _) in candidates {
-                if let (score, kind, reason) = RelatedItems.score(item, snapshot[peer], sharedTerms: terms[index].intersection(terms[peer]), sharedDomains: domains[index].intersection(domains[peer])) { edges.append((item.id, snapshot[peer].id, score, kind, reason)) }
-            }
-        }
-        try Database.shared.write { db in
-            // A changed snapshot is retried rather than applied over edits.
+    @discardableResult func rebuildRelationships() throws -> CaptureRelationships.Update? {
+        let started = ProcessInfo.processInfo.systemUptime
+        let snapshot = try database.read { try CaptureItem.filter(Column("excluded") == false).fetchAll($0) }
+        guard let update = relationships.prepare(snapshot) else { return nil }
+        let applied = try database.write { db -> Bool in
             let current = try CaptureItem.filter(Column("excluded") == false).fetchAll(db)
-            guard Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0.revision) }) == Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0.revision) }) else { return }
-            try db.execute(sql: "DELETE FROM captureRelation")
-            for edge in edges {
-                try db.execute(sql: "INSERT OR REPLACE INTO captureRelation(sourceID,targetID,score,kind,reason) VALUES (?,?,?,?,?)", arguments: [edge.0, edge.1, edge.2, edge.3, edge.4])
+            guard CaptureRelationships.versions(current) == CaptureRelationships.versions(snapshot) else { return false }
+            if update.reset {
+                try db.execute(sql: "DELETE FROM captureRelation")
+            } else {
+                for id in update.sources {
+                    try db.execute(sql: "DELETE FROM captureRelation WHERE sourceID = ?", arguments: [id])
+                }
             }
-            // Theme relationships are joined at retrieval time. Materializing
-            // every pair would grow quadratically in a large theme.
+            for edge in update.edges {
+                try db.execute(sql: "INSERT OR REPLACE INTO captureRelation(sourceID,targetID,score,kind,reason) VALUES (?,?,?,?,?)",
+                               arguments: [edge.source, edge.target, edge.score, edge.kind, edge.reason])
+            }
+            return true
         }
+        guard applied else { schedule(); return nil }
+        relationships = update.next
+        NSLog("My Man maintenance: relationships items=%d analyzed=%d sources=%d pairs=%d duration_ms=%d",
+              snapshot.count, update.analyzedItems, update.sources.count, update.scoredPairs,
+              Int((ProcessInfo.processInfo.systemUptime - started) * 1000))
+        return update
     }
 }
