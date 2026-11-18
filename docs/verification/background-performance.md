@@ -33,5 +33,10 @@ A 1,000-item fixture checks that one edited item analyzes one item's evidence an
 scores 90 affected pairs instead of the initial 9,000; an unchanged pass scores
 none. These are operation counts, not a measured percentage reduction in app CPU.
 
-Local debug build, full tests, universal release build, CI and signed/notarized
-installer verification are pending. Public feed remains 1.1.116 until publication.
+Local debug build passed. The full native suite passed: 700 tests, 51 optional
+skips, zero failures. The 1,000-item operation-count fixture passed.
+
+Release gates: universal Intel/Apple silicon compilation, green CI, Developer ID
+signature validation, Apple notarization/stapling, and verification of the
+published installer and Sparkle feed. Artifact results are recorded in the PR
+and GitHub release.

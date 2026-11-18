@@ -330,4 +330,4 @@ instead of replacing the full relationship table. Generated Rust, Swift and
 Xcode build trees are skipped by the Brain note indexer. Local diagnostics record
 maintenance durations and counts without note content or file paths.
 
-The 1.1.117 installer is being prepared; publication is verified separately.
+Published installers are listed on the [releases page](https://github.com/tommy-muckstack/myman/releases).
