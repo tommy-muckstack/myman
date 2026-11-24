@@ -58,6 +58,7 @@ enum Brain {
             - `themes/` — saved MyMan Themes and their source items
             - `catalog.json` — current allowlist, metadata, meeting links, tags, local times, and thumbnail references
             - `tools/cli.mjs` — bundled query and app-action companion (Node.js 22+; no npm install needed)
+            - `agent/` — only if you turn on the folder bridge in Settings → Agents: requests and answers for agents that reach this Mac through this folder. Never committed.
             - `tools/server.mjs` — read-only retrieval over local stdio MCP
             - `tools/app-server.mjs` — permission-controlled app actions over local stdio MCP
 

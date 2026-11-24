@@ -49,6 +49,17 @@ final class AgentActions {
               let data = try? Data(contentsOf: url), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
         return value
     }
+    /// The checks `receive` makes before starting an action, without starting
+    /// it. The folder bridge runs them before it asks the person anything.
+    @discardableResult static func preflight(action: String, args: [String: Any], identity: [String: Any]) throws -> AgentPrincipal {
+        try AgentIdentity.shared.checkMachine(identity)
+        let principal = try AgentIdentity.shared.authenticate(identity)
+        guard let schema = (catalog["actions"] as? [[String: Any]])?.first(where: { $0["name"] as? String == action })?["inputSchema"] as? [String: Any] else { throw AgentError("UNKNOWN_ACTION", "Use actions to discover commands and arguments.") }
+        try AgentSchema.validate(args, schema: schema)
+        try AgentIdentity.shared.validate(principal, action: action)
+        try AgentConsent.validate(action, args: args)
+        return principal
+    }
     func receive(_ request: [String: Any]) -> [String: Any] {
         do {
             guard let method = request["method"] as? String else { throw AgentError("INVALID_REQUEST", "A method is required.") }
@@ -331,7 +342,7 @@ final class AgentActions {
         case "capture.scroll.stop": return try await ScrollingCapture.shared.finish(id: args["session_id"] as! String)
         case "capture.scroll.cancel": try ScrollingCapture.shared.cancel(id: args["session_id"] as! String); return ["cancelled": true]
         case "app.doctor":
-            return ["permissions": ["screen_recording": CGPreflightScreenCaptureAccess(), "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, "camera": AVCaptureDevice.authorizationStatus(for: .video) == .authorized, "accessibility": AXIsProcessTrusted(), "calendar": EKEventStore.authorizationStatus(for: .event) == .fullAccess, "input_monitoring": "not_required"], "agents": AgentConsent.status(), "brain_root": Brain.root.path, "brain_available": FileManager.default.fileExists(atPath: Brain.root.appendingPathComponent("catalog.json").path), "screen_recording_supported": ScreenRecorder.isSupported, "pointer_control": "not_supported"] as [String: Any]
+            return ["permissions": ["screen_recording": CGPreflightScreenCaptureAccess(), "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, "camera": AVCaptureDevice.authorizationStatus(for: .video) == .authorized, "accessibility": AXIsProcessTrusted(), "calendar": EKEventStore.authorizationStatus(for: .event) == .fullAccess, "input_monitoring": "not_required"], "agents": AgentConsent.status(), "folder_bridge": AgentFolderBridge.status(), "brain_root": Brain.root.path, "brain_available": FileManager.default.fileExists(atPath: Brain.root.appendingPathComponent("catalog.json").path), "screen_recording_supported": ScreenRecorder.isSupported, "pointer_control": "not_supported"] as [String: Any]
         case "windows.list":
             guard CGPreflightScreenCaptureAccess() else { throw AgentError("PERMISSION_REQUIRED", "Grant My Man Screen Recording permission first.") }
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
