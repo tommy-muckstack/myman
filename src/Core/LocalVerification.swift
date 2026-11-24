@@ -22,6 +22,7 @@ import GRDB
     let root: URL
     private var bridge: AgentBridge?
     private var actions: AgentActions?
+    private var folderBridge: AgentFolderBridge?
     private var window: NSWindow?
     private var agentSettingsWindow: NSWindow?
     init(root: URL) { self.root = root }
@@ -103,7 +104,28 @@ import GRDB
                 scheduler.contentView = NSHostingView(rootView: SchedulerView(input: "Coffee with Jilles and Harshil tomorrow at 11am for 30 min", model: fixtureModel).preferredColorScheme(.dark))
                 scheduler.makeKeyAndOrderFront(nil); agentSettingsWindow = scheduler
             }
-            let ready: [String: Any] = ["root": root.path, "fixture": url.path, "region": [100,100,900,600], "socket": AgentBridge.path, "theme_a": themeA, "theme_b": themeB, "meeting_id": "meeting-" + meetingID]
+            // The folder bridge against the isolated Brain. The answer to its
+            // prompt can be fixed so a script can exercise both outcomes.
+            UserDefaults.standard.set(ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_FOLDER_BRIDGE"] == "enabled", forKey: AgentFolderBridge.enabledKey)
+            if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_FOLDER_BRIDGE"] == "enabled" {
+                let answer = ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_FOLDER_APPROVAL"]
+                let folder = AgentFolderBridge(hooks: .init(
+                    catalog: { AgentActions.catalog["actions"] as? [[String: Any]] ?? [] },
+                    preflight: { action, args, identity in try AgentActions.preflight(action: action, args: args, identity: identity).name },
+                    dispatch: { actions.receive($0) },
+                    priorJob: { AgentJournal.shared.job($0) },
+                    approve: { request, deadline in
+                        if answer == "allow" { return .allowOnce }
+                        if answer == "deny" { return .deny }
+                        return await AgentApprovalWindow.shared.ask(request, deadline: deadline)
+                    },
+                    dismissApprovals: { AgentApprovalWindow.shared.dismissAll() },
+                    artifactRoots: { AgentFolderBridge.savedMediaRoots },
+                    namedAgentsRequired: { AgentIdentity.shared.required },
+                    launchID: actions.launchID))
+                folder.start(); folderBridge = folder
+            }
+            var ready: [String: Any] = ["root": root.path, "fixture": url.path, "region": [100,100,900,600], "socket": AgentBridge.path, "theme_a": themeA, "theme_b": themeB, "meeting_id": "meeting-" + meetingID]
             if ProcessInfo.processInfo.environment["MYMAN_VERIFICATION_BOOKING"] == "enabled" {
                 let start = Calendar.current.date(bySettingHour: 11, minute: 0, second: 0, of: Date().addingTimeInterval(86400))!
                 let draft = try CalendarBookingDraft(["title": "Coffee with Mary", "start": ISO8601DateFormatter().string(from: start),
@@ -125,6 +147,7 @@ import GRDB
                 try Data(WorkflowConnection.shared.prompt.utf8).write(to: root.appendingPathComponent("connection-prompt.txt"))
                 WorkflowCenter.shared.open(tab: "connection")
             }
+            ready["folder_bridge"] = Brain.root.appendingPathComponent("agent").path
             try JSONSerialization.data(withJSONObject: ready).write(to: root.appendingPathComponent("ready.json"))
         } catch { NSLog("Verification failed: \(error)"); NSApp.terminate(nil) }
     }

@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var launcher: LauncherPanelController!
     private var agentActions: AgentActions?
     private var agentBridge: AgentBridge?
+    private var agentFolderBridge: AgentFolderBridge?
     private var updater: SPUStandardUpdaterController?
     private let termination = AppTerminationCoordinator()
     private var updateActivity: AppUpdateActivity { .current(voice: voice, meetings: meetings) }
@@ -102,6 +103,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do { try bridge.start(); agentBridge = bridge }
         catch { NSLog("My Man: local agent bridge unavailable: \(error.localizedDescription)") }
+        // Off unless the person turns it on in Settings → Agents.
+        let folderBridge = AgentFolderBridge(hooks: .init(
+            catalog: { AgentActions.catalog["actions"] as? [[String: Any]] ?? [] },
+            preflight: { action, args, identity in try AgentActions.preflight(action: action, args: args, identity: identity).name },
+            dispatch: { [weak self] request in
+                guard self?.termination.isTerminating == false else {
+                    return ["ok": false, "error": AgentError("APP_QUITTING", "My Man is quitting.").json]
+                }
+                return actions.receive(request)
+            },
+            priorJob: { AgentJournal.shared.job($0) },
+            approve: { await AgentApprovalWindow.shared.ask($0, deadline: $1) },
+            dismissApprovals: { AgentApprovalWindow.shared.dismissAll() },
+            artifactRoots: { AgentFolderBridge.savedMediaRoots },
+            namedAgentsRequired: { AgentIdentity.shared.required },
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
+            launchID: actions.launchID))
+        folderBridge.start(); agentFolderBridge = folderBridge
         setUpStatusItem()
         setUpHotkeys()
         if let notice = Database.startupRecoveryNotice {

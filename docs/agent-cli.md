@@ -102,6 +102,10 @@ Doctor and `agents status` report a `credentials` block (`ready`, `path`, `keys.
 
 An agent should relay `hint` to the person and stop. `human_command` is omitted for Settings-only grants. `APP_NOT_RUNNING` and connection errors carry a `hint` and `launch_command` (`open -a "My Man"`). `myman doctor --json` adds `cli`, `agent_access` (`grants`, `disabled`, `human_command`, `agents_can_self_grant: false`) and `next_steps[]` (`id`, `summary`, `run`, `for`, `alternative`); `doctor --plain` prints the same as readable text. A missing Node returns `NODE_REQUIRED` with a `hint` about `PATH` in non-interactive shells. Linux/Omarchy: `agents grant|status|open` and `install-cli` return `unsupported_on_platform`; the owner edits `agents.json` and `doctor.next_steps` shows the exact JSON.
 
+## Agents that cannot reach the socket
+
+A cloud agent whose only access to this Mac is a connected folder can run the same actions by writing request files to `~/MyManBrain/agent`. A person turns this on in Settings → Agents; it starts off, and screen, recording, clipboard, sharing and delete actions wait for the person's answer. `myman --bridge` sends through the folder and `doctor` checks it. See [the folder bridge](agent-bridge.md) for the request and response format and the permission tiers.
+
 ## Calendar booking
 
 `calendar book --title TEXT --start ISO --time-zone IANA --duration-minutes 30 --json` opens a native preview; it does not create the event. Only the human’s Book button saves it. Both `calendar_read` and new default-off `calendar_write`, corresponding named scopes and existing OS Calendar access are required. `calendar booking --booking-id RETURNED_REQUEST_ID --json` polls the credential-scoped receipt. Guests are notes only; no invitations or video links. Linux/Omarchy returns `unsupported_on_platform`. See the [strict booking contract and failure/retry rules](calendar-book.md).

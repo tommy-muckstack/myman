@@ -8,15 +8,16 @@ import { Brain, BrainError } from './brain.mjs';
 import { execute } from './tools.mjs';
 import * as access from './agent-access.mjs';
 import * as credentials from './agent-credentials.mjs';
+import { bridgeDirectory, bridgeRequested, bridgeStatus, bridgeTransport } from './folder-bridge.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
 const strings = ['use-model','sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
-const booleans = ['help','json','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only','plain'];
+const booleans = ['help','json','bridge','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only','plain'];
 const options = Object.fromEntries([...strings.map(key=>[key,{type:'string'}]),...booleans.map(key=>[key,{type:'boolean'}]),...['tag','exclude-tag','participant'].map(key=>[key,{type:'string',multiple:true}])]);
 for(const action of catalog.actions)for(const [key,schema]of Object.entries(action.inputSchema.properties)){
   const flag=key.replaceAll('_','-');if(!options[flag])options[flag]={type:schema.type==='boolean'?'boolean':'string'};
 }
-const common = ['machine','json','root','wait','wait-ready','no-wait','request-id','wait-timeout','mode'];
+const common = ['machine','json','bridge','root','wait','wait-ready','no-wait','request-id','wait-timeout','mode'];
 const legacy = {open:'open',launcher:'open',screenshot:'screenshot',note:'note',dictation:'dictation',meeting:'meeting','cancel-meeting':'cancel-meeting',record:'record',settings:'settings'};
 const pairs = {
   'tool evaluate':'tool.evaluate', 'timer start':'timer.start', 'timer sound':'timer.sound', 'timer status':'timer.status',
@@ -131,6 +132,10 @@ agents grant|revoke capture|markup|recording|library|sharing|all  (grant: a PERS
   refused when MYMAN_AGENT_TOKEN/agent env is set or there is no TTY; asks you to type the confirmation; no --yes)
 agents credentials status|save  (durable ~/.config/myman/agent.env; save is person+TTY only; never auto-grants)
 agents open  (opens Settings → Agents; grants nothing)  install-cli  (links myman into ~/.local/bin; never overwrites)
+Folder bridge: --bridge (or MYMAN_BRIDGE=1) sends app commands as files through <Brain>/agent instead of the socket,
+  for agents that only reach the Mac through a connected folder: node <Brain>/tools/cli.mjs --bridge --root <Brain> doctor --json
+  A person turns it on in Settings → Agents. Screen, recording, clipboard, sharing and delete commands wait for them (AWAITING_USER).
+  Files a command produces are copied to <Brain>/agent/artifacts/<id>/ and listed in "artifacts". See docs/agent-bridge.md.
 Path: "/Applications/My Man.app/Contents/Resources/myman". Launch the app: open -a "My Man"
 Set MYMAN_AGENT_TOKEN / MYMAN_MACHINE_ID in the host env or agent.env (loaded automatically when unset).
 Geometry: --display + --region uses display-local points, top-left. Region alone uses
@@ -262,10 +267,10 @@ export async function plan(argv) {
 
 export function exitCode(code){
   if(/PERMISSION/.test(code))return 2;
-  if(/CANCELLED|CANCELED/.test(code))return 3;
-  if(['DISABLED','AGENT_DISABLED'].includes(code))return 4;
+  if(/CANCELLED|CANCELED/.test(code)||code==='USER_DENIED')return 3;
+  if(['DISABLED','AGENT_DISABLED','BRIDGE_DISABLED'].includes(code))return 4;
   if(/INVALID|UNKNOWN|CONFIRMATION_REQUIRED|ID_CONFLICT|SESSION_MISMATCH|EDIT_CONFLICT|AMBIGUOUS_TARGET|TARGET_NOT_FOUND/.test(code))return 5;
-  if(/TIMEOUT/.test(code))return 7;
+  if(/TIMEOUT/.test(code)||['AWAITING_USER','APPROVAL_EXPIRED'].includes(code))return 7;
   return 6;
 }
 export function unwrap(reply, selection, options){
@@ -277,9 +282,13 @@ export function unwrap(reply, selection, options){
 }
 export async function run(argv, deps={}){
   const task=await plan(argv);
-  const machine=parseArgs({args:argv,options,allowPositionals:true,strict:true}).values.machine;
+  const flags=parseArgs({args:bareFlags(argv),options,allowPositionals:true,strict:true}).values,machine=flags.machine;
   if(machine && ['read','interactive'].includes(task.type))fail('--machine targets native app commands. Run Brain retrieval on the explicitly selected host.');
-  const transport=payload=>(deps.request??request)({...payload,...(machine?{machine_id:machine}:{})});
+  // The folder bridge carries the same requests as the socket; the app applies the same checks to both.
+  const bridge=bridgeRequested(flags.bridge,deps.env??process.env),bridgeDir=bridgeDirectory({root:flags.root,env:deps.env??process.env});
+  if(bridge&&task.type==='interactive')fail('Interactive commands open a window on the Mac. Through the folder bridge, use an agent command.');
+  const send=bridge?(deps.bridge??bridgeTransport(bridgeDir,{env:deps.env??process.env})):(deps.request??request);
+  const transport=payload=>send({...payload,...(machine?{machine_id:machine}:{})});
   const call=deps.invoke??((name,args,control)=>invoke(name,args,{...control,transport}));
   if(task.type==='help')return {help};
   if(task.type==='workflow-check')return checkWorkflow({transport,machine:machine??process.env.MYMAN_MACHINE_ID});
@@ -309,7 +318,12 @@ export async function run(argv, deps={}){
     const cli=a.cliStatus(env);
     // The app answered, or we fall back to the preferences (read-only) so a closed app still reports grants.
     let grants=app.ok?app.agents:undefined,source='running_app',processRunning;
-    if(!app.ok){
+    const folder=await (deps.bridgeStatus??bridgeStatus)(bridgeDir);
+    if(bridge){
+      // No process list or preferences to read from here; the folder is the only evidence.
+      source='bridge_manifest';grants=app.ok?app.agents:folder.grants;
+      if(!app.ok)app={...app,running:folder.heartbeat.alive};
+    }else if(!app.ok){
       processRunning=await a.appRunning(deps.accessDeps);
       app={...app,running:false,process_running:processRunning,launch_command:a.LAUNCH_COMMAND};
       if(processRunning&&app.error?.code==='APP_NOT_RUNNING')app.error={...app.error,hint:`My Man is running but the CLI cannot reach its command socket. Restart it (quit, then ${a.LAUNCH_COMMAND}) and re-run ${a.cli(env)} doctor --json. If it persists, update My Man and make sure the CLI runs as the same macOS user.`};
@@ -318,13 +332,15 @@ export async function run(argv, deps={}){
     const cred=deps.credentials??credentials;
     const credStatus=cred.credentialsStatus({env,...(deps.credentialIo??{})});
     const steps=[
-      ...a.nextSteps({grants,appRunning:app.ok?true:processRunning,unreachable:!app.ok&&processRunning===true,permissions:app.permissions,cli},env),
+      ...(bridge?folder.problems.map(problem=>({id:problem.code.toLowerCase(),for:'person',summary:problem.message,note:problem.hint})):[]),
+      ...a.nextSteps({grants,appRunning:bridge?undefined:app.ok?true:processRunning,unreachable:!bridge&&!app.ok&&processRunning===true,permissions:app.permissions,cli},env),
       ...cred.credentialsNextSteps(credStatus,env),
     ];
     // Credentials are always reported; missing keys become next_steps. Doctor ok still
     // follows app/brain reachability — IDENTITY_REQUIRED surfaces when an action needs
     // a named credential (annotateError adds the agent.env hint then).
     const report={ok:app.ok && brain.ok!==false,app,brain,node:process.versions.node,cli,credentials:credStatus,
+      ...(bridge||folder.exists?{bridge:{...folder,in_use:bridge}}:{}),
       ...(grants?{agent_access:{source,grants,disabled:Object.keys(a.GRANTABLE).filter(g=>!grants[g]),agents_can_self_grant:false,
         ...(Object.keys(a.GRANTABLE).some(g=>!grants[g])?{human_command:`${a.cli(env)} agents grant ${Object.keys(a.GRANTABLE).filter(g=>!grants[g]).join(' ')}`}:{}),
         note:'Only a person can turn these on: in Terminal, or in Settings → Agents. No CLI action, MCP tool or flag can. Credentials (agent.env) are separate from grants.'}}:{}),
@@ -333,6 +349,7 @@ export async function run(argv, deps={}){
     return task.plain?{...report,plain:a.renderDoctor(report)}:report;
   }
   const reply=await call(task.name,task.args,task.control);
+  if(reply.job?.awaiting_user&&task.control.wait)return {ok:false,pending:true,job_id:reply.job.id,error:{...reply.job.error,message:'Still waiting for the person to allow or deny this in My Man. Poll this job_id; do not repeat the action.'}};
   if(reply.job?.state==='running'&&task.control.wait)return {ok:false,pending:true,job_id:reply.job.id,error:{code:'PROCESSING_TIMEOUT',message:'Job continues in My Man. Poll this job_id; do not repeat the action.'}};
   return task.raw?access.decorateReply(reply,{platform:deps.platform}):unwrap(reply,task.select,{platform:deps.platform});
 }

@@ -13,6 +13,7 @@ struct AgentSettingsView: View {
     @AppStorage("agentSchedulingParseEnabled") private var schedulingParse = false
     @AppStorage("agentPeopleReadEnabled") private var peopleRead = false
     @AppStorage("agentCalendarWriteEnabled") private var calendarWrite = false
+    @AppStorage("agentFolderBridgeEnabled") private var folderBridge = false
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("Your tools, on your terms.").font(MM.Fonts.title)
@@ -39,6 +40,12 @@ struct AgentSettingsView: View {
             }.disabled(!enabled)
             Text("These permissions start off. Delete commands also require explicit confirmation. You can always stop an active recording, even after turning access off.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Accept commands through the Brain folder", isOn: $folderBridge).clickable()
+                    .accessibilityHint("For an agent that can only reach this Mac through a connected folder. Starts off.")
+                Text("For an agent that can only reach this Mac through a connected folder, such as a cloud agent with your Brain folder attached. It writes a request to MyManBrain/agent and My Man answers there. The permissions above still apply, and My Man asks you before anything that looks at your screen, records, uses the clipboard, shares or deletes. Anything that can write to that folder can send a request, so leave this off unless you use such an agent.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+            }.disabled(!enabled)
             Text("Commands use a local connection under your Mac login. macOS permissions still apply. Brain retrieval is read-only; agents can read exported files independently of these settings. Content they request may be sent to their model provider.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             Text("Agent setup: myman doctor --json\nCommand reference: myman --help\nNo screen to click? In Terminal on this Mac: myman agents grant capture (it asks you to confirm)")
