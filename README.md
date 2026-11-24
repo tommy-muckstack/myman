@@ -321,6 +321,12 @@ myman screenshot --display main --json
 
 The installer lists optional Ubuntu and Arch packages and never runs sudo. [Linux setup, permissions, annotations, Omarchy, Xvfb and MCP](docs/linux-agents.md).
 
+## Folder bridge for agents (1.1.118)
+
+Agents that cannot reach the local control socket can send requests through the Brain folder. The bridge is **off by default**: turn on **Accept commands through the Brain folder** in Settings → Agents, with **Allow local app commands**. Sensitive actions (capture, recording, clipboard, publishing, deletes) ask you in an approval window before they run, and every request, answer and result is written to `agent/audit.log`. [Format and permission tiers](docs/agent-folder-bridge.md).
+
+The 1.1.118 signed and notarized installer and Sparkle update are published.
+
 ## Background performance (1.1.117)
 
 Optional indexing yields during heavy system load, Low Power Mode, and serious
