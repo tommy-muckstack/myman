@@ -8,7 +8,7 @@ The folder bridge lets that agent run the actions in [`actions.json`](../integra
 
 Only a person can, in **Settings → Agents → Accept commands through the Brain folder**. It starts off. There is no CLI command, action, MCP tool or flag for it, and `myman agents grant` does not cover it.
 
-The bridge runs only while both that switch and **Allow local app commands** are on. While it is off the app does not read the inbox, creates nothing, and runs nothing. If the folder exists from an earlier time, `manifest.json` says `"enabled": false`.
+The bridge runs only while both that switch and **Allow local app commands** are on. While it is off the watcher does not run, nothing is created and no action runs. If the folder exists from an earlier time, `manifest.json` says `"enabled": false`, and a request that arrives anyway is answered with `BRIDGE_DISABLED` (or `AGENT_DISABLED` when **Allow local app commands** is off) and removed. Only its file name is read.
 
 This switch widens who can send commands. The socket accepts only processes under your Mac login. The folder accepts anything that can write to it, including a cloud agent and any sync tool. That is why the bridge has its own switch and asks before sensitive actions.
 
@@ -16,8 +16,8 @@ This switch widens who can send commands. The socket accepts only processes unde
 
 ```
 ~/MyManBrain/agent/
-  manifest.json     app version, enabled flag, grants, every action with its schema and tier
-  heartbeat.json    rewritten every 10 seconds while the watcher runs
+  manifest.json     app and bridge version, enabled flag, grants, every action with its schema and tier
+  heartbeat.json    {"pid","updated",…} rewritten every 10 seconds while the watcher runs
   inbox/<id>.json   requests, written by the agent
   outbox/<id>.json  answers, written by the app
   artifacts/<id>/   files an action produced
@@ -46,9 +46,12 @@ mv "agent/inbox/.$id.json.tmp" "agent/inbox/$id.json"
 | `action` | A name from `manifest.json`. |
 | `args` | An object that matches the action's `inputSchema`. May be omitted for `{}`. |
 | `created` | ISO 8601 with a time zone, or Unix seconds. More than 10 minutes from the Mac's clock is refused. |
+| `idempotencyKey` | Optional string. A later request with the same key, action and args gets the first one's response (with `idempotent_replay_of`) and the action does not run again. The same key with different work is `ID_CONFLICT`. Keys are kept for a day. |
 | `credential`, `machine_id` | Only when this Mac requires named agents. Never logged or echoed. |
 
 Any other key, a file over 1 MiB, or a name that is not `<uuid>.json` is refused.
+
+Every request is asynchronous. Writing the file returns at once; poll `outbox/<id>.json`. No single step blocks the sender, so a long recording stop or export fits inside short tool calls.
 
 ## Response
 
@@ -66,19 +69,20 @@ The app writes `outbox/<id>.json`, then removes the request.
 
 **Artifacts.** Files a result points at (screenshots, recording exports, frames, previews) are copied to `artifacts/<id>/` and listed by path relative to the bridge folder. Meeting notes are also written as `notes.md`. Image data is never inlined: where the CLI returns base64, the bridge returns `{"mimeType": "image/png", "artifact": "artifacts/<id>/inline.png"}`. Paths inside `result` still name the file on the Mac; use `artifacts`. A file is copied only from the folders My Man saves to, only if it is an image, video, audio or document type, and only up to 1 GiB and 32 files per request. Anything left out is listed in `artifacts_skipped` with the reason.
 
-**Bridge error codes.** `AWAITING_USER`, `USER_DENIED`, `APPROVAL_EXPIRED`, `STALE_REQUEST`, `ID_ALREADY_USED`, `INVALID_REQUEST`, `BRIDGE_DISABLED`, and every code the CLI returns (`AGENT_DISABLED`, `UNKNOWN_ACTION`, `INVALID_ARGUMENTS`, `PERMISSION_REQUIRED`, `IDENTITY_REQUIRED`, `APP_RESTARTED`, and so on).
+**Bridge error codes.** `AWAITING_USER`, `USER_DENIED`, `APPROVAL_EXPIRED`, `STALE_REQUEST`, `ID_ALREADY_USED`, `ID_CONFLICT`, `IDEMPOTENCY_KEY_USED`, `INVALID_REQUEST`, `BRIDGE_DISABLED`, and every code the CLI returns (`AGENT_DISABLED`, `UNKNOWN_ACTION`, `INVALID_ARGUMENTS`, `PERMISSION_REQUIRED`, `IDENTITY_REQUIRED`, `APP_RESTARTED`, and so on).
 
 A repeat of an id that already has an answer is dropped and the first answer is left as it was. Work interrupted by an app restart is reported as `APP_RESTARTED` and never run again.
 
 ## Permission tiers
 
-Each action in `manifest.json` has a `tier`, its `permissions` (the grants from Settings → Agents), `approval_group` and `requires_confirm`.
+Each action in `manifest.json` has a `tier`, its `permissions` (the grants from Settings → Agents), `requires_approval`, `approval_group`, `requires_confirm`, and `available` (whether its grants are on right now).
 
 | Tier | What it takes | Examples |
 | --- | --- | --- |
-| `open` | The bridge is on. | `app.status`, `app.doctor`, `screens.list`, `item.read`, `capture.search` |
-| `grant` | The listed grants are on in Settings → Agents. | `note.create` (library), `screenshot.edit` (markup), `calendar.freebusy` (calendar_read) |
-| `approval` | The grants, and the person allows it in a prompt. | see below |
+| `read` | Its grants, if it lists any. | `app.status`, `app.doctor`, `screens.list`, `item.read`, `capture.search`, `calendar.freebusy` (calendar_read) |
+| `write` | Its grants. | `note.create`, `task.create` (library), `screenshot.edit` (markup) |
+| `capture` | Its grants, and the person allows it in a prompt. | `screenshot.capture`, `recording.start`, `meeting.notes`, `clipboard.read`, `share.publish` |
+| `destructive` | Its grants, `"confirm": true` where the action requires it, and the person allows it every time. | `item.delete`, `task.delete`, `history.clear` |
 
 The existing grants are unchanged and still apply to every request. The prompt is extra, and only the bridge has it. These ask:
 
@@ -99,7 +103,7 @@ While the prompt is open the outbox holds:
 {"ok": false, "pending": true, "error": {"code": "AWAITING_USER", "message": "Waiting for the person to allow or deny this in My Man.", "hint": "…"}, "artifacts": []}
 ```
 
-Read the file again; do not send the request again. It becomes the result after **Allow once** or **Allow for 10 minutes**, `USER_DENIED` after **Deny** or closing the window, and `APPROVAL_EXPIRED` if nobody answers within 10 minutes of `created`. **Allow for 10 minutes** covers later requests in the same group and is not offered for deletes. The window floats without taking keyboard focus, so a key typed in another app cannot allow a request.
+Read the file again; do not send the request again. It becomes the result after **Allow once** or **Allow for 30 minutes**, `USER_DENIED` after **Deny** or closing the window, and `APPROVAL_EXPIRED` if nobody answers within 10 minutes of `created`. **Allow for 30 minutes** covers later requests in the same group, is not offered for deletes, ends when the app quits or the bridge is turned off, and is listed in `manifest.json` under `session_grants`. The window floats without taking keyboard focus, so a key typed in another app cannot allow a request.
 
 ## From the CLI
 
@@ -116,6 +120,12 @@ The folder is `<root>/agent`, or `MYMAN_BRIDGE_DIR`. Results gain `artifacts` wh
 
 `doctor` reports a `bridge` block whenever the folder exists: `exists`, `writable` (it creates and removes a dot file in the inbox), `enabled`, and `heartbeat.alive` (written within 30 seconds). With `--bridge`, each problem becomes a `next_steps` entry for the person. `actions --json` reads `manifest.json`, so it reflects the running app.
 
+## Audit log
+
+`audit.log` gets one JSON line per event: `request`, `awaiting_user`, `approved`, `denied`, `expired`, `replayed`, `rejected` and `result`, each with the time, id and action. Free-text and long argument values are recorded as their length, not their content. Credentials are never recorded. The log rolls over at 5 MiB.
+
 ## What is not here yet
+
+This page covers the transport and its safety rules. Not part of it yet: size-capped export presets, OCR sidecar files, a never-capture list, `changes.since`, paging on list calls, scoped expiring tokens, a list of active allowances in Settings, and a "stop all agent activity" switch. Until then, use what the actions already offer: `windows.list` and `--window-id` for picker-free capture, `screenshot.ocr`, `recording.frames` for a contact sheet, `max_duration` on `recording.start`, and `max_bytes` on `recording.export`.
 
 A stdio MCP server generated from `actions.json` already ships as `myman-app` (`tools/app-server.mjs`). It talks to the socket. Pointing it at the folder is a small follow-up, useful if a policy that blocks local MCP servers changes.

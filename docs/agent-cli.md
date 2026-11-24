@@ -104,7 +104,7 @@ An agent should relay `hint` to the person and stop. `human_command` is omitted 
 
 ## Agents that cannot reach the socket
 
-A cloud agent whose only access to this Mac is a connected folder can run the same actions by writing request files to `~/MyManBrain/agent`. A person turns this on in Settings → Agents; it starts off, and screen, recording, clipboard, sharing and delete actions wait for the person's answer. `myman --bridge` sends through the folder and `doctor` checks it. See [the folder bridge](agent-folder-bridge.md) for the request and response format and the permission tiers.
+A cloud agent whose only access to this Mac is a connected folder can run the same actions by writing request files to `~/MyManBrain/agent`. A person turns this on in Settings → Agents; it starts off, and screen, recording, clipboard, sharing and delete actions wait for the person's answer. `myman --bridge` sends through the folder and `doctor` checks it. See [the folder bridge](agent-bridge.md) for the request and response format and the permission tiers.
 
 ## Calendar booking
 

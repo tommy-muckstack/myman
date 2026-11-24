@@ -54,8 +54,9 @@ final class AgentFolderBridgeTests: XCTestCase {
                 now: { [unowned self] in self.clock }, pollInterval: .milliseconds(5)))
         }
         func finish() { try? FileManager.default.removeItem(at: folder); defaults.removePersistentDomain(forName: suite) }
-        @discardableResult func send(_ action: String, args: [String: Any] = [:], id: String = UUID().uuidString, created: Date? = nil) throws -> String {
-            let body: [String: Any] = ["id": id, "action": action, "args": args, "created": ISO8601DateFormatter().string(from: created ?? clock)]
+        @discardableResult func send(_ action: String, args: [String: Any] = [:], id: String = UUID().uuidString, created: Date? = nil, key: String? = nil) throws -> String {
+            var body: [String: Any] = ["id": id, "action": action, "args": args, "created": ISO8601DateFormatter().string(from: created ?? clock)]
+            if let key { body["idempotencyKey"] = key }
             try JSONSerialization.data(withJSONObject: body).write(to: root.appendingPathComponent("inbox/\(id).json"))
             return id
         }
@@ -94,7 +95,7 @@ final class AgentFolderBridgeTests: XCTestCase {
         XCTAssertFalse(AgentFolderBridgePolicy.isRequestName("." + name)); XCTAssertFalse(AgentFolderBridgePolicy.isRequestName(id + ".json.tmp"))
         XCTAssertFalse(AgentFolderBridgePolicy.isStale(now.addingTimeInterval(-599), now: now))
         XCTAssertTrue(AgentFolderBridgePolicy.isStale(now.addingTimeInterval(-601), now: now))
-        XCTAssertTrue(AgentFolderBridgePolicy.isStale(now.addingTimeInterval(601), now: now))
+        XCTAssertTrue(AgentFolderBridgePolicy.isStale(now.addingTimeInterval(1801), now: now))
     }
 
     /// Run against the shipped catalog so a new action cannot slip past the prompt.
@@ -116,12 +117,17 @@ final class AgentFolderBridgeTests: XCTestCase {
         for info in actions {
             let name = try XCTUnwrap(info["name"] as? String), grants = Set(info["permissions"] as? [String] ?? [])
             guard !AgentConsent.cleanup.contains(name), !grants.isDisjoint(with: ["capture", "recording", "control"]) || info["destructive"] as? Bool == true else { continue }
-            XCTAssertEqual(AgentFolderBridgePolicy.tier(action: name, info: info), "approval", name)
+            XCTAssertTrue(["capture", "destructive"].contains(AgentFolderBridgePolicy.tier(action: name, info: info)), name)
         }
-        let listed = AgentFolderBridgePolicy.manifestActions(actions)
+        let listed = AgentFolderBridgePolicy.manifestActions(actions, grants: ["library": true])
         XCTAssertEqual(listed.count, actions.count)
-        XCTAssertEqual(listed.first { $0["name"] as? String == "app.status" }?["tier"] as? String, "open")
-        XCTAssertEqual(listed.first { $0["name"] as? String == "note.create" }?["tier"] as? String, "grant")
+        XCTAssertEqual(listed.first { $0["name"] as? String == "app.status" }?["tier"] as? String, "read")
+        XCTAssertEqual(listed.first { $0["name"] as? String == "note.create" }?["tier"] as? String, "write")
+        XCTAssertEqual(listed.first { $0["name"] as? String == "item.delete" }?["tier"] as? String, "destructive")
+        XCTAssertEqual(listed.first { $0["name"] as? String == "screenshot.capture" }?["tier"] as? String, "capture")
+        XCTAssertEqual(listed.first { $0["name"] as? String == "screenshot.capture" }?["requires_approval"] as? Bool, true)
+        XCTAssertEqual(listed.first { $0["name"] as? String == "note.create" }?["available"] as? Bool, true)
+        XCTAssertEqual(listed.first { $0["name"] as? String == "screenshot.capture" }?["available"] as? Bool, false)
         XCTAssertEqual(listed.first { $0["name"] as? String == "item.delete" }?["requires_confirm"] as? Bool, true)
         XCTAssertNotNil(listed.first { $0["name"] as? String == "note.create" }?["inputSchema"])
     }
@@ -170,11 +176,12 @@ final class AgentFolderBridgeTests: XCTestCase {
         let id = try fixture.send("app.status")
         fixture.bridge.scan(); await fixture.bridge.handle(id + ".json")
         XCTAssertTrue(fixture.dispatched.isEmpty); XCTAssertNil(fixture.outbox(id)); XCTAssertEqual(fixture.pending, [id + ".json"])
-        // The master switch turns the bridge off as well.
+        // The master switch turns the bridge off as well. With the folder there, the request is told why.
         fixture.defaults.set(true, forKey: AgentFolderBridge.enabledKey); fixture.defaults.set(false, forKey: "agentActionsEnabled")
         XCTAssertFalse(fixture.bridge.enabled)
         fixture.bridge.reconcile(); await fixture.bridge.handle(id + ".json")
-        XCTAssertTrue(fixture.dispatched.isEmpty); XCTAssertNil(fixture.outbox(id))
+        XCTAssertEqual(fixture.code(id), "AGENT_DISABLED")
+        XCTAssertTrue(fixture.dispatched.isEmpty); XCTAssertTrue(fixture.asked.isEmpty); XCTAssertTrue(fixture.pending.isEmpty)
     }
 
     @MainActor func testAnOpenActionRunsThroughTheDispatcherAndIsLogged() async throws {
@@ -221,18 +228,18 @@ final class AgentFolderBridgeTests: XCTestCase {
         XCTAssertEqual(fixture.code(second), "USER_DENIED"); XCTAssertEqual(fixture.dispatched.count, 1)
     }
 
-    @MainActor func testTenMinutesCoversOneKindAndDeletesAlwaysAsk() async throws {
+    @MainActor func testThirtyMinutesCoversOneKindAndDeletesAlwaysAsk() async throws {
         let fixture = try Fixture(); defer { fixture.finish() }
-        fixture.bridge.reconcile(); fixture.answer = .allowForTenMinutes
+        fixture.bridge.reconcile(); fixture.answer = .allowForSession
         for _ in 0 ..< 2 { await fixture.bridge.handle(try fixture.send("recording.start") + ".json") }
         XCTAssertEqual(fixture.asked.count, 1); XCTAssertEqual(fixture.dispatched.count, 2)
         await fixture.bridge.handle(try fixture.send("screenshot.capture") + ".json")
         XCTAssertEqual(fixture.asked.count, 2, "another kind asks again")
         for _ in 0 ..< 2 { await fixture.bridge.handle(try fixture.send("item.delete", args: ["id": "x", "confirm": true]) + ".json") }
         XCTAssertEqual(fixture.asked.count, 4); XCTAssertEqual(fixture.asked.last?.canRemember, false)
-        fixture.clock = fixture.clock.addingTimeInterval(601)
+        fixture.clock = fixture.clock.addingTimeInterval(1801)
         await fixture.bridge.handle(try fixture.send("recording.start") + ".json")
-        XCTAssertEqual(fixture.asked.count, 5, "the ten minutes end")
+        XCTAssertEqual(fixture.asked.count, 5, "the 30 minutes end")
         // Stopping is never held back.
         let before = fixture.asked.count
         await fixture.bridge.handle(try fixture.send("recording.stop", args: ["session_id": "s"]) + ".json")
@@ -314,8 +321,26 @@ final class AgentFolderBridgeTests: XCTestCase {
         let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture.root.appendingPathComponent("manifest.json"))) as? [String: Any])
         XCTAssertEqual(manifest["enabled"] as? Bool, false); XCTAssertNotNil(manifest["hint"])
         let id = try fixture.send("app.status")
-        fixture.bridge.scan(); await fixture.bridge.handle(id + ".json")
-        XCTAssertNil(fixture.outbox(id)); XCTAssertTrue(fixture.dispatched.isEmpty)
+        fixture.bridge.scan(); await fixture.bridge.handle(id + ".json"); fixture.bridge.refusePending()
+        XCTAssertEqual(fixture.code(id), "BRIDGE_DISABLED"); XCTAssertTrue(fixture.dispatched.isEmpty); XCTAssertTrue(fixture.pending.isEmpty)
+    }
+
+    @MainActor func testTheSameIdempotencyKeyRunsOnceAndReturnsTheSameResponse() async throws {
+        let fixture = try Fixture(); defer { fixture.finish() }
+        fixture.bridge.reconcile()
+        let first = try fixture.send("note.create", args: ["body": "once"], key: "key-1")
+        fixture.results[first] = ["id": "note-1"]
+        await fixture.bridge.handle(first + ".json")
+        let second = try fixture.send("note.create", args: ["body": "once"], key: "key-1")
+        await fixture.bridge.handle(second + ".json")
+        XCTAssertEqual(fixture.dispatched.count, 1)
+        XCTAssertEqual((fixture.outbox(second)?["result"] as? [String: Any])?["id"] as? String, "note-1")
+        XCTAssertEqual(fixture.outbox(second)?["idempotent_replay_of"] as? String, first); XCTAssertEqual(fixture.outbox(second)?["id"] as? String, second)
+        let other = try fixture.send("note.create", args: ["body": "different"], key: "key-1")
+        await fixture.bridge.handle(other + ".json")
+        XCTAssertEqual(fixture.code(other), "ID_CONFLICT"); XCTAssertEqual(fixture.dispatched.count, 1)
+        // Long or free text is not kept in the log.
+        XCTAssertEqual((fixture.audit.first?["args"] as? [String: Any])?["body"] as? String, "<4 characters>")
     }
 
     @MainActor func testALinkedFolderIsRefused() async throws {

@@ -141,7 +141,7 @@ agents open  (opens Settings \u2192 Agents; grants nothing)  install-cli  (links
 Folder bridge: --bridge (or MYMAN_BRIDGE=1) sends app commands as files through <Brain>/agent instead of the socket,
   for agents that only reach the Mac through a connected folder: node <Brain>/tools/cli.mjs --bridge --root <Brain> doctor --json
   A person turns it on in Settings \u2192 Agents. Screen, recording, clipboard, sharing and delete commands wait for them (AWAITING_USER).
-  Files a command produces are copied to <Brain>/agent/artifacts/<id>/ and listed in "artifacts". See docs/agent-folder-bridge.md.
+  Files a command produces are copied to <Brain>/agent/artifacts/<id>/ and listed in "artifacts". See docs/agent-bridge.md.
 Path: "/Applications/My Man.app/Contents/Resources/myman". Launch the app: open -a "My Man"
 Set MYMAN_AGENT_TOKEN / MYMAN_MACHINE_ID in the host env or agent.env (loaded automatically when unset).
 Geometry: --display + --region uses display-local points, top-left. Region alone uses

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Darwin
 
@@ -10,15 +11,17 @@ struct AgentApprovalRequest: Sendable {
     let detail: String
     let group: String
     let requester: String
-    /// Deletes are asked every time; other groups may be allowed for ten minutes.
+    /// Deletes are asked every time; other groups may be allowed for 30 minutes.
     let canRemember: Bool
 }
-enum AgentApprovalDecision: Sendable { case deny, allowOnce, allowForTenMinutes, expired }
+enum AgentApprovalDecision: Sendable { case deny, allowOnce, allowForSession, expired }
 
 /// Pure rules for the folder bridge, kept apart from file watching so they can
 /// be tested without an app, a Brain folder or a person.
 enum AgentFolderBridgePolicy {
     static let staleAfter: TimeInterval = 600
+    /// How long "Allow for 30 minutes" lasts. Kept in memory only, so it ends when the app quits.
+    static let sessionGrant: TimeInterval = 1800
     static let maximumRequestBytes = 1024 * 1024
     static let maximumArtifactBytes = 1 << 30
     static let maximumArtifacts = 32
@@ -29,6 +32,8 @@ enum AgentFolderBridgePolicy {
         let action: String
         let args: [String: Any]
         let created: Date
+        /// The same key gets the same response and runs once, whatever the id.
+        let idempotencyKey: String?
         /// Passed to the dispatcher unchanged and never written to the log or the outbox.
         let identity: [String: Any]
     }
@@ -42,20 +47,22 @@ enum AgentFolderBridgePolicy {
         guard data.count <= maximumRequestBytes, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw AgentError("INVALID_REQUEST", "The request must be one JSON object up to 1 MiB.")
         }
-        guard Set(object.keys).isSubset(of: ["id", "action", "args", "created", "credential", "machine_id"]) else {
-            throw AgentError("INVALID_REQUEST", "Use only id, action, args and created (credential and machine_id when this Mac requires named agents).")
+        guard Set(object.keys).isSubset(of: ["id", "action", "args", "created", "idempotencyKey", "credential", "machine_id"]) else {
+            throw AgentError("INVALID_REQUEST", "Use only id, action, args, created and idempotencyKey (credential and machine_id when this Mac requires named agents).")
         }
         guard let id = object["id"] as? String, id == String(name.dropLast(5)) else { throw AgentError("INVALID_REQUEST", "id must match the file name.") }
         guard let action = object["action"] as? String, !action.isEmpty, action.count <= 100 else { throw AgentError("INVALID_REQUEST", "action must be an action name from manifest.json.") }
         guard object["args"] == nil || object["args"] is [String: Any] else { throw AgentError("INVALID_REQUEST", "args must be a JSON object.") }
         guard let created = date(object["created"]) else { throw AgentError("INVALID_REQUEST", "created must be an ISO 8601 time with a time zone, or Unix seconds.") }
+        let idempotency = object["idempotencyKey"] as? String
+        guard object["idempotencyKey"] == nil || (idempotency.map { !$0.isEmpty && $0.count <= 200 } ?? false) else { throw AgentError("INVALID_REQUEST", "idempotencyKey must be a string of up to 200 characters.") }
         var identity: [String: Any] = [:]
         for key in ["credential", "machine_id"] {
             guard let value = object[key] else { continue }
             guard let text = value as? String, text.count <= 512 else { throw AgentError("INVALID_REQUEST", "\(key) must be a string.") }
             identity[key] = text
         }
-        return Request(id: id, action: action, args: object["args"] as? [String: Any] ?? [:], created: created, identity: identity)
+        return Request(id: id, action: action, args: object["args"] as? [String: Any] ?? [:], created: created, idempotencyKey: idempotency, identity: identity)
     }
 
     static func date(_ value: Any?) -> Date? {
@@ -87,16 +94,34 @@ enum AgentFolderBridgePolicy {
         return nil
     }
 
+    /// read and write run once their grants are on. capture and destructive also ask the person.
     static func tier(action: String, info: [String: Any]) -> String {
-        if approvalGroup(action: action, info: info, args: [:]) != nil { return "approval" }
-        return (info["permissions"] as? [String] ?? []).isEmpty ? "open" : "grant"
+        if let group = approvalGroup(action: action, info: info, args: [:]) { return group == "delete" ? "destructive" : "capture" }
+        return info["readOnly"] as? Bool == true ? "read" : "write"
     }
 
-    static func manifestActions(_ catalog: [[String: Any]]) -> [[String: Any]] {
+    static func fingerprint(action: String, args: [String: Any]) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: ["action": action, "args": args] as [String: Any], options: [.sortedKeys])) ?? Data()
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The log records what was asked without keeping what was written: long
+    /// or free-text values are replaced by their length.
+    static func redacted(_ value: Any, key: String = "") -> Any {
+        if let object = value as? [String: Any] { return Dictionary(uniqueKeysWithValues: object.map { ($0.key, redacted($0.value, key: $0.key)) }) }
+        if let list = value as? [Any] { return list.map { redacted($0, key: key) } }
+        if let text = value as? String, ["text", "body", "notes", "message", "quote"].contains(key) || text.count > 120 { return "<\(text.count) characters>" }
+        return value
+    }
+
+    static func manifestActions(_ catalog: [[String: Any]], grants: [String: Bool] = [:]) -> [[String: Any]] {
         catalog.compactMap { info -> [String: Any]? in
             guard let name = info["name"] as? String else { return nil }
             var entry = info
             entry["tier"] = tier(action: name, info: info)
+            entry["requires_approval"] = approvalGroup(action: name, info: info, args: [:]) != nil
+            // Whether its grants are on right now, so an agent need not find out by trying.
+            entry["available"] = (info["permissions"] as? [String] ?? []).allSatisfy { grants[$0] == true }
             entry["approval_group"] = approvalGroup(action: name, info: info, args: [:]) as Any? ?? NSNull()
             entry["requires_confirm"] = ["item.delete", "task.delete", "history.clear", "share.publish"].contains(name)
             return entry
@@ -107,6 +132,8 @@ enum AgentFolderBridgePolicy {
         switch code {
         case "AWAITING_USER": return "My Man is showing the person a prompt. Read this file again after they answer; do not send the request again."
         case "USER_DENIED": return "The person said no. Ask them before sending a new request."
+        case "IDEMPOTENCY_KEY_USED": return "That key already ran and its response is no longer kept. Check what was saved before sending new work."
+        case "ID_CONFLICT": return "Use a new idempotencyKey for a different action or arguments."
         case "APPROVAL_EXPIRED": return "Nobody answered within ten minutes. Ask the person to be at the Mac, then send a new request with a new id."
         case "AGENT_DISABLED": return "Agents cannot enable this. A person turns it on in My Man Settings → Agents."
         case "BRIDGE_DISABLED": return "A person turns on \"Accept commands through the Brain folder\" in My Man Settings → Agents."
@@ -263,6 +290,7 @@ enum AgentFolderBridgePolicy {
     private var active = Set<String>()
     private var seen = Set<String>()
     private var allowedUntil: [String: Date] = [:]
+    private var keys: [String: [String: Any]] = [:]
     private var signature = ""
     private var observers: [NSObjectProtocol] = []
 
@@ -322,6 +350,8 @@ enum AgentFolderBridgePolicy {
         }
         writeManifest()
         guard !running else { return }
+        source?.cancel(); source = nil
+        keys = (readJSON(root.appendingPathComponent(".idempotency.json"), limit: 1024 * 1024) as? [String: [String: Any]]) ?? [:]
         running = true; heartbeat()
         let fd = Darwin.open(inbox.path, O_EVTONLY)
         if fd >= 0 {
@@ -348,6 +378,32 @@ enum AgentFolderBridgePolicy {
         guard isOwnedDirectory(root) else { return }
         try? FileManager.default.removeItem(at: root.appendingPathComponent("heartbeat.json"))
         writeManifest()
+        // A request that arrives anyway is told why and removed. Nothing is
+        // parsed beyond its name and nothing runs.
+        guard isOwnedDirectory(inbox), isOwnedDirectory(outbox) else { return }
+        let fd = Darwin.open(inbox.path, O_EVTONLY)
+        if fd >= 0 {
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .link], queue: .main)
+            source.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.refusePending() } }
+            source.setCancelHandler { Darwin.close(fd) }
+            self.source = source; source.resume()
+        }
+        refusePending()
+    }
+
+    func refusePending() {
+        guard !running, isOwnedDirectory(inbox), isOwnedDirectory(outbox), let names = try? FileManager.default.contentsOfDirectory(atPath: inbox.path) else { return }
+        let master = defaults.object(forKey: "agentActionsEnabled") as? Bool ?? true
+        let error: [String: Any] = master ? ["code": "BRIDGE_DISABLED", "message": "The Brain folder bridge is turned off in My Man."]
+                                          : ["code": "AGENT_DISABLED", "message": "Local app actions are disabled in Settings → Agents."]
+        for name in names where AgentFolderBridgePolicy.isRequestName(name) {
+            let stem = String(name.dropLast(5)), target = outbox.appendingPathComponent(name)
+            if readJSON(target) == nil {
+                try? writeJSON(["ok": false, "id": stem, "error": AgentFolderBridgePolicy.withHint(error), "artifacts": [String](), "finished_at": AgentActions.date(hooks.now())], to: target)
+            }
+            audit("rejected", id: stem, ["code": error["code"] ?? ""])
+            unlink(inbox.appendingPathComponent(name).path)
+        }
     }
 
     private func tick() {
@@ -418,24 +474,28 @@ enum AgentFolderBridgePolicy {
 
     private func heartbeat() {
         let now = hooks.now()
-        try? writeJSON(["at": AgentActions.date(now), "epoch": now.timeIntervalSince1970, "interval_seconds": 10, "launch_id": hooks.launchID,
+        try? writeJSON(["at": AgentActions.date(now), "updated": AgentActions.date(now), "epoch": now.timeIntervalSince1970, "interval_seconds": 10, "launch_id": hooks.launchID,
                         "pid": Int(ProcessInfo.processInfo.processIdentifier), "app_version": hooks.appVersion, "enabled": true], to: root.appendingPathComponent("heartbeat.json"))
     }
 
     private func writeManifest() {
         let on = enabled && isOwnedDirectory(inbox)
         var manifest: [String: Any] = [
-            "version": 1, "app_version": hooks.appVersion, "enabled": on, "launch_id": hooks.launchID, "updated_at": AgentActions.date(hooks.now()),
+            "version": 1, "bridge_version": 1, "app_version": hooks.appVersion, "enabled": on, "launch_id": hooks.launchID, "updated_at": AgentActions.date(hooks.now()),
             "grants": AgentConsent.status(defaults), "named_agents_required": hooks.namedAgentsRequired(),
-            "request": ["path": "inbox/<id>.json", "fields": ["id": "a new UUID, also the file name", "action": "an action name below", "args": "an object matching that action's inputSchema", "created": "ISO 8601 time with a time zone"],
+            "request": ["path": "inbox/<id>.json", "fields": ["id": "a new UUID, also the file name", "action": "an action name below", "args": "an object matching that action's inputSchema", "created": "ISO 8601 time with a time zone",
+                                              "idempotencyKey": "optional; the same key returns the same response and runs once"],
                         "write": "Write to a name starting with a dot, then rename to <id>.json.", "stale_after_seconds": Int(AgentFolderBridgePolicy.staleAfter)] as [String: Any],
             "response": ["path": "outbox/<id>.json", "success": ["ok": true, "result": "the action's result", "artifacts": "paths relative to this folder"] as [String: Any],
                          "failure": ["ok": false, "error": ["code": "stable code", "message": "what happened", "hint": "what to do next"]] as [String: Any],
                          "waiting": "pending is true while the code is AWAITING_USER. Read the file again; do not resend."] as [String: Any],
-            "tiers": ["open": "Runs when the bridge is on.", "grant": "Also needs the listed permissions turned on in Settings → Agents.",
-                      "approval": "Needs its permissions, and My Man asks the person each time (or for ten minutes if they choose)."],
+            "tiers": ["read": "Reads state or saved items. Runs when its permissions are on.", "write": "Creates or changes notes, tasks and library items. Runs when its permissions are on.",
+                      "capture": "Looks at the screen, records, uses the clipboard or shares. Needs its permissions, and My Man asks the person each time or for 30 minutes.",
+                      "destructive": "Deletes. Needs its permissions and confirm, and My Man asks the person every time."],
+            "session_grants": Dictionary(uniqueKeysWithValues: allowedUntil.filter { $0.value > hooks.now() }.map { ($0.key, AgentActions.date($0.value)) }),
+            "async": "Every request is asynchronous: write it, then poll outbox/<id>.json. Nothing blocks the sender.",
             "files": ["heartbeat": "heartbeat.json", "audit": "audit.log", "artifacts": "artifacts/<id>/"],
-            "actions": AgentFolderBridgePolicy.manifestActions(hooks.catalog()),
+            "actions": AgentFolderBridgePolicy.manifestActions(hooks.catalog(), grants: AgentConsent.status(defaults)),
         ]
         if !on { manifest["hint"] = AgentFolderBridgePolicy.hint("BRIDGE_DISABLED") ?? "" }
         try? writeJSON(manifest, to: root.appendingPathComponent("manifest.json"))
@@ -487,7 +547,7 @@ enum AgentFolderBridgePolicy {
               let data = try? Data(contentsOf: file) else { throw AgentError("INVALID_REQUEST", "The request must be a regular file up to 1 MiB.") }
         let request = try AgentFolderBridgePolicy.parse(data, name: name)
         action = request.action
-        audit("request", id: request.id, ["action": request.action, "args": AgentFolderBridgePolicy.preview(request.args), "created": AgentActions.date(request.created)])
+        audit("request", id: request.id, ["action": request.action, "args": AgentFolderBridgePolicy.redacted(request.args), "created": AgentActions.date(request.created), "idempotency_key": request.idempotencyKey ?? NSNull()])
 
         // An id runs once. A finished result is never overwritten by a repeat.
         if let earlier = readJSON(outbox.appendingPathComponent(name)), earlier["pending"] as? Bool != true { return .silent("ID_ALREADY_USED") }
@@ -501,12 +561,33 @@ enum AgentFolderBridgePolicy {
         guard !AgentFolderBridgePolicy.isStale(request.created, now: hooks.now()) else {
             throw AgentError("STALE_REQUEST", "This request is more than ten minutes from the Mac's clock, so it was not run.", details: ["mac_time": AgentActions.date(hooks.now())])
         }
+        // The same key gets the first request's response; the action does not run again.
+        let digest = AgentFolderBridgePolicy.fingerprint(action: request.action, args: request.args)
+        if let key = request.idempotencyKey, let first = keys[key], let original = first["id"] as? String, original != request.id {
+            guard first["fingerprint"] as? String == digest else { throw AgentError("ID_CONFLICT", "This idempotencyKey was used with a different action or arguments.") }
+            audit("replayed", id: request.id, ["action": request.action, "original": original])
+            while true {
+                if var earlier = readJSON(outbox.appendingPathComponent(original + ".json")), earlier["pending"] as? Bool != true {
+                    earlier["idempotent_replay_of"] = original
+                    return .respond(earlier)
+                }
+                guard active.contains(original + ".json") else { throw AgentError("IDEMPOTENCY_KEY_USED", "This idempotencyKey already ran and its response is no longer kept.") }
+                try? await Task.sleep(for: hooks.pollInterval)
+            }
+        }
         guard let details = hooks.catalog().first(where: { $0["name"] as? String == request.action }) else { throw AgentError("UNKNOWN_ACTION", "Use manifest.json to discover actions and arguments.") }
         // Everything the dispatcher would refuse is refused here first, so the
         // person is never asked about a request that could not run anyway.
         let requester = try hooks.preflight(request.action, request.args, request.identity)
         if seen.count > 4096 { seen.removeAll() }
         seen.insert(request.id)
+        if let key = request.idempotencyKey {
+            let cutoff = hooks.now().timeIntervalSince1970 - 86400
+            keys = keys.filter { ($0.value["at"] as? Double ?? 0) >= cutoff }
+            if keys.count >= 512 { keys.removeAll() }
+            keys[key] = ["id": request.id, "fingerprint": digest, "at": hooks.now().timeIntervalSince1970]
+            try? writeJSON(keys, to: root.appendingPathComponent(".idempotency.json"))
+        }
 
         if let group = AgentFolderBridgePolicy.approvalGroup(action: request.action, info: details, args: request.args), (allowedUntil[group] ?? .distantPast) <= hooks.now() {
             try writeJSON(["ok": false, "pending": true, "id": request.id, "action": request.action, "artifacts": [String](),
@@ -518,10 +599,11 @@ enum AgentFolderBridgePolicy {
             switch decision {
             case .deny: audit("denied", id: request.id, ["action": request.action]); throw AgentError("USER_DENIED", "The person did not allow this request.")
             case .expired: audit("expired", id: request.id, ["action": request.action]); throw AgentError("APPROVAL_EXPIRED", "Nobody answered the prompt in time, so nothing ran.")
-            case .allowForTenMinutes where ask.canRemember:
-                allowedUntil[group] = hooks.now().addingTimeInterval(600)
-                audit("approved", id: request.id, ["action": request.action, "group": group, "for_seconds": 600])
-            case .allowOnce, .allowForTenMinutes: audit("approved", id: request.id, ["action": request.action, "group": group])
+            case .allowForSession where ask.canRemember:
+                allowedUntil[group] = hooks.now().addingTimeInterval(AgentFolderBridgePolicy.sessionGrant)
+                audit("approved", id: request.id, ["action": request.action, "group": group, "for_seconds": Int(AgentFolderBridgePolicy.sessionGrant)])
+                writeManifest()
+            case .allowOnce, .allowForSession: audit("approved", id: request.id, ["action": request.action, "group": group])
             }
         }
         guard running, enabled else { throw AgentError("BRIDGE_DISABLED", "The Brain folder bridge was turned off before this ran.") }
