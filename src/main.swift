@@ -460,8 +460,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(meeting)
         let narration = NSMenuItem(title: NarrationRecorder.shared.isActive ? "Stop Narration" : "Record Narration", action: #selector(toggleNarration), keyEquivalent: "")
         narration.target = self; menu.addItem(narration); narrationMenuItem = narration
-        let cloudLink = NSMenuItem(title: "Copy Cloud Link for Last Recording", action: #selector(copyLastRecordingLink), keyEquivalent: "")
-        cloudLink.target = self; menu.addItem(cloudLink)
+        let driveSave = NSMenuItem(title: "Save Last Recording to Drive", action: #selector(saveLastRecordingToDrive), keyEquivalent: "")
+        driveSave.target = self; menu.addItem(driveSave)
         let bridge = NSMenuItem(title: "Brain folder", action: nil, keyEquivalent: "")
         bridge.isEnabled = false; menu.addItem(bridge); bridgeStatusItem = bridge
         refreshBridgeStatus()
@@ -498,7 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func copyLastRecordingLink() { RecordingCloudLink.copyLatest() }
+    @objc private func saveLastRecordingToDrive() { RecordingDriveFolder.saveLatest() }
 
     @objc private func toggleNarration() {
         Task { @MainActor in
