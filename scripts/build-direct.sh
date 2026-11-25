@@ -224,7 +224,6 @@ inject_plist_key() {
         echo "WARNING: $key not set — release build will ship without it"
     fi
 }
-inject_plist_key MMAmplitudeKey "${MM_AMPLITUDE_KEY:-}"
 inject_plist_key MMSentryDSN "${MM_SENTRY_DSN:-}"
 
 echo "==> Code signing with Developer ID + hardened runtime..."

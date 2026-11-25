@@ -83,7 +83,7 @@ PLIST
 # everyone else — dev builds then run with telemetry off, which is fine.
 if [[ -f "secrets.env" ]]; then
     set -a; source secrets.env; set +a
-    for pair in "MMAmplitudeKey:${MM_AMPLITUDE_KEY:-}" "MMSentryDSN:${MM_SENTRY_DSN:-}"; do
+    for pair in "MMSentryDSN:${MM_SENTRY_DSN:-}"; do
         key="${pair%%:*}"; value="${pair#*:}"
         [ -n "$value" ] && /usr/libexec/PlistBuddy -c "Add :$key string $value" "$APP_DIR/Contents/Info.plist"
     done
