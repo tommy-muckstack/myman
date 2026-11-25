@@ -11,6 +11,22 @@ import Darwin
 // stays the app's working store.
 
 enum Brain {
+    /// Where the previous Brain tools are kept when an update replaces them. Outside the Brain folder, so it is never synced.
+    static var toolsBackupFolder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MyMan/BrainToolsBackup", isDirectory: true)
+    }
+
+    /// Replaces the single previous copy of the tools folder. Failing to back up never blocks the update.
+    static func backUpTools(from toolsFolder: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: toolsFolder.path) else { return }
+        let backup = toolsBackupFolder
+        try? fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.removeItem(at: backup)
+        do { try fm.copyItem(at: toolsFolder, to: backup) } catch { NSLog("My Man: could not back up Brain tools: %@", error.localizedDescription) }
+    }
+
     // Use the current user’s home folder; unlike ~/Documents, no TCC prompt.
     static var root: URL {
         if let root = VerificationPaths.root { return root.resolvingSymlinksInPath().appendingPathComponent("Brain") }
@@ -35,7 +51,15 @@ enum Brain {
                                         withIntermediateDirectories: true)
             }
             if let companion = Bundle.module.url(forResource: "BrainCompanion", withExtension: nil) {
-                for file in (try? fm.contentsOfDirectory(at: companion, includingPropertiesForKeys: nil)) ?? [] {
+                let files = (try? fm.contentsOfDirectory(at: companion, includingPropertiesForKeys: nil)) ?? []
+                let toolsFolder = root.appendingPathComponent("tools", isDirectory: true)
+                // Before an update changes the tools, keep the previous copy outside the Brain folder (which may sync).
+                let changed = files.contains { file in
+                    guard let new = try? Data(contentsOf: file) else { return false }
+                    return (try? Data(contentsOf: toolsFolder.appendingPathComponent(file.lastPathComponent))) != new
+                }
+                if changed { Brain.backUpTools(from: toolsFolder) }
+                for file in files {
                     if let data = try? Data(contentsOf: file) { try? writeAgentData(data, to: "tools/" + file.lastPathComponent) }
                 }
             }
