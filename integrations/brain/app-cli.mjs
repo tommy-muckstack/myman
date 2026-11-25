@@ -172,6 +172,9 @@ export async function plan(argv) {
   const control={id:v['request-id'],wait:!v['no-wait'],waitMs};
   if(p[0]==='actions'){allowed(v,['offline']);if(p.length>2)fail('Use actions [name].');return {type:'discovery',name:p[1],offline:!!v.offline};}
   if(p[0]==='wait'){allowed(v,['id','job-id','session-id','stage','timeout']);if(p.length!==1)fail('Use wait with a resource ID.');const args={};for(const k of ['id','job-id','session-id','stage','timeout'])if(v[k]!==undefined)args[k.replaceAll('-','_')]=k==='timeout'?number(v[k]):v[k];return {type:'action',name:'app.wait',args,control};}
+  // job.list and job.get are the same as jobs and job UUID, under the names agents look for.
+  if(p[0]==='job.list'){allowed(v,[]);if(p.length!==1)fail('Use job.list.');return {type:'jobs'};}
+  if(p[0]==='job.get'){allowed(v,[]);if(p.length!==2)fail('Use job.get UUID.');return {type:'job',id:p[1],wait:false};}
   if(p[0]==='jobs'){allowed(v,[]);if(p.length!==1)fail('Use jobs.');return {type:'jobs'};}
   if(p[0]==='job'){
     allowed(v,['timeout']);

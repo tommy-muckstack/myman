@@ -455,6 +455,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         meeting.keyEquivalentModifierMask = [.option, .shift]
         meeting.target = self
         menu.addItem(meeting)
+        let narration = NSMenuItem(title: NarrationRecorder.shared.isActive ? "Stop Narration" : "Record Narration", action: #selector(toggleNarration), keyEquivalent: "")
+        narration.target = self; menu.addItem(narration); narrationMenuItem = narration
+        let bridge = NSMenuItem(title: "Brain folder", action: nil, keyEquivalent: "")
+        bridge.isEnabled = false; menu.addItem(bridge); bridgeStatusItem = bridge
+        refreshBridgeStatus()
+        bridgeStatusTimer?.invalidate()
+        bridgeStatusTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshBridgeStatus() }
+        }
         let cancelRecording = NSMenuItem(title: "Cancel Recording…", action: #selector(cancelActiveRecording), keyEquivalent: "")
         cancelRecording.target = self
         menu.addItem(cancelRecording)
@@ -484,7 +493,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func toggleNarration() {
+        Task { @MainActor in
+            if NarrationRecorder.shared.isActive { _ = try? await NarrationRecorder.shared.stop() }
+            else { _ = try? await NarrationRecorder.shared.start() }
+        }
+    }
+
+    /// Keeps the Brain folder line and the narration item current. Called on settings and narration changes, and every 15 s while running.
+    private func refreshBridgeStatus() {
+        let agentsOn = UserDefaults.standard.bool(forKey: AgentFolderBridge.enabledKey)
+        let status = AgentBridgeStatus.read(root: Brain.root.appendingPathComponent("agent", isDirectory: true), agentsOn: agentsOn)
+        bridgeStatusItem?.title = status.line
+        narrationMenuItem?.title = NarrationRecorder.shared.isActive ? "Stop Narration" : "Record Narration"
+    }
+
     private func updateAgentIndicator() {
+        refreshBridgeStatus()
         let grants = AgentConsent.status()
         let armed = grants["enabled"] == true && (grants["capture"] == true || grants["recording"] == true)
         // A narration take that is capturing always shows a red dot, whatever else is armed.
@@ -497,6 +522,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.toolTip = armed ? "My Man · agent capture access enabled" : "My Man"
     }
 
+    private weak var bridgeStatusItem: NSMenuItem?
+    private weak var narrationMenuItem: NSMenuItem?
+    private var bridgeStatusTimer: Timer?
     private var hotkeyIDs: [UInt32] = []
     private let modifierMonitor = ModifierHotkeyMonitor()
 
