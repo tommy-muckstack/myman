@@ -510,7 +510,10 @@ final class AgentActions {
             let duration = try ClipPlan.duration((args["max_duration"] as? NSNumber)?.doubleValue)
             let fps = try ClipPlan.fps((args["fps"] as? NSNumber)?.intValue)
             return try await ClipRecorder.record(windowID: windowID, region: region, maxDuration: duration, fps: fps)
-        case "narration.start": return try await NarrationRecorder.shared.startForAgent()
+        case "deliver":
+            guard let id = args["id"] as? String, let target = args["to"] as? String else { throw AgentError("INVALID_ARGUMENTS", "Give id and to.") }
+            return try AgentDelivery.deliver(id: id, to: target)
+        case "narration.start": return try await NarrationRecorder.shared.startForAgent(label: args["label"] as? String)
         case "narration.stop": return try await NarrationRecorder.shared.stopForAgent()
         case "narration.status": return NarrationRecorder.shared.statusForAgent()
         case "recording.start":

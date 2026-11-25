@@ -4484,10 +4484,18 @@
     },
     {
       "name": "narration.start",
-      "description": "Record narration: front camera and microphone, no screen. Counts down 3-2-1, then records until narration.stop (max 300 s). Returns startedAtEpochMs, the wall-clock time of the first video frame.",
+      "description": "Record narration: front camera and microphone, no screen. Counts down 3-2-1, then records until narration.stop (max 300 s). Returns startedAtEpochMs, the wall-clock time of the first video frame. Pass label to tag the take with its doc section.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9._-]{1,80}$",
+            "description": "Doc section id this take belongs to. Several takes per doc are fine."
+          }
+        },
         "required": [],
         "additionalProperties": false
       },
@@ -4575,6 +4583,36 @@
       "destructive": false,
       "permissions": [
         "recording"
+      ]
+    },
+    {
+      "name": "deliver",
+      "description": "Mark a capture, narration take or clip ready for Claude and copy its files into the Brain folder with a result.json. Each file must be 15 MB or less.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "to": {
+            "type": "string",
+            "enum": [
+              "claude"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "sharing"
       ]
     }
   ]

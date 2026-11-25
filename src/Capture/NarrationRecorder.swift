@@ -17,13 +17,16 @@ final class NarrationRecorder: ObservableObject {
     private var outputURL: URL?
     private var cancelled = false
     private var autoStop: Task<Void, Never>?
+    private var label: String?
 
     var isActive: Bool { phase != .idle }
 
     /// Starts after a 3-2-1 countdown, so the person can switch to the page they are narrating.
     /// Returns once the camera and microphone are running and the first frame has arrived.
-    func start() async throws -> String {
+    func start(label: String? = nil) async throws -> String {
         guard phase == .idle else { throw AgentError("BUSY", "A narration is already running. Stop it first.") }
+        if let label, !AgentDelivery.isValidLabel(label) { throw AgentError("INVALID_ARGUMENTS", "label takes letters, numbers, dots, dashes and underscores, up to 80 characters. Use the doc section id.") }
+        self.label = label
         try await ensureDevicesAllowed()
         cancelled = false
         for count in NarrationPlan.countdownSeconds {
@@ -74,7 +77,13 @@ final class NarrationRecorder: ObservableObject {
         }
         session = nil; self.sink = nil; outputURL = nil; sessionID = nil
         phase = .idle
-        return NarrationPlan.result(id: id, startedAtEpochMs: startedAt, durationMs: durationMs, path: url.path, bytes: bytes, reencodedVideoBitrate: reencoded)
+        var result = NarrationPlan.result(id: id, startedAtEpochMs: startedAt, durationMs: durationMs, path: url.path, bytes: bytes, reencodedVideoBitrate: reencoded)
+        result["label"] = label ?? NSNull()
+        let resultURL = try AgentDelivery.writeResult(result, id: id, folder: url.deletingLastPathComponent())
+        result["result_path"] = resultURL.path
+        try? AgentChangeLog.append(kind: "narration", id: id, paths: ["video": url.path, "result": resultURL.path], at: AgentActions.date(Date()))
+        label = nil
+        return result
     }
 
     /// Used by Pause everything and when quitting. Ends a take in progress, and cancels one still counting down.
@@ -86,8 +95,8 @@ final class NarrationRecorder: ObservableObject {
 
     // MARK: Agent entry points
 
-    func startForAgent() async throws -> [String: Any] {
-        let id = try await start()
+    func startForAgent(label: String? = nil) async throws -> [String: Any] {
+        let id = try await start(label: label)
         return ["id": id, "started": true, "countdown_seconds": NarrationPlan.countdownSeconds, "max_duration_seconds": NarrationPlan.maximumDurationSeconds]
     }
 

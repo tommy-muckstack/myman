@@ -91,7 +91,13 @@ enum ClipRecorder {
         let durationMs = Int(maxDuration * 1000)
         let poster = try await sink.finish(posterURL: folder.appendingPathComponent(id + "-poster.png"))
         let bytes = ((try? FileManager.default.attributesOfItem(atPath: movie.path)[.size]) as? NSNumber)?.intValue ?? 0
-        return ClipPlan.result(id: id, path: movie.path, posterPath: poster?.path, bytes: bytes, durationMs: durationMs, width: outWidth, height: outHeight, fps: fps)
+        var result = ClipPlan.result(id: id, path: movie.path, posterPath: poster?.path, bytes: bytes, durationMs: durationMs, width: outWidth, height: outHeight, fps: fps)
+        let resultURL = try AgentDelivery.writeResult(result, id: id, folder: folder)
+        result["result_path"] = resultURL.path
+        var paths = ["video": movie.path, "result": resultURL.path]
+        if let poster { paths["poster"] = poster.path }
+        try? AgentChangeLog.append(kind: "clip", id: id, paths: paths, at: AgentActions.date(Date()))
+        return result
     }
 
     private static func destination() throws -> URL {
