@@ -638,8 +638,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 finishSession(state: "finalized", record: record)
                 transcribeAndSync(record)
                 Analytics.track("screen_recording_saved", ["duration_s": duration])
-                Toast.show("Recording saved", actionLabel: "Polish", action: { RecordingPolishController.shared.open(movie: final) },
-                           secondaryLabel: "Open", secondaryAction: { NSWorkspace.shared.open(final) })
+                Toast.show("Recording saved", actionLabel: "Copy Cloud Link", action: { RecordingCloudLink.copy(recordingID: record.id) }, duration: 12)
             } catch {
                 // A failed stop that leaves a live stream must remain stoppable.
                 if stream != nil {
