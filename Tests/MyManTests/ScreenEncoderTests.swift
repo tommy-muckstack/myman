@@ -43,7 +43,7 @@ final class ScreenEncoderTests: XCTestCase {
                 if !accepted { try await Task.sleep(for: .milliseconds(5)) }
             }
         }
-        try await encoder.finish()
+        try await encoder.finish(endingAt: CMTime(seconds: 2, preferredTimescale: 600))
         let asset = AVURLAsset(url: url)
         let tracks = try await asset.loadTracks(withMediaType: .video)
         let track = try XCTUnwrap(tracks.first)
@@ -58,7 +58,7 @@ final class ScreenEncoderTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("encoder-\(UUID().uuidString).mp4")
         defer { try? FileManager.default.removeItem(at: url) }
         let encoder = try ScreenEncoder(url: url, width: 320, height: 200, frameRate: 30, includesAudio: false)
-        do { try await encoder.finish(); XCTFail("expected notStarted") } catch {
+        do { try await encoder.finish(endingAt: CMTime(seconds: 1, preferredTimescale: 600)); XCTFail("expected notStarted") } catch {
             XCTAssertEqual(error as? ScreenEncoder.Failure, .notStarted)
         }
     }
@@ -66,5 +66,25 @@ final class ScreenEncoderTests: XCTestCase {
     func testFramesWithoutACompleteStatusAreIgnored() throws {
         let buffer = try makeBuffer(width: 64, height: 64, time: 0)
         XCTAssertFalse(ScreenSegmentWriter.isComplete(buffer), "a buffer with no SCK status must not be encoded")
+    }
+
+    /// A screen that stops changing after two pictures still has its full length, to the stop time.
+    func testStaticScreenIsHeldToTheStopTime() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("encoder-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let encoder = try ScreenEncoder(url: url, width: 320, height: 200, frameRate: 30, includesAudio: false)
+        try encoder.append(video: makeBuffer(width: 320, height: 200, time: 0))
+        try encoder.append(video: makeBuffer(width: 320, height: 200, time: 1.0 / 30))
+        try await encoder.finish(endingAt: CMTime(seconds: 2, preferredTimescale: 600))
+        let duration = try await AVURLAsset(url: url).load(.duration).seconds
+        XCTAssertEqual(duration, 2.0, accuracy: 0.15, "the last picture must be held until the stop time")
+    }
+
+    /// A failed start leaves no file behind.
+    func testCancelRemovesTheFile() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("encoder-\(UUID().uuidString).mp4")
+        let encoder = try ScreenEncoder(url: url, width: 320, height: 200, frameRate: 30, includesAudio: false)
+        encoder.cancel()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 }

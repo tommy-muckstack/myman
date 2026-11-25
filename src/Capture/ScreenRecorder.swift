@@ -385,6 +385,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     guard let self, self.isRecording else { return }
                     self.stop()
                 }
+                // Held from the start so a failed start can cancel the file.
+                self.segmentWriter = writer
 
                 // Our warm dictation engine's voice-processing unit ducks
                 // system audio + AECs the mic machine-wide — release it for
@@ -392,7 +394,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 await AudioCapture.shared.setSuppressVoiceProcessing(true)
                 try Task.checkCancellation()
 
-                let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+                let stream = SCStream(filter: filter, configuration: config, delegate: writer)
                 try stream.addStreamOutput(writer, type: .screen, sampleHandlerQueue: writer.queue)
                 if config.capturesAudio {
                     try stream.addStreamOutput(writer, type: .audio, sampleHandlerQueue: writer.queue)
@@ -466,7 +468,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
             } catch {
                 NSLog("My Man [Record] start failed: \(error)")
                 try? await self.stream?.stopCapture()
-                self.stream = nil; self.segmentWriter = nil
+                self.stream = nil; self.segmentWriter?.cancel(); self.segmentWriter = nil
                 if self.isShuttingDown { self.narration.preserveForQuit() }
                 else { self.narration.stopDiscarding() }
                 self.finishSession(state: "failed", error: self.recoveryError(error))
@@ -487,7 +489,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     @available(macOS 15.0, *)
     private func finishSegment() async throws {
         guard let stream, let writer = segmentWriter, let url = outputURL else { throw AgentError("CAPTURE_FAILED", "Recording segment is unavailable.") }
-        try await stream.stopCapture()
+        // The stream may already have stopped (display removed, permission revoked). Finalize regardless.
+        try? await stream.stopCapture()
         self.stream = nil
         // The video has stopped. Release the microphone before waiting for
         // the encoder to close its file, which can take noticeably longer.
