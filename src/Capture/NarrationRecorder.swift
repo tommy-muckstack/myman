@@ -42,8 +42,11 @@ final class NarrationRecorder: ObservableObject {
         }
         let id = UUID().uuidString
         let url = try Self.destination(id: id)
-        let sink = try NarrationSink(url: url, profile: profile)
-        let capture = try Self.makeSession(sink: sink, profile: profile)
+        // The camera decides the output size for personal recordings, so resolve it before the writer is built.
+        let effective = try Self.resolvedProfile(profile)
+        self.profile = effective
+        let sink = try NarrationSink(url: url, profile: effective)
+        let capture = try Self.makeSession(sink: sink, profile: effective)
         self.sink = sink; self.session = capture; self.outputURL = url; self.sessionID = id
         capture.startRunning()
         NarrationBubble.show(session: capture)
@@ -130,8 +133,32 @@ final class NarrationRecorder: ObservableObject {
         }
     }
 
-    /// Switches the camera to its largest format that can run at 30 fps. Leaves the camera as it was if none fits.
-    static func useLargestFormat(_ camera: AVCaptureDevice) {
+    /// Personal recordings take an external camera (an iPhone through Continuity Camera counts) when one is connected.
+    /// Agent takes always use the built-in front camera, as before.
+    static func preferredCamera(for profile: NarrationPlan.Profile) -> AVCaptureDevice? {
+        if profile.camera == .highest {
+            // Continuity Camera (an iPhone) is found by its flag, because without the Info.plist opt-in it reports as a built-in camera.
+            // Anything that is not the front camera counts as external, so the Mac's own camera is never picked here.
+            let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: [.continuityCamera, .external, .builtInWideAngleCamera], mediaType: .video, position: .unspecified)
+            if let external = discovery.devices.first(where: { $0.isContinuityCamera || $0.deviceType == .external || $0.position != .front }) {
+                NSLog("My Man [Narration] using external camera: \(external.localizedName)")
+                return external
+            }
+            NSLog("My Man [Narration] no external camera found; using the front camera")
+        }
+        return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+    }
+
+    /// The profile with its output size and bitrate fitted to the camera that will be used. Other profiles are unchanged.
+    static func resolvedProfile(_ base: NarrationPlan.Profile) throws -> NarrationPlan.Profile {
+        guard base.camera == .highest else { return base }
+        guard let camera = preferredCamera(for: base), let format = largestFormat(camera) else { return base }
+        let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        return NarrationPlan.squareProfile(from: base, sensorWidth: Int(d.width), sensorHeight: Int(d.height))
+    }
+
+    /// The camera's largest format that can run at 30 fps, or nil if none can.
+    static func largestFormat(_ camera: AVCaptureDevice) -> AVCaptureDevice.Format? {
         func pixels(_ format: AVCaptureDevice.Format) -> Int {
             let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             return Int(d.width) * Int(d.height)
@@ -139,7 +166,12 @@ final class NarrationRecorder: ObservableObject {
         let candidates = camera.formats.filter { format in
             format.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
         }
-        guard let best = candidates.max(by: { pixels($0) < pixels($1) }) else { return }
+        return candidates.max(by: { pixels($0) < pixels($1) })
+    }
+
+    /// Switches the camera to its largest format that can run at 30 fps. Leaves the camera as it was if none fits.
+    static func useLargestFormat(_ camera: AVCaptureDevice) {
+        guard let best = largestFormat(camera) else { return }
         do {
             try camera.lockForConfiguration()
             camera.activeFormat = best
@@ -165,7 +197,7 @@ final class NarrationRecorder: ObservableObject {
         case .hd1280x720: capture.sessionPreset = capture.canSetSessionPreset(.hd1280x720) ? .hd1280x720 : .vga640x480
         case .vga640x480: capture.sessionPreset = .vga640x480
         }
-        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
+        guard let camera = preferredCamera(for: profile),
               let microphone = AVCaptureDevice.default(for: .audio) else {
             throw AgentError("DEVICE_UNAVAILABLE", "No front camera or microphone is available on this Mac.")
         }

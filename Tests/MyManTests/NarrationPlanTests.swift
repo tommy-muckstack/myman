@@ -48,4 +48,24 @@ final class NarrationPlanTests: XCTestCase {
         XCTAssertEqual(result["video_bitrate"] as? Int, 8_000_000)
         XCTAssertEqual(result["within_limit"] as? Bool, true)
     }
+
+    func testFourKSensorGivesA2160SquareAtTheBitrateCeiling() {
+        let p = NarrationPlan.squareProfile(from: NarrationPlan.personal, sensorWidth: 3840, sensorHeight: 2160)
+        XCTAssertEqual(p.width, 2160); XCTAssertEqual(p.height, 2160)
+        XCTAssertEqual(p.videoBitrate, NarrationPlan.maximumPersonalBitrate)
+    }
+
+    func testOneTwentyPSensorKeepsTheBaseSettings() {
+        let p = NarrationPlan.squareProfile(from: NarrationPlan.personal, sensorWidth: 1920, sensorHeight: 1080)
+        XCTAssertEqual(p.width, 1080); XCTAssertEqual(p.videoBitrate, 8_000_000)
+    }
+
+    func testSmallSensorNeverGoesBelowTheBaseBitrate() {
+        let p = NarrationPlan.squareProfile(from: NarrationPlan.personal, sensorWidth: 1280, sensorHeight: 720)
+        XCTAssertEqual(p.width, 720); XCTAssertEqual(p.videoBitrate, 8_000_000)
+    }
+
+    func testAgentProfilePassesThroughUnchanged() {
+        XCTAssertEqual(NarrationPlan.squareProfile(from: NarrationPlan.agent, sensorWidth: 3840, sensorHeight: 2160), NarrationPlan.agent)
+    }
 }

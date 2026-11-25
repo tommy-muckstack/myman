@@ -69,6 +69,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>My Man reads your calendar for meeting notes and availability, and saves events only after you review them and press Book.</string>
     <key>NSCameraUsageDescription</key>
     <string>My Man shows your webcam bubble in screen recordings.</string>
+    <key>NSCameraUseContinuityCameraDeviceType</key>
+    <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>My Man pauses your music while a meeting records.</string>
     <key>SUFeedURL</key>

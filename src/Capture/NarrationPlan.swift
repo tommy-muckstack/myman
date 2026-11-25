@@ -17,6 +17,22 @@ enum NarrationPlan {
         let maximumBytes: Int?
     }
 
+    /// Largest square output side. A 4K sensor's full height, which H.264 level 5.1 can carry.
+    static let maximumSide = 2160
+    static let maximumPersonalBitrate = 24_000_000
+
+    /// For `.highest`, the output is the square side of the camera's sensor (capped at 2160), and the video
+    /// bitrate scales with pixel count from the base profile, up to a ceiling. Other profiles pass through unchanged.
+    static func squareProfile(from base: Profile, sensorWidth: Int, sensorHeight: Int) -> Profile {
+        guard base.camera == .highest, sensorWidth > 0, sensorHeight > 0 else { return base }
+        let side = min(min(sensorWidth, sensorHeight), maximumSide) & ~1
+        let scale = Double(side * side) / Double(base.width * base.height)
+        let scaled = Int(Double(base.videoBitrate) * scale)
+        let bitrate = min(maximumPersonalBitrate, max(base.videoBitrate, scaled))
+        return Profile(width: side, height: side, videoBitrate: bitrate, audioBitrate: base.audioBitrate,
+                       camera: base.camera, maximumBytes: base.maximumBytes)
+    }
+
     /// Your own recordings, started from the hotkey or menu bar. The camera's highest format, 1080x1080 output, no size cap.
     static let personal = Profile(width: 1080, height: 1080, videoBitrate: 8_000_000, audioBitrate: 128_000,
                                   camera: .highest, maximumBytes: nil)
