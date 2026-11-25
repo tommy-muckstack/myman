@@ -30,4 +30,22 @@ final class NarrationPlanTests: XCTestCase {
     func testCountdownIsThreeTwoOne() {
         XCTAssertEqual(NarrationPlan.countdownSeconds, [3, 2, 1])
     }
+
+    func testPersonalProfileHasNoSizeCapAndNeverReencodes() {
+        XCTAssertNil(NarrationPlan.personal.maximumBytes)
+        XCTAssertNil(NarrationPlan.reencodeVideoBitrate(durationSeconds: 300, bytes: 900_000_000, profile: NarrationPlan.personal))
+    }
+
+    func testAgentProfileKeepsItsFifteenMegabyteCap() {
+        XCTAssertEqual(NarrationPlan.agent.maximumBytes, 15_000_000)
+        XCTAssertEqual(NarrationPlan.agent.width, 480)
+        XCTAssertNotNil(NarrationPlan.reencodeVideoBitrate(durationSeconds: 300, bytes: 900_000_000, profile: NarrationPlan.agent))
+    }
+
+    func testPersonalResultReportsTheHighQualitySettings() {
+        let result = NarrationPlan.result(id: "n2", startedAtEpochMs: 1, durationMs: 1000, path: "/x", bytes: 900_000_000, reencodedVideoBitrate: nil, profile: NarrationPlan.personal)
+        XCTAssertEqual(result["width"] as? Int, 1080)
+        XCTAssertEqual(result["video_bitrate"] as? Int, 8_000_000)
+        XCTAssertEqual(result["within_limit"] as? Bool, true)
+    }
 }
