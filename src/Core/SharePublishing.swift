@@ -207,6 +207,13 @@ extension SharePublishing {
         try save(receipt)
         return try await uploadVideo(receipt, seconds: seconds, human: human)
     }
+    /// Chapter markers from the recording's transcript, for the watch page. Empty when there is no transcript.
+    static func chapterPayload(for url: URL) -> [[String: Any]] {
+        guard let transcript = RecordingTranscript.load(for: url) else { return [] }
+        return RecordingChapters.make(from: transcript.segments).prefix(RecordingChapters.maximumChapters).map {
+            ["start_ms": $0.startMs, "title": String($0.title.prefix(120))] as [String: Any]
+        }
+    }
     func retryVideo(_ id: String) async throws -> Receipt {
         guard let receipt = receipts.first(where: { $0.id == id }), receipt.videoPath != nil,
               ["upload_interrupted", "uploading", "unconfirmed"].contains(receipt.state), receipt.expiresAt > Date() else { throw AgentError("NOT_FOUND", "This upload cannot be resumed. Start a new share.") }
@@ -233,7 +240,7 @@ extension SharePublishing {
                 let mime = url.pathExtension.lowercased() == "mov" ? "video/quicktime" : "video/mp4"
                 var state = receipt; state.state = "uploading"; try save(state)
                 let grant = try await request(endpoint: receipt.endpoint, method: "POST", id: id,
-                    body: ["size": size, "mime": mime, "ttl_seconds": seconds, "title": String(receipt.title.prefix(300)), "fingerprint": fingerprint, "engagement": receipt.engagement ?? false], videoAction: "begin")
+                    body: ["size": size, "mime": mime, "ttl_seconds": seconds, "title": String(receipt.title.prefix(300)), "fingerprint": fingerprint, "engagement": receipt.engagement ?? false, "chapters": Self.chapterPayload(for: url)], videoAction: "begin")
                 if grant["published"] as? Bool != true && grant["uploaded"] as? Bool != true {
                     guard let token = grant["clientToken"] as? String, let pathname = grant["pathname"] as? String,
                           pathname == "videos/\(id).\(mime == "video/mp4" ? "mp4" : "mov")" else { throw AgentError("UPLOAD_FAILED", "The upload grant did not match this recording.") }

@@ -123,3 +123,29 @@ test('comments require same-origin intent and are stored as text', async () => {
   assert.equal(JSON.parse(result.body).events[0].text, event.text);
   const page = await f.service({ method: 'GET', id: f.id }); assert.match(page.body, /text\.textContent=/);
 });
+
+test('chapters are validated on begin, stored with the share, and shown as seek buttons', async () => {
+  const { normalizeChapters } = await import('./video-service.mjs');
+  assert.deepEqual(normalizeChapters(undefined), []);
+  assert.equal(normalizeChapters([{ start_ms: -1, title: 'x' }]), null);
+  assert.equal(normalizeChapters([{ start_ms: 1, title: '' }]), null);
+  assert.equal(normalizeChapters(Array.from({ length: 9 }, (_, i) => ({ start_ms: i, title: 'x' }))), null);
+  assert.equal(normalizeChapters('nope'), null);
+
+  const f = videoFixture();
+  f.body.chapters = [{ start_ms: 0, title: 'Intro <b>' }, { start_ms: 42_000, title: 'Numbers' }];
+  assert.equal((await f.call('begin')).status, 200);
+  f.upload(); assert.equal((await f.call('complete')).status, 201);
+  const page = await f.service({ method: 'GET', id: f.id });
+  assert.match(page.body, /<h2>Chapters<\/h2>/);
+  assert.match(page.body, /data-seek="42"/);
+  assert.match(page.body, /Intro &lt;b&gt;/);
+  assert.doesNotMatch(page.body, /Intro <b>/);
+});
+
+test('a malformed chapter list is refused before any upload grant is issued', async () => {
+  const f = videoFixture();
+  f.body.chapters = [{ start_ms: 'soon', title: 'x' }];
+  assert.equal((await f.call('begin')).status, 400);
+  assert.equal(f.tickets.size, 0);
+});

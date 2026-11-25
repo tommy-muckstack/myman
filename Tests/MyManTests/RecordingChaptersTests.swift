@@ -48,4 +48,18 @@ final class RecordingChaptersTests: XCTestCase {
     func testBlankOpeningGetsANumberedTitle() {
         XCTAssertEqual(RecordingChapters.title(for: "  ", index: 2), "Part 3")
     }
+
+    @MainActor func testChapterPayloadComesFromTheSavedTranscript() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("chapters-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let movie = dir.appendingPathComponent("take.mp4")
+        try Data(repeating: 1, count: 2048).write(to: movie)
+        XCTAssertEqual(SharePublishing.chapterPayload(for: movie).count, 0, "no transcript, no chapters")
+        try RecordingTranscript.save([seg(0, 10, "Intro to the report"), seg(40, 60, "Now the numbers")], for: movie)
+        let payload = SharePublishing.chapterPayload(for: movie)
+        XCTAssertEqual(payload.count, 2)
+        XCTAssertEqual(payload[1]["start_ms"] as? Int, 40_000)
+        XCTAssertEqual(payload[1]["title"] as? String, "Now the numbers")
+    }
 }

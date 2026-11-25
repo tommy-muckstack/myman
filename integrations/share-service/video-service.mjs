@@ -1,6 +1,23 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
+export const MAX_CHAPTERS = 8;
+const MAX_CHAPTER_MS = 604_800_000;
+
+/** Chapters from the uploader: [{start_ms, title}], at most 8. Undefined means none; anything malformed is null. */
+export function normalizeChapters(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_CHAPTERS) return null;
+  const out = [];
+  for (const c of value) {
+    if (!c || typeof c !== 'object' || !Number.isSafeInteger(c.start_ms) || c.start_ms < 0 || c.start_ms > MAX_CHAPTER_MS) return null;
+    if (typeof c.title !== 'string' || c.title.trim().length < 1 || c.title.length > 120) return null;
+    out.push({ start_ms: c.start_ms, title: c.title });
+  }
+  return out;
+}
+
+const clock = ms => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const idPattern = /^[a-zA-Z0-9_-]{32}$/;
 const noStore = { 'Cache-Control': 'private, no-store, max-age=0', 'CDN-Cache-Control': 'no-store', 'Vercel-CDN-Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow, noarchive', 'Referrer-Policy': 'no-referrer' };
 const reply = (status, value, extra = {}) => ({ status, headers: { ...noStore, 'Content-Type': 'application/json', ...extra }, body: typeof value === 'string' ? value : JSON.stringify(value) });
@@ -29,8 +46,9 @@ export function watchPage(id, value) {
   <h1>${escape(value.title)}</h1><video id="video" controls preload="metadata" playsinline src="/api/videos?id=${id}&action=media">${value.captions ? `<track kind="captions" src="/api/videos?id=${id}&action=captions" srclang="und" label="Captions" default>` : ''}</video>
   <div><button id="timestamp">Copy link at this time</button><label>Speed <select id="speed"><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option></select></label></div>
   <p><small>Available until ${escape(new Date(value.expiresAt).toISOString())}. Anyone holding this link can view it. Downloaded copies cannot be revoked.</small></p>
+  ${value.chapters?.length ? `<h2>Chapters</h2><ol>${value.chapters.map(c => `<li><button data-seek="${Math.floor(c.start_ms / 1000)}">${escape(clock(c.start_ms))}</button> ${escape(c.title)}</li>`).join('')}</ol>` : ''}
   ${value.engagement ? '<h2>Conversation</h2><label>Your name <input id="name" maxlength="80"></label><label>Comment at the current time<textarea id="comment" maxlength="2000"></textarea></label><button id="post">Post comment</button><button id="reaction">👍 React at this time</button><div id="events"></div>' : ''}<p id="status" role="status"></p>
-  <script nonce="${nonce}">const video=document.getElementById('video'),status=document.getElementById('status');const seek=Number(new URL(location.href).hash.slice(3));if(location.hash.startsWith('#t=')&&Number.isFinite(seek)&&seek>=0)video.addEventListener('loadedmetadata',()=>{video.currentTime=Math.min(seek,video.duration)},{once:true});document.getElementById('speed').onchange=e=>video.playbackRate=Number(e.target.value);document.getElementById('timestamp').onclick=async()=>{try{const u=new URL(location.href);u.hash='t='+Math.floor(video.currentTime);history.replaceState(null,'',u);await navigator.clipboard.writeText(u.href);status.textContent='Timestamp link copied.'}catch{status.textContent='Copy the address after seeking to your time.'}};
+  <script nonce="${nonce}">const video=document.getElementById('video'),status=document.getElementById('status');const seek=Number(new URL(location.href).hash.slice(3));if(location.hash.startsWith('#t=')&&Number.isFinite(seek)&&seek>=0)video.addEventListener('loadedmetadata',()=>{video.currentTime=Math.min(seek,video.duration)},{once:true});document.getElementById('speed').onchange=e=>video.playbackRate=Number(e.target.value);document.querySelectorAll('[data-seek]').forEach(b=>b.onclick=()=>{video.currentTime=Number(b.dataset.seek);video.play().catch(()=>{})});document.getElementById('timestamp').onclick=async()=>{try{const u=new URL(location.href);u.hash='t='+Math.floor(video.currentTime);history.replaceState(null,'',u);await navigator.clipboard.writeText(u.href);status.textContent='Timestamp link copied.'}catch{status.textContent='Copy the address after seeking to your time.'}};
   ${value.engagement ? `const endpoint='/api/videos?id=${id}&action=events';async function refresh(){const r=await fetch(endpoint,{cache:'no-store'});if(!r.ok)throw Error();const rows=await r.json();const box=document.getElementById('events');box.replaceChildren();for(const event of rows.events){const row=document.createElement('div');row.className='comment';const time=document.createElement('button');time.textContent=Math.floor(event.time)+'s';time.onclick=()=>{video.currentTime=event.time;video.play()};const text=document.createElement('span');text.textContent=event.name+': '+(event.reaction||event.text);row.append(time,text);box.append(row)}}async function post(reaction){try{const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','X-MyMan-Viewer':'1'},body:JSON.stringify({name:document.getElementById('name').value||'Viewer',text:document.getElementById('comment').value,reaction,time:video.currentTime})});if(!r.ok)throw Error();document.getElementById('comment').value='';await refresh()}catch{status.textContent='Could not save. This link may have expired.'}}document.getElementById('post').onclick=()=>post(null);document.getElementById('reaction').onclick=()=>post('👍');refresh().catch(()=>status.textContent='Comments unavailable.');` : ''}</script></html>`;
   return reply(200, page, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; media-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
 }
@@ -46,12 +64,14 @@ export function createVideoService({ store, publisherToken, issueToken, media, n
     if (['begin', 'complete'].includes(action) && (!publisher || method !== 'POST')) return reply(401, { error: 'Unauthorized' });
     if (action === 'begin') {
       if (!body || !Number.isSafeInteger(body.size) || body.size <= 0 || body.size > MAX_VIDEO_BYTES || !['video/mp4', 'video/quicktime'].includes(body.mime) || !Number.isInteger(body.ttl_seconds) || body.ttl_seconds < 60 || body.ttl_seconds > 604800 || typeof body.title !== 'string' || body.title.length > 300 || !/^[a-f0-9]{64}$/.test(body.fingerprint ?? '')) return reply(400, { error: 'Invalid recording metadata' });
+      const chapters = normalizeChapters(body.chapters);
+      if (chapters === null) return reply(400, { error: 'Invalid chapters' });
       const existing = await store.get(id);
       if (existing?.revoked || existing && existing.expiresAt <= now()) return reply(410, { error: 'This share cannot be reused' });
       let ticket = await store.ticket(id);
       if (ticket && (ticket.owner !== owner || ticket.fingerprint !== body.fingerprint || ticket.size !== body.size || ticket.mime !== body.mime)) return reply(409, { error: 'The recording changed; start a new share' });
       if (!ticket) {
-        ticket = { version: 2, id, owner, pathname: `videos/${id}.${body.mime === 'video/mp4' ? 'mp4' : 'mov'}`, fingerprint: body.fingerprint, size: body.size, mime: body.mime, title: body.title, engagement: body.engagement === true, expiresAt: now() + body.ttl_seconds * 1000 };
+        ticket = { version: 2, id, owner, pathname: `videos/${id}.${body.mime === 'video/mp4' ? 'mp4' : 'mov'}`, fingerprint: body.fingerprint, size: body.size, mime: body.mime, title: body.title, chapters, engagement: body.engagement === true, expiresAt: now() + body.ttl_seconds * 1000 };
         await store.saveTicket(id, ticket); // create-only; races fail closed
       }
       if (ticket.expiresAt <= now()) return reply(410, { error: 'Upload expired' });
