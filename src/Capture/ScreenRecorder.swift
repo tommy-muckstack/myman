@@ -21,7 +21,7 @@ struct ScreenRecording: Identifiable, Codable, FetchableRecord, PersistableRecor
 // The Loom killer, v2: the native macOS content picker chooses WHAT to
 // record (full display, one window, one app), an optional floating webcam
 // bubble is captured right into the frame, and the result is a movie file
-// with mic + system audio (SCRecordingOutput encodes). No cloud, no
+// with mic + system audio (our ScreenSegmentWriter encodes). No cloud, no
 // account — the finish toast hands you Open and Copy.
 // macOS 15+ (SCRecordingOutput/mic capture); the tile hides below that.
 
@@ -50,7 +50,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     var isTranscribing: Bool { transcriptionCount > 0 }
 
     private var stream: SCStream?
-    private var recordingOutput: Any? // SCRecordingOutput, typed loosely for the 14.x floor
+    private var segmentWriter: ScreenSegmentWriter?
     private(set) var outputURL: URL?
     private(set) var agentSessionID: String?
     private(set) var lastSavedRecord: ScreenRecording?
@@ -102,9 +102,6 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
     private var changingSegment = false
     private var stopAfterTransition = false
-    private var startedOutputs = Set<ObjectIdentifier>()
-    private var finishedOutputs = Set<ObjectIdentifier>()
-    private var outputErrors: [ObjectIdentifier: String] = [:]
     private var agentHideCamera = false
     private var agentSystemAudio: Bool?
     /// An agent asked for a cursor-free video so `record polish` can draw a smooth one.
@@ -379,19 +376,17 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 try? FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-                let recordingConfig = SCRecordingOutputConfiguration()
-                recordingConfig.outputURL = url
-                recordingConfig.outputFileType = .mov // the capture; ShareReadyMovie turns it into the saved .mp4
-                // H.264, deliberately: the saved file is meant to be dropped
-                // into Slack, a browser, or a Windows machine as-is, and
-                // HEVC does not play in any of those without hardware
-                // support. The capture runs at full Retina resolution, so
-                // text stays crisp; the codec is the compatibility choice.
-                if recordingConfig.availableVideoCodecTypes.contains(.h264) {
-                    recordingConfig.videoCodecType = .h264
+                // H.264 High, written by our own encoder at a bitrate set from the pixel rate. The
+                // file keeps a .mov name because ShareReadyMovie derives the saved .mp4 name from it.
+                let frameRate = 60
+                let writer = try ScreenSegmentWriter(url: url, width: Int(config.width), height: Int(config.height),
+                                                     frameRate: frameRate, includesAudio: config.capturesAudio)
+                writer.onFailure = { [weak self] _ in
+                    guard let self, self.isRecording else { return }
+                    self.stop()
                 }
-                let output = SCRecordingOutput(configuration: recordingConfig, delegate: self)
-                startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
+                // Held from the start so a failed start can cancel the file.
+                self.segmentWriter = writer
 
                 // Our warm dictation engine's voice-processing unit ducks
                 // system audio + AECs the mic machine-wide — release it for
@@ -399,14 +394,17 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 await AudioCapture.shared.setSuppressVoiceProcessing(true)
                 try Task.checkCancellation()
 
-                let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-                try stream.addRecordingOutput(output)
-                self.recordingOutput = output
+                let stream = SCStream(filter: filter, configuration: config, delegate: writer)
+                try stream.addStreamOutput(writer, type: .screen, sampleHandlerQueue: writer.queue)
+                if config.capturesAudio {
+                    try stream.addStreamOutput(writer, type: .audio, sampleHandlerQueue: writer.queue)
+                }
+                self.segmentWriter = writer
                 self.stream = stream
                 self.outputURL = url
                 try await stream.startCapture()
                 try Task.checkCancellation()
-                try await self.waitForOutput(output, finished: false)
+                try await writer.waitForFirstFrame(timeout: 20)
                 self.segmentStartedAt = Date()
                 if self.microphoneEnabled {
                     await self.narration.start(alongside: url, videoStartedAt: self.segmentStartedAt!)
@@ -422,7 +420,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 try Task.checkCancellation()
                 self.stream = stream
                 self.streamConfiguration = config
-                self.recordingOutput = output
+                self.segmentWriter = writer
                 self.outputURL = url
                 if !resuming { self.startedAt = Date() }
                 self.isPaused = false
@@ -470,7 +468,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
             } catch {
                 NSLog("My Man [Record] start failed: \(error)")
                 try? await self.stream?.stopCapture()
-                self.stream = nil; self.recordingOutput = nil
+                self.stream = nil; self.segmentWriter?.cancel(); self.segmentWriter = nil
                 if self.isShuttingDown { self.narration.preserveForQuit() }
                 else { self.narration.stopDiscarding() }
                 self.finishSession(state: "failed", error: self.recoveryError(error))
@@ -489,32 +487,21 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     @available(macOS 15.0, *)
-    private func waitForOutput(_ output: SCRecordingOutput, finished: Bool) async throws {
-        let id = ObjectIdentifier(output), limit = Date().addingTimeInterval(finished ? 60 : 20)
-        while !(finished ? finishedOutputs.contains(id) : startedOutputs.contains(id)) {
-            if let error = outputErrors[id] { throw AgentError("CAPTURE_FAILED", error) }
-            guard Date() < limit else { throw AgentError("PROCESSING_TIMEOUT", "Recording output has not acknowledged its state.") }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        if let error = outputErrors[id] { throw AgentError("CAPTURE_FAILED", error) }
-    }
-
-    @available(macOS 15.0, *)
     private func finishSegment() async throws {
-        guard let stream, let output = recordingOutput as? SCRecordingOutput, let url = outputURL else { throw AgentError("CAPTURE_FAILED", "Recording segment is unavailable.") }
-        try await stream.stopCapture()
+        guard let stream, let writer = segmentWriter, let url = outputURL else { throw AgentError("CAPTURE_FAILED", "Recording segment is unavailable.") }
+        // The stream may already have stopped (display removed, permission revoked). Finalize regardless.
+        try? await stream.stopCapture()
         self.stream = nil
         // The video has stopped. Release the microphone before waiting for
         // the encoder to close its file, which can take noticeably longer.
         stoppedNarration = narration.close()
-        try await waitForOutput(output, finished: true)
+        try await writer.finish()
         let final = try await finalizeSegment(url)
         let metadata = try await AgentVideo.attachment(final, preview: false)
         completedSeconds += metadata["duration"] as? Double ?? 0
         segmentStartedAt = nil
         segmentURLs.append(final)
-        startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
-        recordingOutput = nil; outputURL = nil
+        segmentWriter = nil; outputURL = nil
     }
 
     /// The captured .mov (+ narration WAV) becomes the share-ready .mp4 —
@@ -589,10 +576,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         _ = clickRecorder?.stop(); clickRecorder = nil
         _ = cursorRecorder?.stop(); cursorRecorder = nil
         _ = keystrokeRecorder?.stop(); keystrokeRecorder = nil
-        if #available(macOS 15.0, *), let output = recordingOutput as? SCRecordingOutput {
-            startedOutputs.remove(ObjectIdentifier(output)); finishedOutputs.remove(ObjectIdentifier(output)); outputErrors[ObjectIdentifier(output)] = nil
-        }
-        streamConfiguration = nil; recordingOutput = nil; outputURL = nil; stoppedNarration = nil; controlsRegion = nil
+        streamConfiguration = nil; segmentWriter = nil; outputURL = nil; stoppedNarration = nil; controlsRegion = nil
     }
     @available(macOS 15.0, *)
     func pauseForAgent() async throws {
@@ -685,7 +669,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         // Even an encoder failure must not leave narration running after an
         // explicit cancel. Keep undeletable files discoverable in the error.
         do {
-            if let output = recordingOutput as? SCRecordingOutput { try await waitForOutput(output, finished: true) }
+            if let writer = segmentWriter { try await writer.finish() }
             let files = segmentURLs + (outputURL.map { [$0] } ?? [])
             narration.stopDiscarding()
             for file in files where FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
@@ -939,7 +923,7 @@ extension ScreenRecorder: SelectionOverlayDelegate {
 }
 
 /// Observes the ScreenCaptureKit microphone samples solely for the control
-/// indicator. Recording itself remains owned by `SCRecordingOutput`, so the
+/// indicator. Recording itself remains owned by `ScreenSegmentWriter`, so the
 /// meter cannot alter the audio written to disk.
 @available(macOS 15.0, *)
 private final class MicrophoneLevelMonitor: NSObject, SCStreamOutput {
@@ -987,25 +971,6 @@ private final class MicrophoneLevelMonitor: NSObject, SCStreamOutput {
     }
 }
 
-@available(macOS 15.0, *)
-extension ScreenRecorder: SCRecordingOutputDelegate {
-    nonisolated func recordingOutputDidStartRecording(_ recordingOutput: SCRecordingOutput) {
-        let id = ObjectIdentifier(recordingOutput)
-        Task { @MainActor in self.startedOutputs.insert(id) }
-    }
-    nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
-        let id = ObjectIdentifier(recordingOutput)
-        Task { @MainActor in self.finishedOutputs.insert(id) }
-    }
-    nonisolated func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: Error) {
-        let id = ObjectIdentifier(recordingOutput), message = error.localizedDescription
-        Task { @MainActor in
-            self.outputErrors[id] = message
-            if let current = self.recordingOutput as? SCRecordingOutput, ObjectIdentifier(current) == id, self.isRecording { self.stop() }
-        }
-    }
-}
-
 // MARK: - Webcam bubble (captured into the recording, Loom-style)
 
 @MainActor
@@ -1028,6 +993,13 @@ final class WebcamBubble: ObservableObject {
     func toggle() {
         UserDefaults.standard.set(!isOn, forKey: "mm.webcamBubble")
         isOn ? turnOff() : turnOn()
+    }
+
+    /// Restarts the bubble on the camera that is now selected. No-op when the bubble is off.
+    func switchCamera() {
+        guard isOn, !isShuttingDown else { return }
+        turnOff()
+        turnOn()
     }
 
     func turnOn() {

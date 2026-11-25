@@ -36,6 +36,7 @@ struct RecordingControlBar: View {
                 }.buttonStyle(.plain).disabled(!allowsWebcam)
                     .help(!allowsWebcam ? "Webcam is unavailable for window recordings" : webcamOn ? "Hide camera" : "Show camera")
                     .accessibilityLabel(webcamOn ? "Hide camera" : "Show camera")
+                CameraMenu()
                 Button(action: onMicrophone) {
                     IconView(icon: microphoneEnabled ? .mic : .micOff, size: 16,
                              color: microphoneEnabled ? (microphoneLevel > 0.035 ? MM.Colors.accent : MM.Colors.textPrimary) : MM.Colors.danger)
