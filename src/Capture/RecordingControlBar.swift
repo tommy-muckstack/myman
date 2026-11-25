@@ -10,12 +10,11 @@ struct RecordingControlBar: View {
     var microphoneLevel: CGFloat = 0
     var canDraw = true
     var drawTool: AnnotationTool?
-    var onCamera: () -> Void
     var onMicrophone: () -> Void
     var onDraw: (AnnotationTool) -> Void = { _ in }
     var onStop: () -> Void
     var onRestart: () -> Void
-    @State private var backdropColor = Color(nsColor: PolishOptions.savedCustomColor())
+    @State private var frameColor = Color(nsColor: RecordingFrameStyle.color())
 
     var body: some View {
         HStack(spacing: MM.Layout.spacing) {
@@ -29,14 +28,7 @@ struct RecordingControlBar: View {
                     .font(MM.Fonts.secondary.monospacedDigit())
                     .foregroundStyle(MM.Colors.textSecondary)
                     .frame(minWidth: 42, alignment: .leading)
-                Button(action: onCamera) {
-                    IconView(icon: webcamOn ? .recordScreen : .cameraOff, size: 14,
-                             color: webcamOn ? MM.Colors.textPrimary : MM.Colors.danger)
-                        .clickable(minSize: 32)
-                }.buttonStyle(.plain).disabled(!allowsWebcam)
-                    .help(!allowsWebcam ? "Webcam is unavailable for window recordings" : webcamOn ? "Hide camera" : "Show camera")
-                    .accessibilityLabel(webcamOn ? "Hide camera" : "Show camera")
-                CameraMenu()
+                CameraMenu(allowed: allowsWebcam)
                 Button(action: onMicrophone) {
                     IconView(icon: microphoneEnabled ? .mic : .micOff, size: 16,
                              color: microphoneEnabled ? (microphoneLevel > 0.035 ? MM.Colors.accent : MM.Colors.textPrimary) : MM.Colors.danger)
@@ -44,21 +36,23 @@ struct RecordingControlBar: View {
                 }.buttonStyle(.plain)
                     .help(microphoneEnabled ? "Mute microphone" : "Include microphone")
                     .accessibilityLabel(microphoneEnabled ? "Mute microphone" : "Include microphone")
+                MicrophoneMenu()
                 drawButton(.pen, icon: .write, label: "Draw")
                 drawButton(.box, icon: .checklistUnchecked, label: "Box")
-                ColorPicker("Background color", selection: Binding(
-                    get: { backdropColor },
+                // One color: the frame around the recording while it records, and the Polish backdrop.
+                ColorPicker("Frame color", selection: Binding(
+                    get: { frameColor },
                     set: { color in
-                        backdropColor = color
+                        frameColor = color
                         let nsColor = NSColor(color)
-                        // Saved for the Polish step; choosing a color also selects the Custom backdrop.
+                        RecordingFrameStyle.save(nsColor)
                         PolishOptions.saveCustomColor(nsColor)
                         PolishOptions.saveBackdropStyle(.custom)
                     }
                 ), supportsOpacity: false)
                     .labelsHidden()
-                    .help("Background color for the recording (applied when you polish it)")
-                    .accessibilityLabel("Background color")
+                    .help("Frame color around the recording (also the Polish backdrop)")
+                    .accessibilityLabel("Frame color")
                     .frame(width: 28, height: 28)
                 Button(action: onStop) {
                     Text("Stop").font(MM.Fonts.secondary)

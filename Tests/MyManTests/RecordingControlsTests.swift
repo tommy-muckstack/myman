@@ -116,7 +116,7 @@ final class RecordingControlsTests: XCTestCase {
                 .overlay(Text("Selected recording area").font(MM.Fonts.title).foregroundStyle(MM.Colors.textPrimary))
                 .frame(width: region.width, height: region.height)
                 .position(x: region.midX, y: screen.height - region.midY)
-            RecordingControlBar(elapsed: "0:08", webcamOn: true, onCamera: {}, onMicrophone: {}, onStop: {}, onRestart: {})
+            RecordingControlBar(elapsed: "0:08", webcamOn: true, onMicrophone: {}, onStop: {}, onRestart: {})
                 .position(x: controls.midX, y: screen.height - controls.midY)
         }.preferredColorScheme(.dark))
         preview.sizingOptions = []
@@ -187,7 +187,7 @@ private struct RecordingControlFixtureView: View {
     @ObservedObject var fixture: RecordingControlFixture
     var body: some View {
         RecordingControlBar(elapsed: "0:08", isStopping: fixture.stopping, webcamOn: true,
-                            onCamera: {}, onMicrophone: {}, onStop: {
+                            onMicrophone: {}, onStop: {
             fixture.stops += 1; fixture.stopping = true
         }, onRestart: {})
     }

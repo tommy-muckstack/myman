@@ -1178,11 +1178,25 @@ private final class CaptureSessionRunner: @unchecked Sendable {
 /// 2pt red frame drawn at the panel's edge — the panel sits 3pt outside
 /// the captured rect, so this chrome never enters the video.
 private final class RegionBorderView: NSView {
+    private var observer: NSObjectProtocol?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // Changing the frame color in the recording bar recolors this frame at once.
+        observer = NotificationCenter.default.addObserver(forName: RecordingFrameStyle.changed, object: nil, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsDisplay = true }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5),
                                 xRadius: 4, yRadius: 4)
         path.lineWidth = 2.5
-        NSColor.systemRed.withAlphaComponent(0.9).setStroke()
+        RecordingFrameStyle.color().withAlphaComponent(0.9).setStroke()
         path.stroke()
     }
 }
@@ -1238,7 +1252,7 @@ private struct RecordingPillView: View {
             allowsWebcam: recorder.allowsWebcam, webcamOn: webcam.isOn,
             microphoneEnabled: recorder.microphoneEnabled, microphoneLevel: recorder.microphoneLevel,
             canDraw: effects.canDraw, drawTool: effects.tool,
-            onCamera: { webcam.toggle() }, onMicrophone: { recorder.toggleMicrophone() },
+            onMicrophone: { recorder.toggleMicrophone() },
             onDraw: { effects.toggle($0) },
             onStop: { recorder.stop() }, onRestart: { recorder.restart() })
             .onReceive(clock) { now = $0 }
