@@ -4617,7 +4617,7 @@
     },
     {
       "name": "recording.summary",
-      "description": "Length, picture size, audio tracks, size on disk and frame times for one recording, without downloading it. Also writes summary.json.",
+      "description": "Length, picture size, audio tracks, size on disk, frame times and chapter markers (from the transcript) for one recording, without downloading it. Also writes summary.json.",
       "inputSchema": {
         "type": "object",
         "properties": {

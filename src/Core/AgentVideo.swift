@@ -12,10 +12,13 @@ import AVFoundation
         return CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600), end: CMTime(seconds: min(finish, duration), preferredTimescale: 600))
     }
     static func sampleTimes(_ explicit: [Double]?, count: Int, duration: Double) throws -> [Double] {
-        guard duration.isFinite, duration > 0, (1...12).contains(count) else { throw AgentError("INVALID_ARGUMENTS", "Use 1–12 frames from a nonempty video.") }
+        guard duration.isFinite, duration > 0, (1...12).contains(count) else {
+            throw AgentError("INVALID_ARGUMENTS", "Use 1–12 frames from a nonempty video.", details: ["next_step": "Pass count from 1 to 12, or times inside the recording's length."])
+        }
         let times = explicit ?? (0..<count).map { duration * (Double($0) + 0.5) / Double(count) }
         guard !times.isEmpty, times.count <= 12, times.allSatisfy({ $0.isFinite && $0 >= 0 && $0 < duration }) else {
-            throw AgentError("INVALID_ARGUMENTS", "Frame times must be inside the video (strictly before its end).")
+            throw AgentError("INVALID_ARGUMENTS", "Frame times must be inside the video (strictly before its end).",
+                             details: ["next_step": "Read the length from recording.summary, then pass times below it (up to 12)."])
         }
         return times
     }
@@ -55,7 +58,13 @@ import AVFoundation
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.05, preferredTimescale: 600)
         var images: [NSImage] = [], results: [[String: Any]] = []
         for time in times {
-            let (cg, actual) = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
+            let cg: CGImage, actual: CMTime
+            do {
+                (cg, actual) = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
+            } catch {
+                throw AgentError("FRAME_FAILED", "Couldn’t read the frame at \(String(format: "%.2f", time)) s.",
+                                 details: ["next_step": "Retry with a time a little earlier, or count instead of times. If it keeps failing, re-record the clip."])
+            }
             let image = NSImage(cgImage: cg, size: CGSize(width: cg.width, height: cg.height))
             images.append(image)
             var result = try store.image(image, prefix: "frame")
