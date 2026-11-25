@@ -366,15 +366,26 @@ struct CursorEffectsView: View {
                     guard age >= 0, age < life else { return nil }
                     return (localPoint(point.position), 1 - age / life)
                 }
-                if live.count > 1 {
-                    for index in 1 ..< live.count {
-                        var segment = Path()
-                        segment.move(to: live[index - 1].point)
-                        segment.addLine(to: live[index].point)
+                if live.count > 2 {
+                    // Each piece is a curve through the midpoints of neighbouring points, so the tail bends
+                    // smoothly instead of kinking at every mouse sample.
+                    for index in 1 ..< live.count - 1 {
+                        let previous = live[index - 1].point, current = live[index].point, next = live[index + 1].point
+                        let start = CGPoint(x: (previous.x + current.x) / 2, y: (previous.y + current.y) / 2)
+                        let end = CGPoint(x: (current.x + next.x) / 2, y: (current.y + next.y) / 2)
+                        var piece = Path()
+                        piece.move(to: start)
+                        piece.addQuadCurve(to: end, control: current)
                         let fade = live[index].fade
-                        canvas.stroke(segment, with: .color(MM.Colors.flame.opacity(0.6 * fade)),
+                        canvas.stroke(piece, with: .color(MM.Colors.flame.opacity(0.6 * fade)),
                                       style: StrokeStyle(lineWidth: 1.5 + 3.5 * fade, lineCap: .round, lineJoin: .round))
                     }
+                } else if live.count == 2 {
+                    var segment = Path()
+                    segment.move(to: live[0].point)
+                    segment.addLine(to: live[1].point)
+                    canvas.stroke(segment, with: .color(MM.Colors.flame.opacity(0.6 * live[1].fade)),
+                                  style: StrokeStyle(lineWidth: 1.5 + 3.5 * live[1].fade, lineCap: .round, lineJoin: .round))
                 }
                 if let head = live.last {
                     let radius: CGFloat = 3.5
@@ -411,8 +422,8 @@ struct CursorEffectsView: View {
         .ignoresSafeArea()
     }
 
-    /// Soft marker wash with a firm edge: pops in slightly large, settles,
-    /// then fades once the shaking stops.
+    /// Soft marker wash with a firm edge. It fades in once and holds still, then fades out
+    /// when the shaking stops. It does not pulse or change size.
     private func drawHighlight(in canvas: inout GraphicsContext, now: Date) {
         guard let highlight = model.highlight else { return }
         let age = now.timeIntervalSince(highlight.appeared)
@@ -421,10 +432,8 @@ struct CursorEffectsView: View {
         let fade = idle > 0 ? max(0, 1 - idle / CursorEffectsModel.highlightFade) : 1
         let opacity = appear * fade
         guard opacity > 0 else { return }
-        let grow = 1.08 - 0.08 * appear
         let area = localRect(highlight.area)
-        let rect = CGRect(x: area.midX - area.width * grow / 2, y: area.midY - area.height * grow / 2,
-                          width: area.width * grow, height: area.height * grow)
+        let rect = area
         let shape = Path(roundedRect: rect, cornerRadius: MM.Layout.radius)
         canvas.fill(shape, with: .color(MM.Colors.flame.opacity(0.16 * opacity)))
         canvas.stroke(shape, with: .color(MM.Colors.flame.opacity(0.9 * opacity)), lineWidth: 3)

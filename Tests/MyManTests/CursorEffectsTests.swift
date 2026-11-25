@@ -81,7 +81,7 @@ final class CursorEffectsTests: XCTestCase {
         MM.Fonts.registerFonts()
         let bar = NSHostingView(rootView: RecordingControlBar(
             elapsed: "12:08", webcamOn: true, drawTool: .pen,
-            onCamera: {}, onMicrophone: {}, onStop: {}, onRestart: {}))
+            onMicrophone: {}, onStop: {}, onRestart: {}))
         let ideal = bar.fittingSize
         XCTAssertLessThanOrEqual(ideal.width, RecordingControlPlacement.size.width + 0.5)
     }

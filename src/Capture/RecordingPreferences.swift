@@ -56,14 +56,19 @@ struct RecordingSettingsView: View {
                 }
             }.clickable().disabled(!microphone)
             Toggle("System audio", isOn: $systemAudio).clickable().disabled(source == .camera)
-            Toggle("Camera bubble", isOn: $webcam).clickable().disabled(source != .region)
-            Picker("Camera", selection: $cameraUID) {
+            // One camera control, the same as on the recording bar. "No camera" hides the bubble.
+            Picker("Camera", selection: Binding(
+                get: { source == .camera || webcam ? cameraUID : CameraMenu.off },
+                set: { choice in
+                    if choice == CameraMenu.off { webcam = false } else { cameraUID = choice; webcam = true }
+                })) {
+                if source != .camera { Text("No camera").tag(CameraMenu.off) }
                 Text("Default camera").tag("")
                 ForEach(cameras, id: \.uniqueID) { Text($0.localizedName).tag($0.uniqueID) }
                 if !cameraUID.isEmpty, !cameras.contains(where: { $0.uniqueID == cameraUID }) {
                     Text("Saved camera unavailable").tag(cameraUID)
                 }
-            }.clickable().disabled(source != .camera && (source != .region || !webcam))
+            }.clickable().disabled(source == .window)
             Text("Changes apply to your next recording. The microphone input is also used for dictation. Unavailable devices fall back to the system default.")
                 .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
