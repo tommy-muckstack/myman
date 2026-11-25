@@ -103,7 +103,13 @@ While the prompt is open the outbox holds:
 {"ok": false, "pending": true, "error": {"code": "AWAITING_USER", "message": "Waiting for the person to allow or deny this in My Man.", "hint": "…"}, "artifacts": []}
 ```
 
-Read the file again; do not send the request again. It becomes the result after **Allow once** or **Always allow**, `USER_DENIED` after **Deny** or closing the window, and `APPROVAL_EXPIRED` if nobody answers within 10 minutes of `created`. **Always allow** covers later requests in the same group until you revoke it in Settings → Agents, is not offered for deletes, survives restarts, and is listed in `manifest.json` under `always_allowed`. The window floats without taking keyboard focus, so a key typed in another app cannot allow a request.
+Read the file again; do not send the request again. It becomes the result after **Allow once** or **Always allow**, `USER_DENIED` after **Deny** or closing the window, and `APPROVAL_EXPIRED` if nobody answers within 10 minutes of `created`. **Always allow this action** covers later requests from the same agent for that one action until you revoke it in Settings → Agents → *Always allowed from the Brain folder*. It is never offered for deletes, clipboard writes or sharing, survives restarts, and is listed in `manifest.json` under `always_allowed`.
+
+**Agent access presets** (Settings → Agents → *Agent access*): **Off** turns the bridge and every grant off. **Ask each time** turns on the bridge and the capture, markup, recording and library grants, and asks before each sensitive action. **Trusted** does the same but runs screenshots and recordings without asking; clipboard, mouse and keyboard, deletes and sharing still ask, and sharing stays off.
+
+**A grant that is off** is asked for in one dialog that names it (for example "Turn on Recording and allow?"). Allow turns the grant on and runs that action. Deny returns `GRANT_OFF`, and nothing runs. Grants are only changed by the person, in that dialog or in Settings.
+
+`doctor` reports the preset and the grants that are off, in plain words. Every approval, rule use and grant change is written to `audit.log` with `approved_by` (`person`, `always_allow` with its `rule_id`, or `trusted_preset`). The window floats without taking keyboard focus, so a key typed in another app cannot allow a request.
 
 ## From the CLI
 

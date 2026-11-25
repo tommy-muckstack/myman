@@ -14,12 +14,23 @@ struct AgentSettingsView: View {
     @AppStorage("agentPeopleReadEnabled") private var peopleRead = false
     @AppStorage("agentCalendarWriteEnabled") private var calendarWrite = false
     @AppStorage("agentFolderBridgeEnabled") private var folderBridge = false
-    @AppStorage(AgentFolderBridgePolicy.alwaysAllowedKey) private var alwaysAllowedRaw = ""
+    @AppStorage(AgentAccessPreset.key) private var presetRaw = ""
+    @AppStorage(AgentRules.key) private var rulesRaw = ""
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("Your tools, on your terms.").font(MM.Fonts.title)
             Text("Let an agent use My Man when you ask. Choose what it can do on this Mac.")
                 .foregroundStyle(MM.Colors.textSecondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Agent access").font(MM.Fonts.secondary)
+                Picker("Agent access", selection: Binding(
+                    get: { AgentAccessPreset(rawValue: presetRaw) ?? .off },
+                    set: { choice in choice.apply(); presetRaw = choice.rawValue })) {
+                    ForEach(AgentAccessPreset.allCases, id: \.self) { Text($0.title).tag($0) }
+                }.pickerStyle(.segmented).labelsHidden().clickable()
+                Text((AgentAccessPreset(rawValue: presetRaw) ?? .off).summary)
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary).fixedSize(horizontal: false, vertical: true)
+            }
             Toggle("Allow local app commands", isOn: $enabled).clickable()
             VStack(alignment: .leading, spacing: 14) {
                 Toggle("Book events after I review and press Book", isOn: $calendarWrite).clickable()
@@ -46,11 +57,21 @@ struct AgentSettingsView: View {
                     .accessibilityHint("For an agent that can only reach this Mac through a connected folder. Starts off.")
                 Text("For an agent that can only reach this Mac through a connected folder, such as a cloud agent with your Brain folder attached. It writes a request to MyManBrain/agent and My Man answers there. The permissions above still apply, and My Man asks you before anything that looks at your screen, records, uses the clipboard, shares or deletes. Anything that can write to that folder can send a request, so leave this off unless you use such an agent.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
-                ForEach(AgentFolderBridgePolicy.parseAlways(alwaysAllowedRaw), id: \.self) { group in
+                VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("Always allowed from the Brain folder: \(AgentFolderBridgePolicy.groupTitle(group))")
+                        Text("Always allowed from the Brain folder").font(MM.Fonts.secondary)
                         Spacer()
-                        Button("Revoke") { alwaysAllowedRaw = AgentFolderBridgePolicy.withoutAlways(group, in: alwaysAllowedRaw) }.clickable()
+                        if !AgentRules.decode(rulesRaw).isEmpty { Button("Revoke all") { rulesRaw = AgentRules.encode([]) }.clickable() }
+                    }
+                    if AgentRules.decode(rulesRaw).isEmpty {
+                        Text("Nothing yet. Choose Always allow this action in a prompt to add one.").font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                    }
+                    ForEach(AgentRules.decode(rulesRaw)) { rule in
+                        HStack {
+                            Text("\(rule.requester): \(rule.action)").textSelection(.enabled)
+                            Spacer()
+                            Button("Revoke") { rulesRaw = AgentRules.encode(AgentRules.decode(rulesRaw).filter { $0.id != rule.id }) }.clickable()
+                        }
                     }
                 }
             }.disabled(!enabled)
@@ -62,5 +83,9 @@ struct AgentSettingsView: View {
             Button("Connection checks and workflow activity…") { WorkflowCenter.shared.open(tab: "connection") }.clickable()
             AgentIdentitySettings()
         }.font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary).padding(MM.Layout.paddingLarge) }
+        // Turning a grant off takes its remembered approvals with it.
+        .onChange(of: capture) { _, on in if !on { AgentRules.removeGroup("capture") } }
+        .onChange(of: recording) { _, on in if !on { AgentRules.removeGroup("recording") } }
+        .onChange(of: control) { _, on in if !on { AgentRules.removeGroup("control") } }
     }
 }

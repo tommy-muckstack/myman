@@ -280,6 +280,7 @@ export async function plan(argv) {
 export function exitCode(code){
   if(/PERMISSION/.test(code))return 2;
   if(/CANCELLED|CANCELED/.test(code)||code==='USER_DENIED')return 3;
+  if(code==='GRANT_OFF')return 7;
   if(['DISABLED','AGENT_DISABLED','BRIDGE_DISABLED'].includes(code))return 4;
   if(/INVALID|UNKNOWN|CONFIRMATION_REQUIRED|ID_CONFLICT|SESSION_MISMATCH|EDIT_CONFLICT|AMBIGUOUS_TARGET|TARGET_NOT_FOUND/.test(code))return 5;
   if(/TIMEOUT/.test(code)||['AWAITING_USER','APPROVAL_EXPIRED'].includes(code))return 7;
@@ -358,7 +359,7 @@ export async function run(argv, deps={}){
     // a named credential (annotateError adds the agent.env hint then).
     const report={ok:app.ok && brain.ok!==false,app,brain,node:process.versions.node,cli,credentials:credStatus,
       ...(bridge||folder.exists?{bridge:{...folder,in_use:bridge}}:{}),
-      ...(grants?{agent_access:{source,grants,disabled:Object.keys(a.GRANTABLE).filter(g=>!grants[g]),agents_can_self_grant:false,
+      ...(grants?{agent_access:{source,grants,preset:app.access_preset??null,disabled:Object.keys(a.GRANTABLE).filter(g=>!grants[g]),agents_can_self_grant:false,
         ...(Object.keys(a.GRANTABLE).some(g=>!grants[g])?{human_command:`${a.cli(env)} agents grant ${Object.keys(a.GRANTABLE).filter(g=>!grants[g]).join(' ')}`}:{}),
         note:'Only a person can turn these on: in Terminal, or in Settings → Agents. No CLI action, MCP tool or flag can. Credentials (agent.env) are separate from grants.'}}:{}),
       next_steps:steps,
