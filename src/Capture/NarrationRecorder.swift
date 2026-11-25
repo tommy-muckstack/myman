@@ -9,7 +9,9 @@ final class NarrationRecorder: ObservableObject {
     static let shared = NarrationRecorder()
 
     enum Phase: Equatable { case idle, countingDown(Int), recording, finishing }
-    @Published private(set) var phase: Phase = .idle
+    @Published private(set) var phase: Phase = .idle {
+        didSet { NotificationCenter.default.post(name: .narrationPhaseChanged, object: nil) }
+    }
     private(set) var sessionID: String?
 
     private var session: AVCaptureSession?
@@ -20,6 +22,8 @@ final class NarrationRecorder: ObservableObject {
     private var label: String?
 
     var isActive: Bool { phase != .idle }
+    /// True while the camera and microphone are running. The menu bar shows a red dot for this.
+    var isCapturing: Bool { phase == .recording || phase == .finishing }
 
     /// Starts after a 3-2-1 countdown, so the person can switch to the page they are narrating.
     /// Returns once the camera and microphone are running and the first frame has arrived.
@@ -159,6 +163,10 @@ final class NarrationRecorder: ObservableObject {
     private static func size(of url: URL) -> Int {
         ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
     }
+}
+
+extension Notification.Name {
+    static let narrationPhaseChanged = Notification.Name("mm.narrationPhaseChanged")
 }
 
 /// Owns the writer. Every callback and every write runs on `queue`.

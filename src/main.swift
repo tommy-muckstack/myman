@@ -479,11 +479,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentDefaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateAgentIndicator() }
         }
+        NotificationCenter.default.addObserver(forName: .narrationPhaseChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateAgentIndicator() }
+        }
     }
 
     private func updateAgentIndicator() {
         let grants = AgentConsent.status()
         let armed = grants["enabled"] == true && (grants["capture"] == true || grants["recording"] == true)
+        // A narration take that is capturing always shows a red dot, whatever else is armed.
+        if NarrationRecorder.shared.isCapturing {
+            statusItem?.button?.attributedTitle = NSAttributedString(string: " ●", attributes: [.foregroundColor: NSColor.systemRed])
+            statusItem?.button?.toolTip = "My Man is recording narration. Press Option+Shift+N to stop."
+            return
+        }
         statusItem?.button?.title = armed ? " •" : ""
         statusItem?.button?.toolTip = armed ? "My Man · agent capture access enabled" : "My Man"
     }
