@@ -516,6 +516,9 @@ final class AgentActions {
         case "narration.start": return try await NarrationRecorder.shared.startForAgent(label: args["label"] as? String)
         case "narration.stop": return try await NarrationRecorder.shared.stopForAgent()
         case "narration.status": return NarrationRecorder.shared.statusForAgent()
+        case "narration.pause": return try NarrationRecorder.shared.pauseForAgent()
+        case "narration.resume": return try NarrationRecorder.shared.resumeForAgent()
+        case "narration.restart": return try await NarrationRecorder.shared.restartForAgent()
         case "recording.start":
             try audioIdle()
             guard #available(macOS 15.0, *) else { throw AgentError("UNSUPPORTED", "Screen recording requires macOS 15 or later.") }
