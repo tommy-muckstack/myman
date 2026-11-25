@@ -228,18 +228,25 @@ final class AgentFolderBridgeTests: XCTestCase {
         XCTAssertEqual(fixture.code(second), "USER_DENIED"); XCTAssertEqual(fixture.dispatched.count, 1)
     }
 
-    @MainActor func testThirtyMinutesCoversOneKindAndDeletesAlwaysAsk() async throws {
+    @MainActor func testAlwaysAllowCoversOneKindUntilRevokedAndDeletesAlwaysAsk() async throws {
         let fixture = try Fixture(); defer { fixture.finish() }
-        fixture.bridge.reconcile(); fixture.answer = .allowForSession
+        fixture.bridge.reconcile(); fixture.answer = .allowAlways
         for _ in 0 ..< 2 { await fixture.bridge.handle(try fixture.send("recording.start") + ".json") }
         XCTAssertEqual(fixture.asked.count, 1); XCTAssertEqual(fixture.dispatched.count, 2)
+        XCTAssertEqual(AgentFolderBridgePolicy.alwaysAllowed(fixture.defaults), ["recording"])
         await fixture.bridge.handle(try fixture.send("screenshot.capture") + ".json")
         XCTAssertEqual(fixture.asked.count, 2, "another kind asks again")
         for _ in 0 ..< 2 { await fixture.bridge.handle(try fixture.send("item.delete", args: ["id": "x", "confirm": true]) + ".json") }
         XCTAssertEqual(fixture.asked.count, 4); XCTAssertEqual(fixture.asked.last?.canRemember, false)
-        fixture.clock = fixture.clock.addingTimeInterval(1801)
+        XCTAssertFalse(AgentFolderBridgePolicy.alwaysAllowed(fixture.defaults).contains("delete"), "delete is never remembered")
+        // Still allowed a long time later: nothing expires.
+        fixture.clock = fixture.clock.addingTimeInterval(86_400)
         await fixture.bridge.handle(try fixture.send("recording.start") + ".json")
-        XCTAssertEqual(fixture.asked.count, 5, "the 30 minutes end")
+        XCTAssertEqual(fixture.asked.count, 4, "the always-allow does not expire")
+        // Revoking it makes the next one ask again.
+        fixture.defaults.set(AgentFolderBridgePolicy.withoutAlways("recording", in: fixture.defaults.string(forKey: AgentFolderBridgePolicy.alwaysAllowedKey) ?? ""), forKey: AgentFolderBridgePolicy.alwaysAllowedKey)
+        await fixture.bridge.handle(try fixture.send("recording.start") + ".json")
+        XCTAssertEqual(fixture.asked.count, 5, "revoked, so it asks again")
         // Stopping is never held back.
         let before = fixture.asked.count
         await fixture.bridge.handle(try fixture.send("recording.stop", args: ["session_id": "s"]) + ".json")

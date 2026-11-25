@@ -103,7 +103,7 @@ While the prompt is open the outbox holds:
 {"ok": false, "pending": true, "error": {"code": "AWAITING_USER", "message": "Waiting for the person to allow or deny this in My Man.", "hint": "…"}, "artifacts": []}
 ```
 
-Read the file again; do not send the request again. It becomes the result after **Allow once** or **Allow for 30 minutes**, `USER_DENIED` after **Deny** or closing the window, and `APPROVAL_EXPIRED` if nobody answers within 10 minutes of `created`. **Allow for 30 minutes** covers later requests in the same group, is not offered for deletes, ends when the app quits or the bridge is turned off, and is listed in `manifest.json` under `session_grants`. The window floats without taking keyboard focus, so a key typed in another app cannot allow a request.
+Read the file again; do not send the request again. It becomes the result after **Allow once** or **Always allow**, `USER_DENIED` after **Deny** or closing the window, and `APPROVAL_EXPIRED` if nobody answers within 10 minutes of `created`. **Always allow** covers later requests in the same group until you revoke it in Settings → Agents, is not offered for deletes, survives restarts, and is listed in `manifest.json` under `always_allowed`. The window floats without taking keyboard focus, so a key typed in another app cannot allow a request.
 
 ## From the CLI
 
