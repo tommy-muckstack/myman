@@ -62,4 +62,9 @@ final class ScreenEncoderTests: XCTestCase {
             XCTAssertEqual(error as? ScreenEncoder.Failure, .notStarted)
         }
     }
+
+    func testFramesWithoutACompleteStatusAreIgnored() throws {
+        let buffer = try makeBuffer(width: 64, height: 64, time: 0)
+        XCTAssertFalse(ScreenSegmentWriter.isComplete(buffer), "a buffer with no SCK status must not be encoded")
+    }
 }

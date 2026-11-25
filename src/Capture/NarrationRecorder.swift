@@ -136,6 +136,7 @@ final class NarrationRecorder: ObservableObject {
     /// Personal recordings take an external camera (an iPhone through Continuity Camera counts) when one is connected.
     /// Agent takes always use the built-in front camera, as before.
     static func preferredCamera(for profile: NarrationPlan.Profile) -> AVCaptureDevice? {
+        if let chosen = CameraSelection.selectedDevice() { return chosen }
         if profile.camera == .highest {
             // Continuity Camera (an iPhone) is found by its flag, because without the Info.plist opt-in it reports as a built-in camera.
             // Anything that is not the front camera counts as external, so the Mac's own camera is never picked here.
