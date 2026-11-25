@@ -13,6 +13,17 @@ enum MeetingNoteGate {
         words >= minimumWords && characters >= minimumCharacters
     }
 
+    /// Most key points a meeting's notes may carry, by how much was said. A short call gets a short
+    /// summary (anarlog's rule: a short meeting must produce a short summary, never padded).
+    static func factLimit(characters: Int) -> Int {
+        switch characters {
+        case ..<600: return 2
+        case ..<2_000: return 4
+        case ..<6_000: return 8
+        default: return 12
+        }
+    }
+
     /// Normalized character count: whitespace runs count as one space, matching the word counts above.
     static func characterCount(of text: String) -> Int {
         Array(text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")).count

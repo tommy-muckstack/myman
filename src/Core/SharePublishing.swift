@@ -7,6 +7,26 @@ private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate, @unch
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 
+/// The first Share click asks once: anyone with a link can open it until it expires.
+enum ShareFirstUse {
+    static let key = "shareFirstUseConfirmed"
+
+    static func confirmed(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: key)
+    }
+
+    @MainActor static func askToTurnOn(_ defaults: UserDefaults = .standard) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Turn on sharing?"
+        alert.informativeText = "A shared link can be opened by anyone who has it until it expires. Only what you choose to share is uploaded. You can turn sharing off in Settings at any time."
+        alert.addButton(withTitle: "Turn On and Share")
+        alert.addButton(withTitle: "Not Now")
+        let allowed = alert.runModal() == .alertFirstButtonReturn
+        if allowed { defaults.set(true, forKey: key) }
+        return allowed
+    }
+}
+
 @MainActor final class SharePublishing: ObservableObject {
     static let shared = SharePublishing()
     struct Receipt: Codable, Identifiable {
@@ -81,6 +101,10 @@ private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate, @unch
     }
     func publish(item: CaptureItem, seconds: Int, human: Bool = true) async throws -> Receipt {
         guard !item.excluded, CaptureIndex.item(item.id)?.revision == item.revision else { throw AgentError("EDIT_CONFLICT", "Read the current capture before sharing.") }
+        // Sharing is off until the first Share click. That click asks once, and the answer is remembered.
+        if human, !ShareFirstUse.confirmed() {
+            guard ShareFirstUse.askToTurnOn() else { throw AgentError("USER_DENIED", "Sharing stays off. Nothing was published.") }
+        }
         if human && item.kind == "recording" { return try await publishVideo(item: item, seconds: seconds, human: human) }
         let endpoint = try Self.validEndpoint(endpoint)
         _ = try token(for: endpoint)

@@ -59,7 +59,7 @@ import AppKit
     /// A small file kept beside a capture, in its own folder: for example
     /// AgentMedia/<capture>/text.json. Folder and file names are plain and fixed by the caller.
     /// Only the names listed in allowedSidecarNames are accepted.
-    static let allowedSidecarNames: Set<String> = ["text.json", "doc.png", "alt.txt"]
+    static let allowedSidecarNames: Set<String> = ["text.json", "doc.png", "alt.txt", "summary.json"]
     func sidecar(_ data: Data, folder: String, name: String, mime: String, maximum: Int) throws -> [String: Any] {
         expire()
         guard data.count <= maximum else { throw AgentError("TOO_LARGE", "Sidecar exceeds \(maximum / 1024 / 1024) MiB.") }

@@ -16,6 +16,16 @@ final class AgentDeliveryTests: XCTestCase {
         return url.path
     }
 
+    func testEveryPresetFitsTheClaudeLimits() {
+        // Clip, narration and doc image caps must each fit one upload and one artifact asset.
+        let presets = [ClipPlan.maximumBytes, NarrationPlan.maximumBytes, AgentDocImage.maximumBytes]
+        for cap in presets {
+            XCTAssertLessThanOrEqual(cap, AgentDelivery.toolUploadLimit)
+            XCTAssertLessThanOrEqual(cap, AgentDelivery.artifactAssetLimit)
+        }
+        XCTAssertLessThanOrEqual(AgentDelivery.toolUploadLimit, AgentDelivery.artifactAssetLimit)
+    }
+
     func testLabelsAcceptSectionIdsOnly() {
         XCTAssertTrue(AgentDelivery.isValidLabel("section-2.intro"))
         XCTAssertFalse(AgentDelivery.isValidLabel("has space"))

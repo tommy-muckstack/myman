@@ -535,6 +535,15 @@ final class AgentActions {
             let recorder = ScreenRecorder.shared; try session(args, recorder.agentSessionID)
             if action == "recording.pause" { try await recorder.pauseForAgent() } else { try await recorder.resumeForAgent() }
             return try recorder.statusForAgent(sessionID: args["session_id"] as? String)
+        case "recording.summary":
+            let source = try item(args)
+            guard source.kind == "recording" else { throw AgentError("INVALID_ARGUMENTS", "Expected a recording ID.") }
+            var summary = try await AgentRecordingSummary.summarize(URL(fileURLWithPath: source.sourcePath))
+            summary["id"] = source.id
+            let data = try JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys, .prettyPrinted])
+            let file = try AgentMediaStore.shared.sidecar(data, folder: "recording-" + source.id, name: "summary.json", mime: "application/json", maximum: 256 * 1024)
+            summary["summary_path"] = file["path"]
+            return summary
         case "recording.frames":
             let source = try item(args)
             guard source.kind == "recording" else { throw AgentError("INVALID_ARGUMENTS", "Expected a recording ID.") }

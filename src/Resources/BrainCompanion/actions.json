@@ -4614,6 +4614,27 @@
       "permissions": [
         "sharing"
       ]
+    },
+    {
+      "name": "recording.summary",
+      "description": "Length, picture size, audio tracks, size on disk and frame times for one recording, without downloading it. Also writes summary.json.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
     }
   ]
 }

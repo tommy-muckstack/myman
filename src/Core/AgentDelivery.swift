@@ -6,6 +6,8 @@ import Foundation
 /// Claude's tool upload takes. Delivery is a sharing action: it always asks and is never remembered.
 enum AgentDelivery {
     static let toolUploadLimit = 15_000_000
+    /// The largest file a Claude artifact asset accepts. Every preset must fit under it; see AgentDeliveryTests.
+    static let artifactAssetLimit = 20 * 1_048_576
     static let targets = ["claude"]
     static let labelPattern = "^[A-Za-z0-9._-]{1,80}$"
 

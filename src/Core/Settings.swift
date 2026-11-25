@@ -366,6 +366,7 @@ struct SettingsPanelView: View {
     @State private var query = ""
     @AppStorage(PauseEverything.pausedKey) private var paused = false
     @AppStorage(AgentAccessMigration.noticeSeenKey) private var noticeSeen = false
+    @AppStorage(CaptureQuality.key) private var captureQuality = CaptureQuality.balanced.rawValue
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
     @AppStorage("learnDictationCorrections") private var learnDictationCorrections = false
@@ -564,6 +565,15 @@ struct SettingsPanelView: View {
 
     private var captureArea: some View {
         VStack(alignment: .leading, spacing: 0) {
+            settingSection("Image quality") {
+                Picker("Image quality", selection: $captureQuality) {
+                    ForEach(CaptureQuality.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                Text(CaptureQuality(rawValue: captureQuality)?.summary ?? "")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
             settingSection("Recording") {
                 RecordingSettingsView()
                 Toggle("Cursor trail, click ripple and shake to highlight", isOn: $store.cursorEffects)
@@ -643,6 +653,16 @@ struct SettingsPanelView: View {
             settingSection("Agent permissions outside the presets") { AgentAdvancedSettings() }
             Divider().overlay(MM.Colors.border)
             dictationPage
+            Divider().overlay(MM.Colors.border)
+            settingSection("Settings and logs") {
+                HStack(spacing: 8) {
+                    Button("Export settings…") { SettingsTools.exportSettings() }.clickable()
+                    Button("Show audit log") { SettingsTools.showAuditLog() }.clickable()
+                    Button("Reset to defaults…", role: .destructive) { if SettingsTools.confirmReset() { SettingsTools.reset() } }.clickable()
+                }
+                Text("Export never includes keys or tokens. Reset leaves your Brain folder, credentials and library alone.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
             Divider().overlay(MM.Colors.border)
             AISettingsView()
         }

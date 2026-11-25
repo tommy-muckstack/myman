@@ -23,7 +23,12 @@ final class CaptureController: SelectionOverlayDelegate {
     private var windowsTask: Task<CaptureWindowSnapshot, Never>?
     private var captureMainDisplayHeight: CGFloat = 0
     private var thumbnail: ThumbnailPanel?
+    /// Set by a doc capture: runs once when the editor's Done saves the marked-up image.
+    private var docFinish: ((NSImage, URL) -> Void)?
     private lazy var editor = EditorWindowController { [weak self] image, fileURL in
+        let finish = self?.docFinish
+        self?.docFinish = nil
+        finish?(image, fileURL)
         self?.showThumbnail(image: image, fileURL: fileURL)
     }
 
@@ -176,16 +181,20 @@ final class CaptureController: SelectionOverlayDelegate {
         CaptureSoundPlayer.shared.play()
         showThumbnail(image: image, fileURL: url)
         if forDoc {
+            // Markup first: the editor's Done saves the marked-up image, and only then is the doc image made.
             let id = result["id"] as! String, when = capturedAt, height = displayHeight, scale = NSScreen.main?.backingScaleFactor ?? 1
-            Task { @MainActor in
-                let window = (await windowTask?.value)?.selected(in: rect, mainDisplayHeight: height)
-                do {
-                    _ = try await AgentDocCapture.finish(image: image, id: id, path: url.path, capturedAt: when, scale: Double(scale), window: window)
-                    Toast.show("Saved for a Paper doc", systemImage: "doc.badge.plus")
-                } catch {
-                    Toast.show((error as? AgentError)?.message ?? "Couldn't prepare the doc image", systemImage: "exclamationmark.triangle")
+            docFinish = { edited, editedURL in
+                Task { @MainActor in
+                    let window = (await windowTask?.value)?.selected(in: rect, mainDisplayHeight: height)
+                    do {
+                        _ = try await AgentDocCapture.finish(image: edited, id: id, path: editedURL.path, capturedAt: when, scale: Double(scale), window: window)
+                        Toast.show("Saved for a Paper doc", systemImage: "doc.badge.plus")
+                    } catch {
+                        Toast.show((error as? AgentError)?.message ?? "Couldn't prepare the doc image", systemImage: "exclamationmark.triangle")
+                    }
                 }
             }
+            editor.open(image: image, fileURL: url)
         }
     }
 

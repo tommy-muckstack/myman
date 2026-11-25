@@ -44,6 +44,7 @@ final class NarrationRecorder: ObservableObject {
         let capture = try Self.makeSession(sink: sink)
         self.sink = sink; self.session = capture; self.outputURL = url; self.sessionID = id
         capture.startRunning()
+        NarrationBubble.show(session: capture)
         phase = .recording
         // Wait for the first video frame so the start time is real before anything returns.
         for _ in 0 ..< 200 where sink.startedAtEpochMs == nil { try await Task.sleep(for: .milliseconds(25)) }
@@ -59,10 +60,12 @@ final class NarrationRecorder: ObservableObject {
     /// Stops and finalizes. Re-encodes at a lower bitrate if the take is over the cap, then reports the final size.
     func stop() async throws -> [String: Any] {
         guard let sink, let capture = session, let url = outputURL, let id = sessionID else {
+            NarrationBubble.close()
             if case .countingDown = phase { cancelled = true }
             throw AgentError("NOT_RECORDING", "No narration is running.")
         }
         autoStop?.cancel(); autoStop = nil
+        NarrationBubble.close()
         phase = .finishing
         let startedAt = sink.startedAtEpochMs ?? Int64(Date().timeIntervalSince1970 * 1000)
         // Stop the devices off the main thread; stopRunning blocks.

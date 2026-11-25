@@ -165,7 +165,8 @@ function bareFlags(argv){return argv.map((a,i)=>['--auto-zoom','--cursor'].inclu
 export async function plan(argv) {
   const {values:v,positionals:p}=parseArgs({args:bareFlags(argv),options,allowPositionals:true,strict:true});
   if(v.help || !p.length)return {type:'help'};
-  if(v.mode && !['interactive','agent'].includes(v.mode))fail('Mode must be interactive or agent.');
+  const recordMode=p[0]==='record'&&['start','stop'].includes(p[1])&&['narration','clip'].includes(v.mode);
+  if(v.mode && !recordMode && !['interactive','agent'].includes(v.mode))fail('Mode must be interactive or agent (record also takes narration or clip).');
   if(v['no-wait'] && (v.wait || v['wait-ready']))fail('Choose wait or no-wait.');
   const waitMs=v['wait-timeout']===undefined?300000:number(v['wait-timeout'])*1000;
   if(waitMs<0 || waitMs>600000)fail('Wait timeout must be 0–600 seconds.');
@@ -223,6 +224,9 @@ export async function plan(argv) {
   if(['screenshot','capture-markup'].includes(p[0])){if(v.mode!=='agent')fail('Geometry capture requires --mode agent.');name=p[0]==='screenshot'?'screenshot.capture':'screenshot.capture_markup';consumed=1;}
   if(p[0]==='annotate'){name='screenshot.edit';consumed=1;}
   if(p[0]==='demo'){name='demo.run';consumed=1;}
+  // record start/stop --mode narration|clip route to the narration and clip actions.
+  if(p[0]==='record'&&p.length===2&&v.mode==='narration'){name=p[1]==='start'?'narration.start':'narration.stop';consumed=2;}
+  if(p[0]==='record'&&p.length===2&&p[1]==='start'&&v.mode==='clip'){name='clip.record';consumed=2;}
   if(name){
     if(p.length!==consumed)fail('Unexpected positional arguments.');
     const schema=describe(name).inputSchema;
