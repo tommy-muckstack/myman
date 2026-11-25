@@ -8,11 +8,13 @@ import Foundation
 final class NarrationRecorder: ObservableObject {
     static let shared = NarrationRecorder()
 
-    enum Phase: Equatable { case idle, countingDown(Int), recording, finishing }
+    enum Phase: Equatable { case idle, countingDown(Int), recording, paused, finishing }
     @Published private(set) var phase: Phase = .idle {
         didSet { NotificationCenter.default.post(name: .narrationPhaseChanged, object: nil) }
     }
     private(set) var sessionID: String?
+    /// Recorded time so far, without paused time. Refreshed about four times a second while a take runs.
+    @Published private(set) var elapsedMs = 0
 
     private var session: AVCaptureSession?
     private var sink: NarrationSink?
@@ -24,12 +26,22 @@ final class NarrationRecorder: ObservableObject {
 
     var isActive: Bool { phase != .idle }
     /// True while the camera and microphone are running. The menu bar shows a red dot for this.
-    var isCapturing: Bool { phase == .recording || phase == .finishing }
+    var isCapturing: Bool { phase == .recording || phase == .paused || phase == .finishing }
 
     /// Starts after a 3-2-1 countdown, so the person can switch to the page they are narrating.
     /// Returns once the camera and microphone are running and the first frame has arrived.
     func start(label: String? = nil, profile: NarrationPlan.Profile = NarrationPlan.personal) async throws -> String {
         guard phase == .idle else { throw AgentError("BUSY", "A narration is already running. Stop it first.") }
+        NarrationControlPanel.show(recorder: self)
+        do {
+            return try await beginTake(label: label, profile: profile)
+        } catch {
+            NarrationControlPanel.close()
+            throw error
+        }
+    }
+
+    private func beginTake(label: String?, profile: NarrationPlan.Profile) async throws -> String {
         self.profile = profile
         if let label, !AgentDelivery.isValidLabel(label) { throw AgentError("INVALID_ARGUMENTS", "label takes letters, numbers, dots, dashes and underscores, up to 80 characters. Use the doc section id.") }
         self.label = label
@@ -54,29 +66,93 @@ final class NarrationRecorder: ObservableObject {
         // Wait for the first video frame so the start time is real before anything returns.
         for _ in 0 ..< 200 where sink.startedAtEpochMs == nil { try await Task.sleep(for: .milliseconds(25)) }
         guard sink.startedAtEpochMs != nil else { _ = try? await stop(); throw AgentError("CAPTURE_FAILED", "The camera did not send a frame. Check Camera access in Privacy.") }
-        autoStop = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(NarrationPlan.maximumDurationSeconds))
-            guard let self, self.phase == .recording else { return }
-            _ = try? await self.stop()
-        }
+        startTicker()
         return id
+    }
+
+    /// Keeps elapsed time for the panel, and ends the take at the cap. The cap counts recorded time, so a pause does not use it up.
+    private func startTicker() {
+        autoStop?.cancel()
+        autoStop = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self, self.phase == .recording || self.phase == .paused, let sink = self.sink else { return }
+                let ms = sink.recordedMs
+                self.elapsedMs = ms
+                if ms >= NarrationPlan.maximumDurationSeconds * 1000 {
+                    // Its own task, so the stop is not cancelled along with this loop.
+                    Task { _ = try? await self.stop() }
+                    return
+                }
+            }
+        }
+    }
+
+    /// Pauses the take. Nothing is written while paused, and the paused time is not counted in the length.
+    func pause() throws {
+        guard phase == .recording, let sink else { throw AgentError("NOT_RECORDING", "No narration is recording, so there is nothing to pause.") }
+        sink.setPaused(true)
+        phase = .paused
+    }
+
+    func resume() throws {
+        guard phase == .paused, let sink else { throw AgentError("NOT_PAUSED", "The narration is not paused.") }
+        sink.setPaused(false)
+        phase = .recording
+    }
+
+    /// Throws away the take and counts down again. Keeps the label. The panel asks first when the take is longer than 5 seconds.
+    func restart() async throws -> String {
+        guard phase == .recording || phase == .paused else { throw AgentError("NOT_RECORDING", "No narration is recording, so there is nothing to restart.") }
+        let keep = label
+        await discard()
+        return try await start(label: keep, profile: profile)
+    }
+
+    /// Throws away the take and its file. The label is kept here; cancelTake clears it.
+    func discard() async {
+        if case .countingDown = phase { cancelled = true; NarrationControlPanel.close(); return }
+        autoStop?.cancel(); autoStop = nil
+        NarrationBubble.close()
+        guard let sink, let capture = session, let url = outputURL else {
+            NarrationControlPanel.close()
+            phase = .idle
+            return
+        }
+        phase = .finishing
+        await Task.detached(priority: .userInitiated) { capture.stopRunning() }.value
+        await sink.discard(url: url)
+        session = nil; self.sink = nil; outputURL = nil; sessionID = nil
+        elapsedMs = 0
+        phase = .idle
+        NarrationControlPanel.close()
+    }
+
+    /// Discards the take for good, and clears its label.
+    func cancelTake() async {
+        label = nil
+        await discard()
     }
 
     /// Stops and finalizes. Re-encodes at a lower bitrate if the take is over the cap, then reports the final size.
     func stop() async throws -> [String: Any] {
         guard let sink, let capture = session, let url = outputURL, let id = sessionID else {
             NarrationBubble.close()
+            NarrationControlPanel.close()
             if case .countingDown = phase { cancelled = true }
             throw AgentError("NOT_RECORDING", "No narration is running.")
         }
         autoStop?.cancel(); autoStop = nil
         NarrationBubble.close()
+        NarrationControlPanel.close()
         phase = .finishing
         let startedAt = sink.startedAtEpochMs ?? Int64(Date().timeIntervalSince1970 * 1000)
         // Stop the devices off the main thread; stopRunning blocks.
         await Task.detached(priority: .userInitiated) { capture.stopRunning() }.value
         try await sink.finish()
-        let durationMs = Int(Int64(Date().timeIntervalSince1970 * 1000) - startedAt)
+        // The length is the recorded time, so a pause does not count toward it.
+        let durationMs = sink.recordedMs
+        elapsedMs = durationMs
         var bytes = Self.size(of: url)
         var reencoded: Int?
         if let bitrate = NarrationPlan.reencodeVideoBitrate(durationSeconds: Double(durationMs) / 1000, bytes: bytes, profile: profile) {
@@ -114,8 +190,16 @@ final class NarrationRecorder: ObservableObject {
 
     func stopForAgent() async throws -> [String: Any] { try await stop() }
 
+    func pauseForAgent() throws -> [String: Any] { try pause(); return statusForAgent() }
+    func resumeForAgent() throws -> [String: Any] { try resume(); return statusForAgent() }
+
+    func restartForAgent() async throws -> [String: Any] {
+        let id = try await restart()
+        return ["id": id, "restarted": true, "countdown_seconds": NarrationPlan.countdownSeconds, "max_duration_seconds": NarrationPlan.maximumDurationSeconds]
+    }
+
     func statusForAgent() -> [String: Any] {
-        var status: [String: Any] = ["phase": String(describing: phase), "session_id": sessionID ?? NSNull()]
+        var status: [String: Any] = ["phase": String(describing: phase), "session_id": sessionID ?? NSNull(), "elapsed_ms": elapsedMs, "paused": phase == .paused]
         if case .countingDown(let count) = phase { status["countdown"] = count }
         return status
     }
@@ -243,6 +327,20 @@ final class NarrationSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private let audio: AVAssetWriterInput
     private var started = false
     private(set) var startedAtEpochMs: Int64?
+    // Pause: nothing is written while paused. On resume the paused gap is removed from the timeline, so the file is continuous.
+    private var paused = false
+    private var resumePending = false
+    /// Total paused time removed from the timeline so far.
+    private var offset = CMTime.zero
+    /// End of the last video frame written, on the output timeline.
+    private var lastEnd = CMTime.invalid
+    private var firstPTS = CMTime.invalid
+    private let lockedMs = NSLock()
+    private var recordedValue = 0
+    private static let fallbackFrame = CMTime(value: 1, timescale: 30)
+
+    /// Recorded time so far in milliseconds, without paused time.
+    var recordedMs: Int { lockedMs.withLock { recordedValue } }
 
     init(url: URL, profile: NarrationPlan.Profile) throws {
         writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -262,19 +360,72 @@ final class NarrationSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         super.init()
     }
 
+    /// Called on the main actor. Pausing drops frames and sound; resuming removes the gap from the timeline.
+    func setPaused(_ on: Bool) {
+        queue.async {
+            if on { self.paused = true } else if self.paused { self.paused = false; self.resumePending = true }
+        }
+    }
+
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
         if output is AVCaptureVideoDataOutput {
+            if paused { return }
+            let raw = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             if !started {
                 // The first video frame sets the clock: the wall time now, and the source time the file starts at.
                 writer.startWriting()
-                writer.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+                writer.startSession(atSourceTime: raw)
                 started = true
                 startedAtEpochMs = Int64(Date().timeIntervalSince1970 * 1000)
+                firstPTS = raw
             }
-            if video.isReadyForMoreMediaData { video.append(sampleBuffer) }
-        } else if started, audio.isReadyForMoreMediaData {
-            audio.append(sampleBuffer)
+            if resumePending {
+                // The first frame after a resume: close the paused gap so the frames sit right after the last one.
+                let candidate = CMTimeSubtract(raw, offset)
+                if lastEnd.isValid, CMTimeCompare(candidate, lastEnd) > 0 {
+                    offset = CMTimeAdd(offset, CMTimeSubtract(candidate, lastEnd))
+                }
+                resumePending = false
+            }
+            guard video.isReadyForMoreMediaData, let shifted = Self.shifted(sampleBuffer, by: offset) else { return }
+            video.append(shifted)
+            let duration = CMSampleBufferGetDuration(sampleBuffer)
+            lastEnd = CMTimeAdd(CMTimeSubtract(raw, offset), duration.isValid ? duration : Self.fallbackFrame)
+            let ms = Int(CMTimeGetSeconds(CMTimeSubtract(lastEnd, firstPTS)) * 1000)
+            lockedMs.withLock { recordedValue = max(0, ms) }
+        } else if started, !paused, !resumePending, audio.isReadyForMoreMediaData, let shifted = Self.shifted(sampleBuffer, by: offset) {
+            // Sound waits for the first video frame after a resume, so it stays in step with the picture.
+            audio.append(shifted)
+        }
+    }
+
+    /// The buffer with its times moved back by `offset`. Returns the buffer unchanged when there is no offset.
+    static func shifted(_ buffer: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
+        if CMTimeCompare(offset, .zero) == 0 { return buffer }
+        var count: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(buffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+        guard count > 0 else { return buffer }
+        var timing = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: count)
+        CMSampleBufferGetSampleTimingInfoArray(buffer, entryCount: count, arrayToFill: &timing, entriesNeededOut: &count)
+        for i in timing.indices {
+            timing[i].presentationTimeStamp = CMTimeSubtract(timing[i].presentationTimeStamp, offset)
+            if timing[i].decodeTimeStamp.isValid { timing[i].decodeTimeStamp = CMTimeSubtract(timing[i].decodeTimeStamp, offset) }
+        }
+        var out: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: buffer, sampleTimingEntryCount: count,
+                                              sampleTimingArray: &timing, sampleBufferOut: &out)
+        return out
+    }
+
+    /// Abandons the file and removes it. Runs on the write queue, so no sample can arrive after it.
+    func discard(url: URL) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                self.writer.cancelWriting()
+                try? FileManager.default.removeItem(at: url)
+                continuation.resume()
+            }
         }
     }
 
