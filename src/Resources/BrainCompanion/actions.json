@@ -4524,6 +4524,58 @@
       "readOnly": true,
       "destructive": false,
       "permissions": []
+    },
+    {
+      "name": "clip.record",
+      "description": "Record a short silent clip of one window or a region (up to 20 s, 12-15 fps) to an mp4 under 4 MB, with a poster PNG. Runs to completion in one call.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "window_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Window id from screenshot.targets. Give this or region."
+          },
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height] in global points."
+          },
+          "max_duration": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Seconds. Default 20."
+          },
+          "fps": {
+            "type": "integer",
+            "minimum": 12,
+            "maximum": 15,
+            "description": "Frames per second. Default 15."
+          },
+          "preset": {
+            "type": "string",
+            "enum": [
+              "small"
+            ],
+            "description": "Only small is offered: the clip is sized for an inline doc image."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
     }
   ]
 }

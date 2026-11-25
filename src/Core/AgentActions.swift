@@ -502,6 +502,14 @@ final class AgentActions {
                 else if source.kind == "recording" { let url = URL(fileURLWithPath: source.sourcePath); guard FileManager.default.fileExists(atPath: url.path) else { throw AgentError("NOT_FOUND", "Recording file is missing.") }; NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([url as NSURL]) }
                 else { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(source.body, forType: .string) }
             }; return ["copied": true, "change_count": NSPasteboard.general.changeCount]
+        case "clip.record":
+            let windowID = args["window_id"] as? String
+            let region = (args["region"] as? [Double]).flatMap { try? AgentImages.rect($0) }
+            guard (windowID == nil) != (region == nil) else { throw AgentError("INVALID_ARGUMENTS", "Give exactly one of window_id or region.") }
+            if let preset = args["preset"] as? String, preset != "small" { throw AgentError("INVALID_ARGUMENTS", "Only the small preset is available for clips.") }
+            let duration = try ClipPlan.duration((args["max_duration"] as? NSNumber)?.doubleValue)
+            let fps = try ClipPlan.fps((args["fps"] as? NSNumber)?.intValue)
+            return try await ClipRecorder.record(windowID: windowID, region: region, maxDuration: duration, fps: fps)
         case "narration.start": return try await NarrationRecorder.shared.startForAgent()
         case "narration.stop": return try await NarrationRecorder.shared.stopForAgent()
         case "narration.status": return NarrationRecorder.shared.statusForAgent()
