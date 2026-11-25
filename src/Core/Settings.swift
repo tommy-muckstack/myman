@@ -339,7 +339,9 @@ final class SettingsStore: ObservableObject {
 @MainActor
 final class SettingsController {
     static let shared = SettingsController()
+    static let originKey = "settingsPanelOrigin"
     private var panel: FloatingPanel?
+    private var moveObserver: NSObjectProtocol?
 
     /// `page` is a lowercase page name such as "agents"; unknown values open General.
     func show(page: String = "") {
@@ -348,10 +350,25 @@ final class SettingsController {
             onDismiss: { [weak self] in self?.panel?.dismiss() },
             initialPage: page
         ))
-        settingsPanel.onDismiss = { [weak self] in self?.panel = nil }
+        settingsPanel.onDismiss = { [weak self] in
+            if let token = self?.moveObserver { NotificationCenter.default.removeObserver(token) }
+            self?.moveObserver = nil
+            self?.panel = nil
+        }
         panel = settingsPanel
-        settingsPanel.present()
+        settingsPanel.present(at: Self.savedOrigin())
+        // Remember where it was dragged, so the next open is in the same place.
+        moveObserver = NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: settingsPanel, queue: .main) { note in
+            guard let window = note.object as? NSWindow else { return }
+            UserDefaults.standard.set([Double(window.frame.origin.x), Double(window.frame.origin.y)], forKey: Self.originKey)
+        }
         Analytics.track("settings_opened")
+    }
+
+    private static func savedOrigin() -> NSPoint? {
+        guard let xy = UserDefaults.standard.array(forKey: originKey) as? [Double], xy.count == 2,
+              xy.allSatisfy({ $0.isFinite }) else { return nil }
+        return NSPoint(x: xy[0], y: xy[1])
     }
 }
 
@@ -417,6 +434,7 @@ struct SettingsPanelView: View {
             }
             .padding(.horizontal, MM.Layout.paddingLarge)
             .padding(.vertical, MM.Layout.padding)
+            .background(WindowDragHandle())
 
             TextField("Search settings: record, camera, folder, agent", text: $query)
                 .textFieldStyle(.roundedBorder)
