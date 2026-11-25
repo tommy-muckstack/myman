@@ -379,8 +379,16 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 // H.264 High, written by our own encoder at a bitrate set from the pixel rate. The
                 // file keeps a .mov name because ShareReadyMovie derives the saved .mp4 name from it.
                 let frameRate = 60
-                let writer = try ScreenSegmentWriter(url: url, width: Int(config.width), height: Int(config.height),
-                                                     frameRate: frameRate, includesAudio: config.capturesAudio)
+                // The saved video is framed: the screen sits on a card in the frame color, so the
+                // file is larger than the screen by the border on each side.
+                let frame = RecordingFrameComposer(sourceWidth: Int(config.width), sourceHeight: Int(config.height),
+                                                   color: RecordingFrameStyle.color())
+                frame.onPreview = { image in
+                    DispatchQueue.main.async { MainActor.assumeIsolated { RecordingFramePreview.shared.update(image) } }
+                }
+                let writer = try ScreenSegmentWriter(url: url, width: frame.outputWidth, height: frame.outputHeight,
+                                                     frameRate: frameRate, includesAudio: config.capturesAudio,
+                                                     frame: frame)
                 writer.onFailure = { [weak self] _ in
                     guard let self, self.isRecording else { return }
                     self.stop()
@@ -570,7 +578,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         isRecording = false; isPaused = false; isStopping = false; startedAt = nil; segmentStartedAt = nil
         agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false; agentHideCursor = false
         if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
-        dismissPill(); borderPanel?.orderOut(nil); borderPanel = nil; activeRegion = nil; activeWindowID = nil
+        dismissPill(); RecordingFramePreview.shared.hide(); borderPanel?.orderOut(nil); borderPanel = nil; activeRegion = nil; activeWindowID = nil
         WebcamBubble.shared.preferredRegion = nil; WebcamBubble.shared.turnOff(); WebcamBubble.shared.resetPosition()
         CursorEffects.shared.hide(); micLevelTimer?.invalidate(); micLevelTimer = nil; microphoneLevel = 0
         _ = clickRecorder?.stop(); clickRecorder = nil
@@ -746,9 +754,10 @@ final class ScreenRecorder: NSObject, ObservableObject {
     // MARK: Recording controls next to the selected area
 
     /// My Man's own recording controls (the Stop/Restart pill), which never belong in the video.
+    /// This app's own floating windows (the pill and the frame preview), which the recording leaves out.
     private static func ownChrome(_ content: SCShareableContent, pill: NSPanel?) -> [SCWindow] {
-        guard let number = pill?.windowNumber, number > 0 else { return [] }
-        return content.windows.filter { $0.windowID == CGWindowID(number) }
+        let numbers = [pill?.windowNumber, RecordingFramePreview.shared.windowNumber].compactMap { $0 }.filter { $0 > 0 }
+        return content.windows.filter { window in numbers.contains { CGWindowID($0) == window.windowID } }
     }
 
     private func showPill() {
@@ -838,6 +847,7 @@ extension ScreenRecorder: SelectionOverlayDelegate {
            AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
             WebcamBubble.shared.turnOn()
         }
+        RecordingFramePreview.shared.show(region: region)
         showCountdown(for: region)
     }
 
@@ -904,6 +914,7 @@ extension ScreenRecorder: SelectionOverlayDelegate {
 
     private func cancelPending() {
         pendingRegion = nil
+        RecordingFramePreview.shared.hide()
         countdownPanel?.orderOut(nil)
         countdownPanel = nil
         borderPanel?.orderOut(nil)
