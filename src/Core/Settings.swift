@@ -100,7 +100,7 @@ struct HotkeyCombo: Codable, Equatable {
 }
 
 enum HotkeyAction: String, CaseIterable, Identifiable {
-    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record, narration, captureForDoc
+    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record, narration, captureForDoc, markZoomPoint
     var id: String { rawValue }
 
     var label: String {
@@ -115,6 +115,7 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .record: return "Record Screen"
         case .narration: return "Record Narration"
         case .captureForDoc: return "Capture for Paper Doc"
+        case .markZoomPoint: return "Mark Zoom Point While Recording"
         }
     }
 
@@ -134,8 +135,10 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .voiceUndo: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(cmdKey | optionKey | shiftKey))
         case .meeting: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(optionKey | shiftKey))
         case .record: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey))
-        case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: UInt32(optionKey | shiftKey))
+        // ⌥⇧K. Narration used ⌥⇧N, the same key as New Note, so one of the two never registered.
+        case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_K), carbonModifiers: UInt32(optionKey | shiftKey))
         case .captureForDoc: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_D), carbonModifiers: UInt32(optionKey | shiftKey))
+        case .markZoomPoint: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(optionKey | shiftKey))
         }
     }
 }
@@ -367,6 +370,12 @@ struct SettingsPanelView: View {
     @AppStorage(PauseEverything.pausedKey) private var paused = false
     @AppStorage(AgentAccessMigration.noticeSeenKey) private var noticeSeen = false
     @State private var openAtLogin = LaunchAtLogin.isEnabled
+    @AppStorage(ScreenshotFileName.key) private var screenshotNameTemplate = ""
+    /// What a screenshot would be called today, with the template the person typed (or the default when empty).
+    private var screenshotNamePreview: String {
+        let typed = screenshotNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ScreenshotFileName.render(typed.isEmpty ? ScreenshotFileName.defaultTemplate : typed, date: Date(), id: "preview0000")
+    }
     @AppStorage(CaptureQuality.key) private var captureQuality = CaptureQuality.balanced.rawValue
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
@@ -595,6 +604,15 @@ struct SettingsPanelView: View {
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
+            Divider().overlay(MM.Colors.border)
+            settingSection("Screenshot file names") {
+                TextField(ScreenshotFileName.defaultTemplate, text: $screenshotNameTemplate)
+                    .textFieldStyle(.roundedBorder).font(MM.Fonts.body)
+                Text("Preview: " + screenshotNamePreview + ".png")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                Text("Use {date}, {time} and {id}. Leave it empty for the default.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
             Divider().overlay(MM.Colors.border)
             settingSection("Screenshot sound") {
                 Picker("Screenshot sound", selection: $store.captureSound) {

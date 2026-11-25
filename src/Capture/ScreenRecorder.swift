@@ -33,6 +33,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
     @Published private(set) var startedAt: Date?
     /// Clicks inside the recorded area, for "Polish recording" zooms.
     private var clickRecorder: ClickRecorder?
+
+    /// Drops a zoom point at the cursor while recording, for moments with no click (keyboard-only steps).
+    /// It goes into the same click log, so the polish step zooms there.
+    func markZoomPoint() {
+        guard isRecording, let clickRecorder else { Toast.show("Start a recording first to mark a zoom point", systemImage: "scope"); return }
+        clickRecorder.record(NSEvent.mouseLocation)
+        Toast.show("Zoom point marked", systemImage: "scope")
+    }
     private var cursorRecorder: CursorTrackRecorder?
     private var keystrokeRecorder: KeystrokeRecorder?
     /// True from tile-click to file-saved — covers the async spin-up window
