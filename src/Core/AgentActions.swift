@@ -383,18 +383,39 @@ final class AgentActions {
             result["scale"] = scale
             result["window_id"] = windowID
             result["captured_at"] = result["created_at"]
-            // A text sidecar next to the image, unless the caller opts out with ocr: false.
-            if args["ocr"] as? Bool != false {
-                let analysis = await ImageAnalysis.analyze(output)
+            let markup = action == "screenshot.capture_markup"
+            let folder = URL(fileURLWithPath: result["path"] as! String).deletingPathExtension().lastPathComponent
+            var paths: [String: String] = ["image": result["path"] as! String]
+            // The app, window and URL come from the same privacy-filtered snapshot the library uses.
+            let windowInfo = region.flatMap { CaptureWindowSnapshot.take().selected(in: $0, mainDisplayHeight: NSScreen.screens.first?.frame.height ?? 0) }
+            let wantsOCR = args["ocr"] as? Bool != false
+            var analysis: ImageAnalysis.Result?
+            if wantsOCR || markup { analysis = await ImageAnalysis.analyze(output) }
+            if wantsOCR, let analysis {
                 let size = AgentImages.size(output)
                 let regions = AgentMarkup.regions(analysis.observations, size: size)
-                let document = AgentOCRSidecar.document(text: analysis.text, regions: regions, size: size, scale: scale, capturedAt: AgentActions.date(date))
+                let document = AgentOCRSidecar.document(text: analysis.text, regions: regions, size: size, scale: scale, capturedAt: AgentActions.date(date),
+                                                        app: windowInfo?.app, bundleID: windowInfo?.bundleID, windowTitle: windowInfo?.title, url: windowInfo?.url)
                 let data = try JSONSerialization.data(withJSONObject: document, options: [.sortedKeys, .prettyPrinted])
-                let stem = URL(fileURLWithPath: result["path"] as! String).deletingPathExtension().lastPathComponent
-                let sidecar = try await AgentMediaStore.shared.sidecar(data, name: stem + ".ocr.json", maximum: AgentOCRSidecar.maximumBytes)
-                result["ocr_path"] = sidecar["path"]
+                let sidecar = try await AgentMediaStore.shared.sidecar(data, folder: folder, name: "text.json", mime: "application/json", maximum: AgentOCRSidecar.maximumBytes)
+                result["ocr_path"] = sidecar["path"]; paths["text"] = sidecar["path"] as? String
                 result["ocr_lines"] = regions.count
             }
+            if markup {
+                // A flattened copy for a Paper doc, at most 2400 px wide and under 4 MB, with one sentence of alt text.
+                let size = AgentImages.size(output)
+                guard let fitted = AgentDocImage.fit(width: Int(size.width), height: Int(size.height), encode: { width in
+                    AgentImages.resized(output, width: width).flatMap { try? AgentImages.png($0) }
+                }) else { throw AgentError("TOO_LARGE", "The marked-up image could not be fitted under 4 MB. Capture a smaller area.") }
+                let doc = try await AgentMediaStore.shared.sidecar(fitted.data, folder: folder, name: "doc.png", mime: "image/png", maximum: AgentDocImage.maximumBytes)
+                let alt = AgentAltText.make(app: windowInfo?.app, windowTitle: windowInfo?.title, text: analysis?.text ?? "")
+                let altFile = try await AgentMediaStore.shared.sidecar(Data((alt + "\n").utf8), folder: folder, name: "alt.txt", mime: "text/plain", maximum: 4096)
+                result["doc_path"] = doc["path"]; result["doc_width"] = fitted.width; result["alt_path"] = altFile["path"]; result["alt"] = alt
+                paths["doc"] = doc["path"] as? String; paths["alt"] = altFile["path"] as? String
+            }
+            let readyFor = args["ready_for"] as? String
+            if let readyFor { result["ready_for"] = readyFor }
+            try AgentChangeLog.append(kind: markup ? "markup" : "screenshot", id: result["id"] as! String, readyFor: readyFor, paths: paths, at: AgentActions.date(date))
             if let region {
                 result["region"] = [region.minX, region.minY, region.width, region.height]
                 result["display"] = NSScreen.screens.first(where: { $0.frame.contains(region) }).flatMap { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue }
@@ -402,6 +423,11 @@ final class AgentActions {
             }
             if args["open_editor"] as? Bool == true { capture.openInEditor(fileURL: URL(fileURLWithPath: result["path"] as! String)) }
             return result
+        case "changes.since":
+            guard let cursor = Int(args["cursor"] as? String ?? "0"), cursor >= 0 else { throw AgentError("INVALID_ARGUMENTS", "cursor must be a number from an earlier changes.since reply, or 0.") }
+            let limit = args["limit"] as? Int ?? AgentChangeLog.defaultLimit
+            let page = try AgentChangeLog.since(cursor: cursor, limit: limit)
+            return ["cursor": String(page.cursor), "items": page.items.map(\.json), "limit": min(max(limit, 1), AgentChangeLog.maximumLimit)] as [String: Any]
         case "screenshot.edit":
             let (source, image) = try shot(args)
             let model = try await Self.annotationModel(image: image, path: source.sourcePath, args: args)
@@ -851,6 +877,17 @@ enum AgentImages {
               width > 0, height > 0, width <= 16000, height <= 16000, width * height <= 32_000_000,
               let cg = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw AgentError("INVALID_IMAGE", "Use a supported image up to 32 MiB and 32 megapixels.") }
         return NSImage(cgImage: cg, size: CGSize(width: width, height: height))
+    }
+    /// A copy scaled to the given pixel width, keeping the aspect ratio. Used for Paper doc images.
+    static func resized(_ image: NSImage, width: CGFloat) -> NSImage? {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), cg.width > 0 else { return nil }
+        let w = max(1, Int(width.rounded())), h = max(1, Int((CGFloat(cg.height) * CGFloat(w) / CGFloat(cg.width)).rounded()))
+        guard let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let out = context.makeImage() else { return nil }
+        return NSImage(cgImage: out, size: NSSize(width: w, height: h))
     }
     static func png(_ image: NSImage) throws -> Data {
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { throw AgentError("INVALID_IMAGE", "Cannot encode image.") }; return png

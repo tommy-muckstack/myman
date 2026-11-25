@@ -15,6 +15,30 @@
       "permissions": []
     },
     {
+      "name": "changes.since",
+      "description": "Captures and markups newer than a cursor, oldest first, with the paths of their files. Pass cursor 0 first, then the cursor from each reply.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "pattern": "^[0-9]{1,12}$",
+            "description": "Cursor from an earlier reply; 0 for the start."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
       "name": "app.open",
       "description": "Open an existing MyMan surface.",
       "inputSchema": {
@@ -56,7 +80,7 @@
     },
     {
       "name": "screenshot.capture",
-      "description": "Capture a display, desktop region or window; save and index it. No interactive selection. Clipboard changes only if requested.",
+      "description": "Capture a display, desktop region or window; save and index it. Writes text.json (OCR and metadata) beside it. Pass ready_for to queue it for a doc. No interactive selection. Clipboard changes only if requested.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -108,6 +132,13 @@
           "ocr": {
             "type": "boolean",
             "description": "Write <name>.ocr.json beside the capture (default true). Pass false to skip."
+          },
+          "ready_for": {
+            "type": "string",
+            "enum": [
+              "paper-doc"
+            ],
+            "description": "Mark the capture ready for a Paper doc; it appears in changes.since."
           }
         },
         "required": [],

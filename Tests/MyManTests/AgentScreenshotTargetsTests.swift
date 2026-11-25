@@ -48,3 +48,36 @@ final class AgentScreenshotTargetsTests: XCTestCase {
         XCTAssertNotNil(String(data: data, encoding: .utf8))
     }
 }
+
+final class AgentAltTextAndDocImageTests: XCTestCase {
+    func testAltTextIsOneSentenceNamingTheAppTitleAndFirstWords() {
+        let text = AgentAltText.make(app: "Safari", windowTitle: "Apple", text: "Total $42.00 for the order")
+        XCTAssertEqual(text, "Screenshot of Safari, titled “Apple”, showing the text “Total $42.00 for the order”.")
+    }
+    func testAltTextFallsBackWithoutAnApp() {
+        XCTAssertEqual(AgentAltText.make(app: nil, windowTitle: nil, text: ""), "Screenshot of the screen.")
+        XCTAssertEqual(AgentAltText.make(app: "  ", windowTitle: "Same", text: ""), "Screenshot of the screen, titled “Same”.")
+    }
+    func testAltTextIsCapped() {
+        let long = Array(repeating: "word", count: 500).joined(separator: " ")
+        XCTAssertLessThanOrEqual(AgentAltText.make(app: "App", windowTitle: nil, text: long).count, AgentAltText.maximumLength)
+    }
+    func testDocImageStepsDownUntilItFitsTheByteCap() throws {
+        // Pretend encoding shrinks with width; the first width that fits 4 MB wins.
+        let fit = try XCTUnwrap(AgentDocImage.fit(width: 4000, height: 3000) { width in Data(count: Int(width) * 2_000) })
+        XCTAssertLessThanOrEqual(fit.width, 2400)
+        XCTAssertLessThanOrEqual(fit.data.count, AgentDocImage.maximumBytes)
+    }
+    func testDocImageNeverUpscalesAndRefusesWhenNothingFits() {
+        let small = AgentDocImage.fit(width: 300, height: 200) { _ in Data(count: 100) }
+        XCTAssertEqual(small?.width, 300)
+        XCTAssertNil(AgentDocImage.fit(width: 4000, height: 3000) { _ in Data(count: AgentDocImage.maximumBytes + 1) })
+    }
+    func testSidecarCarriesMetadataAndNullsWhenUnknown() throws {
+        let document = AgentOCRSidecar.document(text: "hi", regions: [], size: CGSize(width: 10, height: 10), scale: 2, capturedAt: "t", app: "Safari", windowTitle: "Apple", url: "https://example.com")
+        let metadata = try XCTUnwrap(document["metadata"] as? [String: Any])
+        XCTAssertEqual(metadata["app"] as? String, "Safari"); XCTAssertEqual(metadata["url"] as? String, "https://example.com")
+        let bare = AgentOCRSidecar.document(text: "", regions: [], size: CGSize(width: 1, height: 1), scale: 1, capturedAt: "t")
+        XCTAssertTrue((try XCTUnwrap(bare["metadata"] as? [String: Any]))["app"] is NSNull)
+    }
+}

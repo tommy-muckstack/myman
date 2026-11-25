@@ -35,9 +35,10 @@ enum AgentWindowMatch {
 /// pixels with a top-left origin, matching screenshot.ocr.
 enum AgentOCRSidecar {
     static let maximumBytes = 8 * 1024 * 1024
-    static func document(text: String, regions: [AgentMarkup.Region], size: CGSize, scale: Double, capturedAt: String) -> [String: Any] {
+    static func document(text: String, regions: [AgentMarkup.Region], size: CGSize, scale: Double, capturedAt: String,
+                         app: String? = nil, bundleID: String? = nil, windowTitle: String? = nil, url: String? = nil) -> [String: Any] {
         [
-            "version": 1,
+            "version": 2,
             "text": text,
             "width": Int(size.width.rounded()),
             "height": Int(size.height.rounded()),
@@ -45,6 +46,49 @@ enum AgentOCRSidecar {
             "captured_at": capturedAt,
             "coordinates": "image-pixels-top-left",
             "lines": regions.map { ["text": $0.text, "box": [$0.rect.minX, $0.rect.minY, $0.rect.width, $0.rect.height].map(Double.init)] as [String: Any] },
+            // Null when unknown, and never filled from a window that was not selected for this capture.
+            "metadata": [
+                "app": app ?? NSNull(), "bundle_id": bundleID ?? NSNull(), "window_title": windowTitle ?? NSNull(), "url": url ?? NSNull(),
+                "timestamp": capturedAt, "display_scale": scale,
+            ] as [String: Any],
         ]
+    }
+}
+
+/// One plain sentence describing a capture for alt text. It is built from the
+/// app, the window title and the first words on screen. No model is involved,
+/// so the text is predictable and says only what was recorded.
+enum AgentAltText {
+    static let maximumLength = 240
+    static func make(app: String?, windowTitle: String?, text: String) -> String {
+        let source = app.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+        let title = windowTitle.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+        let words = text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).prefix(12).joined(separator: " ")
+        var sentence = "Screenshot of " + (source ?? "the screen")
+        if let title, title != source { sentence += ", titled “\(title)”" }
+        if !words.isEmpty { sentence += ", showing the text “\(words)”" }
+        sentence += "."
+        if sentence.count > maximumLength { sentence = String(sentence.prefix(maximumLength - 1)) + "…" }
+        return sentence
+    }
+}
+
+/// Flattened images for a Paper doc: at most 2400 px wide and under 4 MB, as PNG.
+/// Width steps down until the file fits, and an image that still does not fit is refused.
+enum AgentDocImage {
+    static let maximumWidth: CGFloat = 2400
+    static let maximumBytes = 4 * 1024 * 1024
+    static let widths: [CGFloat] = [2400, 2000, 1600, 1200, 900]
+
+    /// Returns the width used and the PNG bytes, or nil when even the smallest step is too large.
+    static func fit(width: Int, height: Int, encode: (CGFloat) -> Data?) -> (width: Int, data: Data)? {
+        guard width > 0, height > 0 else { return nil }
+        for target in widths {
+            let scale = min(1, target / CGFloat(width))
+            let outWidth = max(1, Int((CGFloat(width) * scale).rounded()))
+            guard let data = encode(CGFloat(outWidth)), data.count <= maximumBytes else { continue }
+            return (outWidth, data)
+        }
+        return nil
     }
 }
