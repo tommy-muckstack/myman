@@ -18,9 +18,9 @@ enum CaptureQuality: String, CaseIterable, Identifiable {
 
     var summary: String {
         switch self {
-        case .small: return "Doc images up to 1200 px wide. Smallest files."
-        case .balanced: return "Doc images up to 2400 px wide. The default."
-        case .best: return "Doc images up to 2400 px wide, the largest the doc rules allow, and the least step-down."
+        case .small: return "Paper doc copies up to 1200 px wide. Saved screenshots are always full resolution."
+        case .balanced: return "Paper doc copies up to 2400 px wide. Saved screenshots are always full resolution. The default."
+        case .best: return "Paper doc copies up to 2400 px wide, the largest the doc rules allow. Saved screenshots are always full resolution."
         }
     }
 
