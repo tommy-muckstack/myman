@@ -18,6 +18,8 @@ struct AgentSettingsView: View {
             Text("Agents ask through this Mac and can only do what you allow here.")
                 .foregroundStyle(MM.Colors.textSecondary)
 
+            ClaudeDesktopConnectionCard()
+
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(paused ? "Paused" : (preset == .off ? "Off" : "On: \(preset.title)"))

@@ -4521,51 +4521,6 @@
       ]
     },
     {
-      "name": "narration.pause",
-      "description": "Pause the narration take. Nothing is written while paused, and paused time is not counted in the length.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": false
-      },
-      "readOnly": false,
-      "destructive": false,
-      "permissions": [
-        "recording"
-      ]
-    },
-    {
-      "name": "narration.resume",
-      "description": "Resume a paused narration take.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": false
-      },
-      "readOnly": false,
-      "destructive": false,
-      "permissions": [
-        "recording"
-      ]
-    },
-    {
-      "name": "narration.restart",
-      "description": "Throw away the narration take and count down again. Returns a new id and startedAtEpochMs.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": false
-      },
-      "readOnly": false,
-      "destructive": false,
-      "permissions": [
-        "recording"
-      ]
-    },
-    {
       "name": "narration.status",
       "description": "Whether narration is counting down, recording or finishing.",
       "inputSchema": {
