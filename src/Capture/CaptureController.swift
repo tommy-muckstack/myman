@@ -95,7 +95,7 @@ final class CaptureController: SelectionOverlayDelegate {
     func saveAgentImage(_ image: NSImage, capturedAt: Date = Date(), meetingID: String? = nil, clipboard: Bool = false) throws -> [String: Any] {
         let png = try AgentImages.png(image)
         let id = UUID().uuidString
-        let url = Self.saveFolder.appendingPathComponent("My Man \(id).png")
+        let url = ScreenshotFileName.url(in: Self.saveFolder, template: ScreenshotFileName.template(), date: capturedAt, id: id)
         try FileManager.default.createDirectory(at: Self.saveFolder, withIntermediateDirectories: true)
         try png.write(to: url, options: .withoutOverwriting)
         do {
