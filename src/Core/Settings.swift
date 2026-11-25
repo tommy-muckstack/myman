@@ -100,7 +100,7 @@ struct HotkeyCombo: Codable, Equatable {
 }
 
 enum HotkeyAction: String, CaseIterable, Identifiable {
-    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record
+    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record, narration, captureForDoc
     var id: String { rawValue }
 
     var label: String {
@@ -113,6 +113,8 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .voiceUndo: return "Undo Voice Edit"
         case .meeting: return "Record Meeting"
         case .record: return "Record Screen"
+        case .narration: return "Record Narration"
+        case .captureForDoc: return "Capture for Paper Doc"
         }
     }
 
@@ -132,6 +134,8 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .voiceUndo: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(cmdKey | optionKey | shiftKey))
         case .meeting: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(optionKey | shiftKey))
         case .record: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey))
+        case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: UInt32(optionKey | shiftKey))
+        case .captureForDoc: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_D), carbonModifiers: UInt32(optionKey | shiftKey))
         }
     }
 }
@@ -353,16 +357,15 @@ extension Notification.Name {
 }
 
 struct SettingsPanelView: View {
-    private enum SettingsPage: String, CaseIterable, Identifiable {
-        case general = "General", dictation = "Dictation", shortcuts = "Shortcuts", library = "Library", ai = "AI", agents = "Agents"
-        var id: String { rawValue }
-    }
 
     @ObservedObject var store = SettingsStore.shared
     var onDismiss: () -> Void
     /// Optional page to show first, from `myman://settings/<page>`. Selecting a page changes no setting.
     var initialPage: String = ""
-    @State private var settingsPage: SettingsPage = .general
+    @State private var area: SettingsArea = .general
+    @State private var query = ""
+    @AppStorage(PauseEverything.pausedKey) private var paused = false
+    @AppStorage(AgentAccessMigration.noticeSeenKey) private var noticeSeen = false
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
     @AppStorage("learnDictationCorrections") private var learnDictationCorrections = false
@@ -380,6 +383,21 @@ struct SettingsPanelView: View {
                     .font(MM.Fonts.title)
                     .foregroundStyle(MM.Colors.textPrimary)
                 Spacer()
+                Toggle(isOn: Binding(
+                    get: { paused },
+                    set: { on in
+                        if on {
+                            PauseEverything.pause(.standard)
+                            // A recording in progress stops now; a paused recording is not resumed on its own.
+                            if ScreenRecorder.shared.isRecording { ScreenRecorder.shared.stop() }
+                            NarrationRecorder.shared.emergencyStop()
+                        } else { PauseEverything.resume(.standard) }
+                        paused = on
+                    })) {
+                    Text(paused ? "Paused" : "Pause everything").font(MM.Fonts.secondary)
+                }
+                .toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                .help("Stops screenshots, recordings, agent actions and the Brain folder at once. Turn it off to restore what was on.")
                 Button(action: onDismiss) {
                     IconView(icon: .close, size: 16, color: MM.Colors.textTertiary)
                         .clickable(minSize: 32)
@@ -389,26 +407,54 @@ struct SettingsPanelView: View {
             .padding(.horizontal, MM.Layout.paddingLarge)
             .padding(.vertical, MM.Layout.padding)
 
-            Picker("Settings page", selection: $settingsPage) {
-                ForEach(SettingsPage.allCases) { page in
-                    Text(page.rawValue).tag(page)
+            TextField("Search settings: record, camera, folder, agent", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, MM.Layout.paddingLarge)
+                .padding(.bottom, 8)
+
+            if !noticeSeen && AgentAccessMigration.isExistingInstall(.standard) {
+                HStack(spacing: 10) {
+                    Text("Settings got simpler. Your choices are kept.").font(MM.Fonts.secondary)
+                    Spacer()
+                    Button("Review my settings") { area = .agents; noticeSeen = true }.clickable()
+                    Button("Dismiss") { noticeSeen = true }.clickable()
+                }
+                .padding(.horizontal, MM.Layout.paddingLarge).padding(.vertical, 8)
+            }
+
+            if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(SettingsArea.allCases) { option in
+                            Button { area = option } label: {
+                                Text(option.title).font(MM.Fonts.secondary)
+                                    .foregroundStyle(area == option ? MM.Colors.background : MM.Colors.textPrimary)
+                                    .padding(.horizontal, 10).padding(.vertical, 4)
+                                    .background(Capsule().fill(area == option ? MM.Colors.textPrimary : MM.Colors.surface))
+                                    .clickable(minSize: 26)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, MM.Layout.paddingLarge).padding(.vertical, 8)
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .padding(MM.Layout.paddingLarge)
 
             Divider().overlay(MM.Colors.border)
 
             ScrollView {
                 Group {
-                    switch settingsPage {
-                    case .general: generalPage
-                    case .dictation: dictationPage
-                    case .shortcuts: shortcutsPage
-                    case .library: CapturePrivacySettings()
-                    case .ai: AISettingsView()
-                    case .agents: AgentSettingsView()
+                    if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                        searchResults
+                    } else {
+                        switch area {
+                        case .general: VStack(alignment: .leading, spacing: 0) { generalPage; shortcutsPage }
+                        case .capture: captureArea
+                        case .agents: AgentSettingsView()
+                        case .brainFolder: BrainFolderSettings()
+                        case .sharingLibrary: sharingLibraryArea
+                        case .privacy: PrivacySettingsView()
+                        case .advanced: advancedArea
+                        }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(height: MM.Layout.settingsContentHeight)
@@ -448,7 +494,14 @@ struct SettingsPanelView: View {
         }
         .frame(width: 420)
         .onAppear {
-            if let page = SettingsPage.allCases.first(where: { $0.rawValue.lowercased() == initialPage }) { settingsPage = page }
+            if let page = SettingsArea.allCases.first(where: { $0.rawValue.lowercased() == initialPage || $0.title.lowercased() == initialPage }) { area = page }
+            // Existing installs keep their choices: the old switches map to one preset, and nothing is turned on or off.
+            let defaults = UserDefaults.standard
+            if defaults.string(forKey: AgentAccessPreset.key) == nil, AgentAccessMigration.isExistingInstall(defaults) {
+                var grants: [String: Bool] = [:]
+                for (grant, key) in AgentConsent.keys { grants[grant] = defaults.bool(forKey: key) }
+                defaults.set(AgentAccessMigration.preset(grants: grants).rawValue, forKey: AgentAccessPreset.key)
+            }
         }
         .background(
             RoundedRectangle(cornerRadius: MM.Layout.radius, style: .continuous)
@@ -470,39 +523,6 @@ struct SettingsPanelView: View {
 
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 0) {
-            settingSection("Recording") {
-                RecordingSettingsView()
-                Toggle("Cursor trail, click ripple and shake to highlight", isOn: $store.cursorEffects)
-                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
-                Toggle("Record the cursor separately so Polish can smooth and resize it", isOn: $store.recordCursorSeparately)
-                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
-                Text("Off: the cursor is baked into the recording. On: the raw recording has no cursor; Polish draws one.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
-            settingSection("Automation & CLI") {
-                HStack(spacing: 6) {
-                    IconView(icon: .agent, size: 16, color: MM.Colors.accent)
-                    Text("For agents and scripts")
-                        .font(MM.Fonts.secondary)
-                        .foregroundStyle(MM.Colors.textPrimary)
-                }
-                Text("Agents and scripts can open My Man’s normal capture UI — they never bypass permissions or confirmation.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
-                HStack(spacing: 8) {
-                    Text("myman screenshot · note · dictation · meeting")
-                        .font(.system(size: 10, design: .monospaced)).lineLimit(1)
-                    Spacer(minLength: 0)
-                    Button(automationCopied ? "Copied" : "Copy setup") { copyAutomationSetup() }
-                        .buttonStyle(.plain).clickable(minSize: 26).font(MM.Fonts.metadata)
-                        .padding(.horizontal, 9).padding(.vertical, 4)
-                        .background(Capsule().fill(MM.Colors.surface))
-                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
-                }
-                Text("Copy setup installs the helper in ~/.local/bin. Direct URL commands also work: myman://screenshot")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
             settingSection("Meetings") {
                 Toggle("Auto record when meeting detected", isOn: $store.autoRecordMeetings)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
@@ -510,29 +530,6 @@ struct SettingsPanelView: View {
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
                 Text("Past meetings, notes and Brainz notes that match the people on the call and what is being discussed appear under the Notes tab.")
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
-            settingSection("Screenshot sound") {
-                Picker("Screenshot sound", selection: $store.captureSound) {
-                    ForEach(CaptureSound.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
-                .onChange(of: store.captureSound) { _, sound in CaptureSoundPlayer.shared.play(sound) }
-                Text("Plays when a screenshot is captured. Pick one to hear it.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
-            settingSection("Screenshots") {
-                HStack(spacing: MM.Layout.spacing) {
-                    Text(store.screenshotFolderPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                        .font(MM.Fonts.secondary).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    Button("Change…") { pickFolder() }
-                        .buttonStyle(.plain).clickable(minSize: 26).font(MM.Fonts.secondary)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Capsule().fill(MM.Colors.surface))
-                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
-                }
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Launcher") {
@@ -563,6 +560,115 @@ struct SettingsPanelView: View {
                 }
             }
         }
+    }
+
+    private var captureArea: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            settingSection("Recording") {
+                RecordingSettingsView()
+                Toggle("Cursor trail, click ripple and shake to highlight", isOn: $store.cursorEffects)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+                Toggle("Record the cursor separately so Polish can smooth and resize it", isOn: $store.recordCursorSeparately)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+                Text("Off: the cursor is baked into the recording. On: the raw recording has no cursor; Polish draws one.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
+            Divider().overlay(MM.Colors.border)
+            settingSection("Screenshot sound") {
+                Picker("Screenshot sound", selection: $store.captureSound) {
+                    ForEach(CaptureSound.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                .onChange(of: store.captureSound) { _, sound in CaptureSoundPlayer.shared.play(sound) }
+                Text("Plays when a screenshot is captured. Pick one to hear it.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
+            settingSection("Screenshots") {
+                HStack(spacing: MM.Layout.spacing) {
+                    Text(store.screenshotFolderPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                        .font(MM.Fonts.secondary).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button("Change…") { pickFolder() }
+                        .buttonStyle(.plain).clickable(minSize: 26).font(MM.Fonts.secondary)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(MM.Colors.surface))
+                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+                }
+            }
+            Divider().overlay(MM.Colors.border)
+            Divider().overlay(MM.Colors.border)
+            CapturePrivacySettings()
+        }
+    }
+
+    private var sharingLibraryArea: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Library").font(MM.Fonts.title)
+            Text("Notes, tasks and captures stay on this Mac. Nothing leaves it unless you press Share.")
+                .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary)
+            ShareSettingsView()
+        }
+        .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary)
+        .padding(MM.Layout.paddingLarge)
+    }
+
+    private var advancedArea: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            settingSection("Automation & CLI") {
+                HStack(spacing: 6) {
+                    IconView(icon: .agent, size: 16, color: MM.Colors.accent)
+                    Text("For agents and scripts")
+                        .font(MM.Fonts.secondary)
+                        .foregroundStyle(MM.Colors.textPrimary)
+                }
+                Text("Agents and scripts can open My Man’s normal capture UI — they never bypass permissions or confirmation.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                HStack(spacing: 8) {
+                    Text("myman screenshot · note · dictation · meeting")
+                        .font(.system(size: 10, design: .monospaced)).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button(automationCopied ? "Copied" : "Copy setup") { copyAutomationSetup() }
+                        .buttonStyle(.plain).clickable(minSize: 26).font(MM.Fonts.metadata)
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(Capsule().fill(MM.Colors.surface))
+                        .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
+                }
+                Text("Copy setup installs the helper in ~/.local/bin. Direct URL commands also work: myman://screenshot")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
+            Divider().overlay(MM.Colors.border)
+            settingSection("Agent permissions outside the presets") { AgentAdvancedSettings() }
+            Divider().overlay(MM.Colors.border)
+            dictationPage
+            Divider().overlay(MM.Colors.border)
+            AISettingsView()
+        }
+    }
+
+    private var searchResults: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            let found = SettingsSearch.results(for: query)
+            if found.isEmpty {
+                Text("No setting matches “\(query)”.").foregroundStyle(MM.Colors.textSecondary)
+            }
+            ForEach(found, id: \.title) { entry in
+                Button {
+                    area = entry.areas[0]; query = ""
+                } label: {
+                    HStack {
+                        Text(entry.title).font(MM.Fonts.secondary)
+                        Spacer()
+                        Text(entry.areas.map(\.title).joined(separator: ", ")).font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                    }
+                    .clickable(minSize: 28)
+                }.buttonStyle(.plain)
+            }
+        }
+        .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textPrimary)
+        .padding(MM.Layout.paddingLarge)
     }
 
     private var dictationPage: some View {

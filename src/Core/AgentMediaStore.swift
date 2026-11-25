@@ -26,6 +26,7 @@ import AppKit
     deinit { if let exclusionObserver { NotificationCenter.default.removeObserver(exclusionObserver) }; if let observer { NotificationCenter.default.removeObserver(observer) }; timer?.invalidate() }
     func purge() { try? FileManager.default.removeItem(at: root) }
     func expire() {
+        // Top-level previews and the per-capture folders that hold sidecars both expire together.
         let files = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         for file in files {
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
@@ -54,6 +55,24 @@ import AppKit
         try data.write(to: url, options: .withoutOverwriting)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         return ["path": url.path, "mime_type": "text/html", "file_size": data.count, "expires_at": AgentActions.date(Date().addingTimeInterval(3600))]
+    }
+    /// A small file kept beside a capture, in its own folder: for example
+    /// AgentMedia/<capture>/text.json. Folder and file names are plain and fixed by the caller.
+    /// Only the names listed in allowedSidecarNames are accepted.
+    static let allowedSidecarNames: Set<String> = ["text.json", "doc.png", "alt.txt"]
+    func sidecar(_ data: Data, folder: String, name: String, mime: String, maximum: Int) throws -> [String: Any] {
+        expire()
+        guard data.count <= maximum else { throw AgentError("TOO_LARGE", "Sidecar exceeds \(maximum / 1024 / 1024) MiB.") }
+        guard Self.allowedSidecarNames.contains(name), folder.count <= 200, !folder.isEmpty, !folder.contains("/"), !folder.hasPrefix(".") else { throw AgentError("INVALID_ARGUMENTS", "Invalid sidecar name.") }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard try FileManager.default.contentsOfDirectory(atPath: root.path).count < 256 else { throw AgentError("PREVIEW_LIMIT", "Let older previews expire before exporting more.") }
+        let directory = root.appendingPathComponent(folder, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let url = directory.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: url)
+        try data.write(to: url, options: .withoutOverwriting)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return ["path": url.path, "mime_type": mime, "file_size": data.count, "expires_at": AgentActions.date(Date().addingTimeInterval(3600))]
     }
     func file(_ data: Data, extension suffix: String, mime: String, maximum: Int) throws -> [String: Any] {
         expire()

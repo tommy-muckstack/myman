@@ -97,6 +97,20 @@ export async function withMusic(args, options) {
   else { const m = typeof args.recipe.music === 'object' && args.recipe.music ? { ...args.recipe.music } : {}; delete m.track; next.recipe = { ...args.recipe, music: { ...m, file } }; }
   return next;
 }
+// Polls one job until it leaves "running" or the timeout passes. Returns the last
+// reply either way; a job still running at the deadline is reported as pending by the caller.
+export async function waitForJob(transport, id, { timeoutMs = 60000, now = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  const deadline = now() + timeoutMs;
+  let delay = 200;
+  let reply = await transport({ method: 'job', id });
+  while (reply.job?.state === 'running' && !reply.job?.awaiting_user && now() < deadline) {
+    await sleep(Math.min(delay, Math.max(0, deadline - now())));
+    delay = Math.min(Math.round(delay * 1.5), 2000);
+    reply = await transport({ method: 'job', id });
+  }
+  return reply;
+}
+
 export async function invoke(action, args = {}, { id = randomUUID(), wait = true, transport = request, waitMs = 300000 } = {}) {
   const live = await discover(action,{transport});
   if (!live.live) throw new BrainError(live.unavailable?.code??'APP_NOT_RUNNING',live.unavailable?.message??'Open MyMan to verify this action.');
@@ -106,8 +120,10 @@ export async function invoke(action, args = {}, { id = randomUUID(), wait = true
   if (!wait) return first;
   const deadline = Date.now() + waitMs;
   let reply = first;
+  let delay = 200;
   while (reply.job?.state === 'running' && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, Math.min(delay, Math.max(0, deadline - Date.now()))));
+    delay = Math.min(Math.round(delay * 1.5), 2000);
     reply = await transport({ method: 'job', id });
     if (reply.launch_id !== first.launch_id && !reply.recovered) throw new BrainError('APP_RESTARTED', `App restarted; inspect job ${id}. Do not replay automatically.`);
   }

@@ -115,7 +115,9 @@ for(const [command,name,args]of[
 ])test(command,async()=>{const p=await plan(command.split(' '));assert.equal(p.name,name);assert.deepEqual(p.args,args);assert.ok(ajv.validate(describe(p.name).inputSchema,p.args));});
 test('discovery, receipts and explicit offline search route without hidden mutations',async()=>{
  assert.equal((await plan(['actions'])).type,'discovery');assert.equal((await plan(['actions','--offline'])).offline,true);
- assert.equal((await plan(['jobs'])).type,'jobs');assert.equal((await plan(['library','search','--query','pricing','--offline'])).type,'read');
+ assert.equal((await plan(['jobs'])).type,'jobs');
+  assert.equal((await plan(['job.list'])).type,'jobs');
+  assert.equal((await plan(['job.get','11111111-1111-4111-8111-111111111111'])).id,'11111111-1111-4111-8111-111111111111');assert.equal((await plan(['library','search','--query','pricing','--offline'])).type,'read');
  await assert.rejects(plan(['library','search','--query','pricing','--root','/tmp/other']));
  const interrupted=await run(['note','create','--body','x'],{invoke:async()=>({ok:true,recovered:true,job:{id:'saved',state:'interrupted',error:{code:'APP_RESTARTED'}}})});assert.equal(interrupted.ok,false);assert.equal(interrupted.recovered,true);
 });

@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { run, exitCode } from '../app-cli.mjs';
 import { catalog } from '../actions.mjs';
 import { bridgeDirectory, bridgeRequested, bridgeStatus, bridgeTransport } from '../folder-bridge.mjs';
+import { waitForJob } from '../actions.mjs';
 
 // A stand-in for the app's side of the folder: what My Man writes when the
 // bridge is on. No app, socket or personal data is involved.
@@ -118,4 +119,57 @@ test('doctor names what a person must do before the bridge can work', async () =
     assert.ok(report.next_steps.some(step => step.id === 'bridge_disabled' && step.for === 'person'));
     assert.equal(report.agent_access.source, 'bridge_manifest'); assert.equal(report.agent_access.agents_can_self_grant, false);
   } finally { await off.done(); }
+});
+
+test('a result that lands while the job is looked up is returned, never JOB_NOT_FOUND', async () => {
+  const live = await folder();
+  try {
+    const transport = bridgeTransport(live.directory, { env: {} });
+    const id = randomUUID();
+    // The app wrote the result and removed the request between the bridge's two reads.
+    await live.answer(id, { ok: true, action: 'screenshot.capture', result: { width: 10 }, artifacts: [] });
+    const reply = await transport({ method: 'job', id });
+    assert.equal(reply.job.state, 'succeeded'); assert.equal(reply.job.result.width, 10);
+  } finally { await live.done(); }
+});
+
+test('a request that was taken but has no result yet reports running, and an unknown id still fails', async () => {
+  const live = await folder();
+  try {
+    const transport = bridgeTransport(live.directory, { env: {} });
+    const taken = randomUUID();
+    await writeFile(path.join(live.directory, 'audit.log'), JSON.stringify({ at: 'now', event: 'request', id: taken, action: 'screenshot.capture' }) + '\n');
+    assert.equal((await transport({ method: 'job', id: taken })).job.state, 'running');
+    const unknown = randomUUID();
+    await assert.rejects(transport({ method: 'job', id: unknown }), { code: 'JOB_NOT_FOUND' });
+  } finally { await live.done(); }
+});
+
+test('job wait returns pending at the timeout and a finished job as soon as it lands', async () => {
+  const id = randomUUID();
+  const states = [{ job: { id, state: 'running' } }, { job: { id, state: 'running' } }, { job: { id, state: 'succeeded', result: { ok: 1 } } }];
+  let clock = 0;
+  const reply = await waitForJob(async () => states.shift() ?? { job: { id, state: 'running' } }, id, { timeoutMs: 10000, now: () => clock, sleep: async ms => { clock += ms; } });
+  assert.equal(reply.job.state, 'succeeded');
+  clock = 0;
+  const pending = await waitForJob(async () => ({ job: { id, state: 'running' } }), id, { timeoutMs: 1000, now: () => clock, sleep: async ms => { clock += ms; } });
+  assert.equal(pending.job.state, 'running');
+});
+
+test('the CLI job status and job wait commands report pending with the job id', async () => {
+  const live = await folder();
+  try {
+    const env = { MYMAN_BRIDGE: '1' };
+    const id = randomUUID();
+    await writeFile(path.join(live.directory, 'inbox', `${id}.json`), '{}');
+    const status = await run(['job', 'status', id, '--bridge', '--root', live.root, '--json'], { env: {} });
+    assert.equal(status.job.state, 'running');
+    const waited = await run(['job', 'wait', id, '--timeout', '0', '--bridge', '--root', live.root, '--json'], { env: {} });
+    assert.equal(waited.ok, false); assert.equal(waited.pending, true); assert.equal(waited.job_id, id);
+    assert.equal(waited.error.code, 'PROCESSING_TIMEOUT');
+    await live.answer(id, { ok: false, pending: true, action: 'screenshot.capture', error: { code: 'AWAITING_USER', message: 'Waiting.' }, artifacts: [] });
+    const awaiting = await run(['job', 'status', id, '--bridge', '--root', live.root, '--json'], { env: {} });
+    assert.equal(awaiting.pending, true); assert.equal(awaiting.error.code, 'AWAITING_USER'); assert.equal(awaiting.job_id, id);
+    await assert.rejects(run(['job', 'wait', id, '--timeout', '999', '--bridge', '--root', live.root], { env: {} }), { code: 'INVALID_ARGUMENTS' });
+  } finally { await live.done(); }
 });

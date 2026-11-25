@@ -15,6 +15,30 @@
       "permissions": []
     },
     {
+      "name": "changes.since",
+      "description": "Captures and markups newer than a cursor, oldest first, with the paths of their files. Pass cursor 0 first, then the cursor from each reply.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "pattern": "^[0-9]{1,12}$",
+            "description": "Cursor from an earlier reply; 0 for the start."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
       "name": "app.open",
       "description": "Open an existing MyMan surface.",
       "inputSchema": {
@@ -56,7 +80,7 @@
     },
     {
       "name": "screenshot.capture",
-      "description": "Capture a display or desktop region; save and index it. No interactive selection. Clipboard changes only if requested.",
+      "description": "Capture a display, desktop region or window; save and index it. Writes text.json (OCR and metadata) beside it. Pass ready_for to queue it for a doc. No interactive selection. Clipboard changes only if requested.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -91,6 +115,12 @@
             "minLength": 1,
             "maxLength": 1000
           },
+          "window": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "App name, title fragment or window id. Ambiguous names return candidates; pass window_id to choose one."
+          },
           "open_editor": {
             "type": "boolean"
           },
@@ -98,6 +128,17 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 120
+          },
+          "ocr": {
+            "type": "boolean",
+            "description": "Write <name>.ocr.json beside the capture (default true). Pass false to skip."
+          },
+          "ready_for": {
+            "type": "string",
+            "enum": [
+              "paper-doc"
+            ],
+            "description": "Mark the capture ready for a Paper doc; it appears in changes.since."
           }
         },
         "required": [],
@@ -4439,6 +4480,139 @@
       "permissions": [
         "calendar_read",
         "calendar_write"
+      ]
+    },
+    {
+      "name": "narration.start",
+      "description": "Record narration: front camera and microphone, no screen. Counts down 3-2-1, then records until narration.stop (max 300 s). Returns startedAtEpochMs, the wall-clock time of the first video frame. Pass label to tag the take with its doc section.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9._-]{1,80}$",
+            "description": "Doc section id this take belongs to. Several takes per doc are fine."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "narration.stop",
+      "description": "Stop narration and return the mp4 path, bytes, durationMs and startedAtEpochMs. Re-encodes at a lower bitrate if the take is over 15 MB.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "narration.status",
+      "description": "Whether narration is counting down, recording or finishing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "clip.record",
+      "description": "Record a short silent clip of one window or a region (up to 20 s, 12-15 fps) to an mp4 under 4 MB, with a poster PNG. Runs to completion in one call.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "window_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Window id from screenshot.targets. Give this or region."
+          },
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x,y,width,height] in global points."
+          },
+          "max_duration": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Seconds. Default 20."
+          },
+          "fps": {
+            "type": "integer",
+            "minimum": 12,
+            "maximum": 15,
+            "description": "Frames per second. Default 15."
+          },
+          "preset": {
+            "type": "string",
+            "enum": [
+              "small"
+            ],
+            "description": "Only small is offered: the clip is sized for an inline doc image."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "deliver",
+      "description": "Mark a capture, narration take or clip ready for Claude and copy its files into the Brain folder with a result.json. Each file must be 15 MB or less.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "to": {
+            "type": "string",
+            "enum": [
+              "claude"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "sharing"
       ]
     }
   ]

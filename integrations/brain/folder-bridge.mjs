@@ -21,6 +21,13 @@ export function bridgeDirectory({ root, env = process.env } = {}) {
 export function bridgeRequested(flag, env = process.env) { return !!flag || ['1', 'true', 'on'].includes(String(env.MYMAN_BRIDGE ?? '').toLowerCase()); }
 
 async function json(file) { try { return JSON.parse(await readFile(file, 'utf8')); } catch { return undefined; } }
+async function exists(file) { try { await lstat(file); return true; } catch { return false; } }
+// audit.log has one JSON line per event; only the tail is read so it stays cheap.
+async function auditKnows(directory, id) {
+  let text;
+  try { text = await readFile(path.join(directory, 'audit.log'), 'utf8'); } catch { return false; }
+  return text.slice(-2 * 1024 * 1024).split('\n').some(line => line.includes(id) && line.includes('"id"') && (() => { try { return JSON.parse(line).id === id; } catch { return false; } })());
+}
 async function isDirectory(file) { try { const info = await lstat(file); return info.isDirectory() && !info.isSymbolicLink(); } catch { return false; } }
 
 // What doctor reports: is the folder there, can this process write a request,
@@ -92,11 +99,18 @@ export function bridgeTransport(directory, { env = process.env, now = () => Date
     }
     if (payload.method === 'job') {
       if (!UUID.test(payload.id ?? '')) fail('INVALID_REQUEST', 'A UUID job id is required.');
-      const response = await json(path.join(directory, 'outbox', `${payload.id}.json`));
-      if (response && typeof response.ok === 'boolean') return { ok: true, launch_id: launch, job: toJob(payload.id, response) };
-      try { await lstat(path.join(directory, 'inbox', `${payload.id}.json`)); }
-      catch { fail('JOB_NOT_FOUND', 'No request or result with this id is in the bridge folder. Results are kept for a day.'); }
-      return { ok: true, launch_id: launch, job: { id: payload.id, state: 'running' } };
+      const outbox = path.join(directory, 'outbox', `${payload.id}.json`);
+      const answered = response => response && typeof response.ok === 'boolean';
+      const first = await json(outbox);
+      if (answered(first)) return { ok: true, launch_id: launch, job: toJob(payload.id, first) };
+      // Still queued: the request is in inbox/. The app writes the result before it removes
+      // the request, so a request that has left inbox/ may already have its result.
+      if (await exists(path.join(directory, 'inbox', `${payload.id}.json`))) return { ok: true, launch_id: launch, job: { id: payload.id, state: 'running' } };
+      const late = await json(outbox);
+      if (answered(late)) return { ok: true, launch_id: launch, job: toJob(payload.id, late) };
+      // Taken and being run: the app logged it but has not written a result yet.
+      if (await auditKnows(directory, payload.id)) return { ok: true, launch_id: launch, job: { id: payload.id, state: 'running' } };
+      fail('JOB_NOT_FOUND', 'No request or result with this id is in the bridge folder. Results are kept for a day.');
     }
     fail('UNSUPPORTED', 'This command is not available through the folder bridge. Read outbox/ and audit.log in the bridge folder.');
   };

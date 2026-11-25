@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { readFile, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { catalog, describe, discover, invoke, request } from './actions.mjs';
+import { catalog, describe, discover, invoke, request, waitForJob } from './actions.mjs';
 import { checkWorkflow } from './workflows.mjs';
 import { Brain, BrainError } from './brain.mjs';
 import { execute } from './tools.mjs';
@@ -11,8 +11,8 @@ import * as credentials from './agent-credentials.mjs';
 import { bridgeDirectory, bridgeRequested, bridgeStatus, bridgeTransport } from './folder-bridge.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
-const strings = ['use-model','sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
-const booleans = ['help','json','bridge','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only','plain'];
+const strings = ['timeout','window','use-model','sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
+const booleans = ['help','json','bridge','offline','wait','wait-ready','no-wait','ocr','no-ocr','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only','plain'];
 const options = Object.fromEntries([...strings.map(key=>[key,{type:'string'}]),...booleans.map(key=>[key,{type:'boolean'}]),...['tag','exclude-tag','participant'].map(key=>[key,{type:'string',multiple:true}])]);
 for(const action of catalog.actions)for(const [key,schema]of Object.entries(action.inputSchema.properties)){
   const flag=key.replaceAll('_','-');if(!options[flag])options[flag]={type:schema.type==='boolean'?'boolean':'string'};
@@ -172,8 +172,21 @@ export async function plan(argv) {
   const control={id:v['request-id'],wait:!v['no-wait'],waitMs};
   if(p[0]==='actions'){allowed(v,['offline']);if(p.length>2)fail('Use actions [name].');return {type:'discovery',name:p[1],offline:!!v.offline};}
   if(p[0]==='wait'){allowed(v,['id','job-id','session-id','stage','timeout']);if(p.length!==1)fail('Use wait with a resource ID.');const args={};for(const k of ['id','job-id','session-id','stage','timeout'])if(v[k]!==undefined)args[k.replaceAll('-','_')]=k==='timeout'?number(v[k]):v[k];return {type:'action',name:'app.wait',args,control};}
+  // job.list and job.get are the same as jobs and job UUID, under the names agents look for.
+  if(p[0]==='job.list'){allowed(v,[]);if(p.length!==1)fail('Use job.list.');return {type:'jobs'};}
+  if(p[0]==='job.get'){allowed(v,[]);if(p.length!==2)fail('Use job.get UUID.');return {type:'job',id:p[1],wait:false};}
   if(p[0]==='jobs'){allowed(v,[]);if(p.length!==1)fail('Use jobs.');return {type:'jobs'};}
-  if(p[0]==='job'){allowed(v,[]);if(p.length!==2)fail('Use job UUID.');return {type:'job',id:p[1]};}
+  if(p[0]==='job'){
+    allowed(v,['timeout']);
+    // job UUID polls once; job status UUID does the same; job wait UUID waits up to --timeout seconds.
+    if(p.length===2)return {type:'job',id:p[1],wait:false};
+    if(p.length===3&&['status','wait'].includes(p[1])){
+      const seconds=v.timeout===undefined?60:number(v.timeout);
+      if(!(seconds>=0&&seconds<=600))fail('Timeout must be 0–600 seconds.');
+      return {type:'job',id:p[2],wait:p[1]==='wait',timeoutMs:seconds*1000};
+    }
+    fail('Use job UUID, job status UUID or job wait UUID --timeout SECONDS.');
+  }
   if(p[0]==='invoke') {allowed(v,[]);if(p.length<2||p.length>3)fail('Use invoke action.name [JSON].');return {type:'action',name:p[1],args:p[2]?json(p[2]):{},control,raw:true};}
   if(p.length===1 && legacy[p[0]] && (!v.mode || v.mode==='interactive') && !Object.keys(v).some(k=>!['json','mode'].includes(k)))return {type:'interactive',host:legacy[p[0]]};
   if(v.mode==='interactive')fail('Use the legacy single command for interactive UI, or --mode agent.');
@@ -213,7 +226,7 @@ export async function plan(argv) {
   if(name){
     if(p.length!==consumed)fail('Unexpected positional arguments.');
     const schema=describe(name).inputSchema;
-    const special=[...(schema.properties.body?['body-file','file']:[]),...(schema.properties.annotations?['ops','ops-file','save']:[]),...(schema.properties.open_editor?['save-only','open-editor']:[]),...(schema.properties.microphone?['mic']:[]),...(pair==='capture copy'?['text-only','image']:[]),...(pair==='settings set'?['key','value']:[])];
+    const special=[...(schema.properties.body?['body-file','file']:[]),...(schema.properties.annotations?['ops','ops-file','save']:[]),...(schema.properties.open_editor?['save-only','open-editor']:[]),...(schema.properties.ocr?['no-ocr']:[]),...(schema.properties.microphone?['mic']:[]),...(pair==='capture copy'?['text-only','image']:[]),...(pair==='settings set'?['key','value']:[])];
     allowed(v,[...Object.keys(schema.properties).map(k=>k.replaceAll('_','-')),...special]);
     for(const [key,val] of Object.entries(v)) {
       const target=key.replaceAll('-','_');if(!Object.hasOwn(schema.properties,target))continue;
@@ -224,6 +237,8 @@ export async function plan(argv) {
       else if(type==='array')args[target]=['region','crop','times'].includes(target)?String(val).split(',').map(number):json(val);
       else args[target]=val;
     }
+    // --no-ocr is the spelling for ocr: false, the same as --ocr false.
+    if(v['no-ocr']===true&&schema.properties.ocr)args.ocr=false;
     if(v.region)args.region=schema.properties.region?.type==='object'?json(v.region):v.region.split(',').map(number);
     if(v['body-file']!==undefined || v.file!==undefined){if(v.body!==undefined || (v['body-file']!==undefined&&v.file!==undefined))fail('Choose one body input.');if(!Object.hasOwn(schema.properties,'body'))fail('Body input is not supported.');args.body=await input(v['body-file']??v.file);}
     if(v.ops!==undefined || v['ops-file']!==undefined){
@@ -268,6 +283,7 @@ export async function plan(argv) {
 export function exitCode(code){
   if(/PERMISSION/.test(code))return 2;
   if(/CANCELLED|CANCELED/.test(code)||code==='USER_DENIED')return 3;
+  if(code==='GRANT_OFF')return 7;
   if(['DISABLED','AGENT_DISABLED','BRIDGE_DISABLED'].includes(code))return 4;
   if(/INVALID|UNKNOWN|CONFIRMATION_REQUIRED|ID_CONFLICT|SESSION_MISMATCH|EDIT_CONFLICT|AMBIGUOUS_TARGET|TARGET_NOT_FOUND/.test(code))return 5;
   if(/TIMEOUT/.test(code)||['AWAITING_USER','APPROVAL_EXPIRED'].includes(code))return 7;
@@ -296,7 +312,12 @@ export async function run(argv, deps={}){
   if(task.type==='jobs')return transport({method:'jobs'});
   if(task.type==='value')return task.value;
   if(task.type==='interactive'){await (deps.open??((host)=>promisify(execFile)('/usr/bin/open',['-g',`myman://${host}`])))(task.host);return {ok:true,interactive:true,dispatched:task.host};}
-  if(task.type==='job')return transport({method:'job',id:task.id});
+  if(task.type==='job'){
+    const reply=task.wait?await waitForJob(transport,task.id,{timeoutMs:task.timeoutMs}):await transport({method:'job',id:task.id});
+    if(reply.job?.awaiting_user)return {ok:false,pending:true,job_id:reply.job.id,error:{code:'AWAITING_USER',message:'Waiting for the person to allow or deny this in My Man. Poll this job again; do not repeat the action.'}};
+    if(task.wait&&reply.job?.state==='running')return {ok:false,pending:true,job_id:reply.job.id,error:{code:'PROCESSING_TIMEOUT',message:'Job continues in My Man. Poll this job_id; do not repeat the action.'}};
+    return task.wait?unwrap(reply,undefined,{}):reply;
+  }
   if(task.type==='read')return execute(new Brain(task.root),task.name,task.args);
   // Person-only access management (see agent-access.mjs): local commands, never app actions.
   if(task.type==='agents'){
@@ -341,7 +362,7 @@ export async function run(argv, deps={}){
     // a named credential (annotateError adds the agent.env hint then).
     const report={ok:app.ok && brain.ok!==false,app,brain,node:process.versions.node,cli,credentials:credStatus,
       ...(bridge||folder.exists?{bridge:{...folder,in_use:bridge}}:{}),
-      ...(grants?{agent_access:{source,grants,disabled:Object.keys(a.GRANTABLE).filter(g=>!grants[g]),agents_can_self_grant:false,
+      ...(grants?{agent_access:{source,grants,preset:app.access_preset??null,disabled:Object.keys(a.GRANTABLE).filter(g=>!grants[g]),agents_can_self_grant:false,
         ...(Object.keys(a.GRANTABLE).some(g=>!grants[g])?{human_command:`${a.cli(env)} agents grant ${Object.keys(a.GRANTABLE).filter(g=>!grants[g]).join(' ')}`}:{}),
         note:'Only a person can turn these on: in Terminal, or in Settings → Agents. No CLI action, MCP tool or flag can. Credentials (agent.env) are separate from grants.'}}:{}),
       next_steps:steps,

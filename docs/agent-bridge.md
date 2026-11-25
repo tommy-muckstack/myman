@@ -103,7 +103,13 @@ While the prompt is open the outbox holds:
 {"ok": false, "pending": true, "error": {"code": "AWAITING_USER", "message": "Waiting for the person to allow or deny this in My Man.", "hint": "…"}, "artifacts": []}
 ```
 
-Read the file again; do not send the request again. It becomes the result after **Allow once** or **Allow for 30 minutes**, `USER_DENIED` after **Deny** or closing the window, and `APPROVAL_EXPIRED` if nobody answers within 10 minutes of `created`. **Allow for 30 minutes** covers later requests in the same group, is not offered for deletes, ends when the app quits or the bridge is turned off, and is listed in `manifest.json` under `session_grants`. The window floats without taking keyboard focus, so a key typed in another app cannot allow a request.
+Read the file again; do not send the request again. It becomes the result after **Allow once** or **Always allow**, `USER_DENIED` after **Deny** or closing the window, and `APPROVAL_EXPIRED` if nobody answers within 10 minutes of `created`. **Always allow this action** covers later requests from the same agent for that one action until you revoke it in Settings → Agents → *Always allowed from the Brain folder*. It is never offered for deletes, clipboard writes or sharing, survives restarts, and is listed in `manifest.json` under `always_allowed`.
+
+**Agent access presets** (Settings → Agents → *Agent access*): **Off** turns the bridge and every grant off. **Ask each time** turns on the bridge and the capture, markup, recording and library grants, and asks before each sensitive action. **Trusted** does the same but runs screenshots and recordings without asking; clipboard, mouse and keyboard, deletes and sharing still ask, and sharing stays off.
+
+**A grant that is off** is asked for in one dialog that names it (for example "Turn on Recording and allow?"). Allow turns the grant on and runs that action. Deny returns `GRANT_OFF`, and nothing runs. Grants are only changed by the person, in that dialog or in Settings.
+
+`doctor` reports the preset and the grants that are off, in plain words. Every approval, rule use and grant change is written to `audit.log` with `approved_by` (`person`, `always_allow` with its `rule_id`, or `trusted_preset`). The window floats without taking keyboard focus, so a key typed in another app cannot allow a request.
 
 ## From the CLI
 
@@ -126,6 +132,6 @@ The folder is `<root>/agent`, or `MYMAN_BRIDGE_DIR`. Results gain `artifacts` wh
 
 ## What is not here yet
 
-This page covers the transport and its safety rules. Not part of it yet: size-capped export presets, OCR sidecar files, a never-capture list, `changes.since`, paging on list calls, scoped expiring tokens, a list of active allowances in Settings, and a "stop all agent activity" switch. Until then, use what the actions already offer: `windows.list` and `--window-id` for picker-free capture, `screenshot.ocr`, `recording.frames` for a contact sheet, `max_duration` on `recording.start`, and `max_bytes` on `recording.export`.
+This page covers the transport and its safety rules. `screenshot.capture` takes `window` (an app name, a title fragment or a window id) and writes `<name>.ocr.json` beside each capture, with the text and per-line boxes in image pixels. Pass `--no-ocr` (or `ocr: false`) to skip the sidecar. An ambiguous `window` returns `AMBIGUOUS_TARGET` with the candidates. Not part of it yet: size-capped export presets, a never-capture list, `changes.since`, paging on list calls, scoped expiring tokens, and a "stop all agent activity" switch. Until then, use what the actions already offer: `windows.list` and `--window-id` for picker-free capture, `screenshot.ocr`, `recording.frames` for a contact sheet, `max_duration` on `recording.start`, and `max_bytes` on `recording.export`.
 
 A stdio MCP server generated from `actions.json` already ships as `myman-app` (`tools/app-server.mjs`). It talks to the socket. Pointing it at the folder is a small follow-up, useful if a policy that blocks local MCP servers changes.

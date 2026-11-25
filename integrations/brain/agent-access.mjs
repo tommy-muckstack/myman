@@ -308,6 +308,7 @@ export function decorateReply(reply, options) {
 }
 
 // Plain-text rendering of the doctor report for a person at a terminal.
+const PRESET_TITLES = { off: 'Off', ask: 'Ask each time', trusted: 'Trusted' };
 export function renderDoctor(report) {
   const out = [], mark = ok => ok ? '✓' : '✗';
   out.push('My Man doctor');
@@ -319,6 +320,9 @@ export function renderDoctor(report) {
     out.push(`  Agent access (${report.agent_access.source}):`);
     out.push(`    ${mark(grants.enabled !== false)} Allow local app commands`);
     for (const [group, { label }] of Object.entries(GRANTABLE)) out.push(`    ${mark(grants[group])} ${group.padEnd(9)} ${label}`);
+    out.push(`    Preset: ${PRESET_TITLES[report.agent_access.preset] ?? 'custom (set by hand)'}.`);
+    const off = Object.entries(GRANTABLE).filter(([group]) => !grants[group]).map(([, { label }]) => label);
+    out.push(`    Off: ${off.length ? off.join(', ') : 'nothing'}.`);
   }
   if (report.app?.permissions) out.push(`  macOS:      screen recording ${mark(report.app.permissions.screen_recording)}, accessibility ${mark(report.app.permissions.accessibility)}`);
   out.push(`  Node:       ${report.node}`);

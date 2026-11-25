@@ -37,7 +37,12 @@ final class AgentFolderBridgeTests: XCTestCase {
             defaults.set(enabled, forKey: AgentFolderBridge.enabledKey)
             bridge = AgentFolderBridge(root: root, defaults: defaults, hooks: .init(
                 catalog: { AgentFolderBridgeTests.catalog },
-                preflight: { [unowned self] _, _, _ in if let refuse = self.refuse { throw refuse }; return "Test agent" },
+                preflight: { [unowned self] action, _, _ in
+                    if let refuse = self.refuse { throw refuse }
+                    // Like the dispatcher: a grant that is off is refused until the person turns it on.
+                    if !AgentAccessPolicy.missingGrants(action, self.defaults).isEmpty { throw AgentError("AGENT_DISABLED", "Enable access in My Man Settings → Agents for this action.") }
+                    return "Test agent"
+                },
                 dispatch: { [unowned self] request in
                     self.dispatched.append(request)
                     let id = request["id"] as! String
@@ -206,6 +211,7 @@ final class AgentFolderBridgeTests: XCTestCase {
 
     @MainActor func testACaptureWaitsForThePersonThenCompletes() async throws {
         let fixture = try Fixture(); defer { fixture.finish() }
+        fixture.defaults.set(true, forKey: AgentConsent.keys["capture"]!)
         fixture.bridge.reconcile(); fixture.holds = true
         let shot = fixture.folder.appendingPathComponent("capture.png"); try Data("pixels".utf8).write(to: shot)
         let id = try fixture.send("screenshot.capture", args: ["display": "main"])
@@ -228,22 +234,56 @@ final class AgentFolderBridgeTests: XCTestCase {
         XCTAssertEqual(fixture.code(second), "USER_DENIED"); XCTAssertEqual(fixture.dispatched.count, 1)
     }
 
-    @MainActor func testThirtyMinutesCoversOneKindAndDeletesAlwaysAsk() async throws {
+    @MainActor func testAlwaysAllowIsPerAgentAndActionAndRevocable() async throws {
         let fixture = try Fixture(); defer { fixture.finish() }
-        fixture.bridge.reconcile(); fixture.answer = .allowForSession
-        for _ in 0 ..< 2 { await fixture.bridge.handle(try fixture.send("recording.start") + ".json") }
-        XCTAssertEqual(fixture.asked.count, 1); XCTAssertEqual(fixture.dispatched.count, 2)
+        fixture.defaults.set(true, forKey: AgentConsent.keys["capture"]!)
+        fixture.bridge.reconcile(); fixture.answer = .allowAlways
         await fixture.bridge.handle(try fixture.send("screenshot.capture") + ".json")
-        XCTAssertEqual(fixture.asked.count, 2, "another kind asks again")
+        XCTAssertEqual(fixture.asked.count, 1)
+        XCTAssertEqual(AgentRules.all(fixture.defaults).map(\.action), ["screenshot.capture"])
+        fixture.answer = .deny
+        for _ in 0 ..< 2 { await fixture.bridge.handle(try fixture.send("screenshot.capture") + ".json") }
+        XCTAssertEqual(fixture.asked.count, 1, "the rule answers without asking")
+        XCTAssertEqual(fixture.dispatched.count, 3)
+        // Delete is never remembered, so it asks every time.
         for _ in 0 ..< 2 { await fixture.bridge.handle(try fixture.send("item.delete", args: ["id": "x", "confirm": true]) + ".json") }
-        XCTAssertEqual(fixture.asked.count, 4); XCTAssertEqual(fixture.asked.last?.canRemember, false)
-        fixture.clock = fixture.clock.addingTimeInterval(1801)
-        await fixture.bridge.handle(try fixture.send("recording.start") + ".json")
-        XCTAssertEqual(fixture.asked.count, 5, "the 30 minutes end")
-        // Stopping is never held back.
-        let before = fixture.asked.count
-        await fixture.bridge.handle(try fixture.send("recording.stop", args: ["session_id": "s"]) + ".json")
-        XCTAssertEqual(fixture.asked.count, before)
+        XCTAssertEqual(fixture.asked.count, 3); XCTAssertEqual(fixture.asked.last?.canRemember, false)
+        // Revoking the rule makes the next capture ask again.
+        AgentRules.removeAll(fixture.defaults)
+        await fixture.bridge.handle(try fixture.send("screenshot.capture") + ".json")
+        XCTAssertEqual(fixture.asked.count, 4, "revoked, so it asks again")
+    }
+
+    @MainActor func testAMissingGrantIsOneDialogAndAllowRunsTheAction() async throws {
+        let fixture = try Fixture(); defer { fixture.finish() }
+        fixture.bridge.reconcile(); fixture.answer = .allowOnce
+        let id = try fixture.send("screenshot.capture")
+        await fixture.bridge.handle(id + ".json")
+        XCTAssertEqual(fixture.asked.count, 1, "one dialog, not two")
+        XCTAssertEqual(fixture.asked.first?.grants, ["capture"])
+        XCTAssertEqual(fixture.asked.first?.canRemember, false, "a grant dialog never offers Always allow")
+        XCTAssertTrue(fixture.defaults.bool(forKey: AgentConsent.keys["capture"]!))
+        XCTAssertEqual(fixture.dispatched.count, 1)
+    }
+
+    @MainActor func testDenyingTheGrantDialogRefusesWithGrantOffAndRunsNothing() async throws {
+        let fixture = try Fixture(); defer { fixture.finish() }
+        fixture.bridge.reconcile(); fixture.answer = .deny
+        let id = try fixture.send("screenshot.capture")
+        await fixture.bridge.handle(id + ".json")
+        XCTAssertEqual(fixture.code(id), "GRANT_OFF")
+        XCTAssertFalse(fixture.defaults.bool(forKey: AgentConsent.keys["capture"]!))
+        XCTAssertEqual(fixture.dispatched.count, 0)
+    }
+
+    @MainActor func testTrustedRunsCapturesWithoutAskingButDeletesStillAsk() async throws {
+        let fixture = try Fixture(); defer { fixture.finish() }
+        AgentAccessPreset.trusted.apply(fixture.defaults)
+        fixture.bridge.reconcile(); fixture.answer = .allowOnce
+        await fixture.bridge.handle(try fixture.send("screenshot.capture") + ".json")
+        XCTAssertEqual(fixture.asked.count, 0, "trusted captures run without a prompt")
+        await fixture.bridge.handle(try fixture.send("item.delete", args: ["id": "x", "confirm": true]) + ".json")
+        XCTAssertEqual(fixture.asked.count, 1, "deletes still ask")
     }
 
     @MainActor func testRefusalsNeverReachTheDispatcherOrThePerson() async throws {
@@ -255,12 +295,14 @@ final class AgentFolderBridgeTests: XCTestCase {
         let unknown = try fixture.send("shell.run", args: ["command": "id"])
         await fixture.bridge.handle(unknown + ".json")
         XCTAssertEqual(fixture.code(unknown), "UNKNOWN_ACTION")
-        fixture.refuse = AgentError("AGENT_DISABLED", "Enable capture access in My Man Settings → Agents for this action.")
+        // The global switch is the refusal here: a grant prompt never covers it, so the person is not asked.
+        fixture.defaults.set(false, forKey: "agentActionsEnabled")
+        fixture.refuse = AgentError("AGENT_DISABLED", "Local app actions are disabled in Settings → Agents.")
         let denied = try fixture.send("screenshot.capture")
         await fixture.bridge.handle(denied + ".json")
         XCTAssertEqual(fixture.code(denied), "AGENT_DISABLED")
         XCTAssertNotNil((fixture.outbox(denied)?["error"] as? [String: Any])?["hint"])
-        fixture.refuse = nil
+        fixture.refuse = nil; fixture.defaults.set(true, forKey: "agentActionsEnabled")
         let broken = UUID().uuidString
         try Data("{not json".utf8).write(to: fixture.root.appendingPathComponent("inbox/\(broken).json"))
         await fixture.bridge.handle(broken + ".json")

@@ -481,6 +481,11 @@ enum GroundedMeetingNotes {
         let visibleTurns = MeetingSource.notesTurns(parsed)
         let omitted = MeetingSource.omitPrivateNotes && MeetingSource.publicTurns(parsed).count < parsed.filter { !MeetingSource.isBackchannel($0.text) }.count
         let publicSource = MeetingSource.paragraphs(visibleTurns)
+        // Too little speech gives a model nothing to ground notes in. Say so instead of inventing notes.
+        let spokenText = publicSource.map(\.text).joined(separator: " ")
+        if !MeetingNoteGate.isEnoughSpeech(words: MeetingSource.words(spokenText).count, characters: MeetingNoteGate.characterCount(of: spokenText)) {
+            return MeetingAnalysis(markdown: MeetingNoteGate.tooShortMessage)
+        }
         // Spellings the meeting itself establishes (a phrase said clearly
         // several times) repair its one-off near-misses. Derived input only;
         // the transcript keeps the recognizer's words, and every change is

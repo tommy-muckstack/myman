@@ -46,9 +46,9 @@ import SwiftUI
         timer?.invalidate(); timer = nil
         closing = true; window?.close(); window = nil; closing = false
         pending.continuation.resume(returning: decision)
-        // "For 30 minutes" also answers requests of the same kind already waiting.
-        if decision == .allowForSession {
-            while let next = queue.first, next.request.group == pending.request.group, next.request.canRemember {
+        // "Always allow this action" also answers the same agent's waiting requests for that action.
+        if decision == .allowAlways {
+            while let next = queue.first, next.request.action == pending.request.action, next.request.requester == pending.request.requester, next.request.canRemember {
                 queue.removeFirst(); next.continuation.resume(returning: .allowOnce)
             }
         }
@@ -61,7 +61,20 @@ import SwiftUI
 struct AgentApprovalView: View {
     let request: AgentApprovalRequest
     let decide: (AgentApprovalDecision) -> Void
+    /// Plain words for what will happen, from the grant or group the request needs.
     private var kind: String {
+        if !request.grants.isEmpty {
+            let names = request.grants.map { grant -> String in
+                switch grant {
+                case "recording": return "record"
+                case "capture": return "look at your screen"
+                case "control": return "move the mouse and type"
+                case "sharing": return "publish a shared link"
+                default: return "use \(AgentAccessPolicy.grantTitle(grant).lowercased())"
+                }
+            }
+            return names.joined(separator: " and ")
+        }
         switch request.group {
         case "capture": return "look at your screen"
         case "recording": return "record or use a meeting or dictation"
@@ -80,7 +93,9 @@ struct AgentApprovalView: View {
             }
             VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
                 Text("Allow this?").font(MM.Fonts.result)
-                Text("\(request.requester) wants to \(kind). The request came through your Brain folder.")
+                Text(request.grants.isEmpty
+                     ? "\(request.requester) wants to \(kind). The request came through your Brain folder."
+                     : "\(request.requester) wants to \(kind). Turn on \(request.grants.map(AgentAccessPolicy.grantTitle).joined(separator: ", ")) and allow this?")
                     .font(MM.Fonts.secondary).foregroundStyle(MM.Colors.textSecondary).fixedSize(horizontal: false, vertical: true)
             }
             VStack(alignment: .leading, spacing: MM.Layout.spacing / 2) {
@@ -97,15 +112,15 @@ struct AgentApprovalView: View {
             HStack(spacing: MM.Layout.spacing) {
                 Button("Deny") { decide(.deny) }.keyboardShortcut(.cancelAction).clickable()
                 Spacer()
-                if request.canRemember {
-                    Button("Allow for 30 minutes") { decide(.allowForSession) }.clickable()
-                        .accessibilityHint("Allows requests of this kind from the Brain folder for 30 minutes without asking again.")
+                if request.canRemember && request.grants.isEmpty {
+                    Button("Always allow this action") { decide(.allowAlways) }.clickable()
+                        .accessibilityHint("Lets \(request.requester) run \(request.action) from the Brain folder without asking again. Revoke it in Settings → Agents.")
                 }
                 Button { decide(.allowOnce) } label: {
-                    Text("Allow once").font(MM.Fonts.body).foregroundStyle(MM.Colors.onAccent)
+                    Text(request.grants.isEmpty ? "Allow once" : "Turn on and allow").font(MM.Fonts.body).foregroundStyle(MM.Colors.onAccent)
                         .padding(.horizontal, MM.Layout.paddingLarge).padding(.vertical, MM.Layout.spacing)
                         .background(MM.Colors.accent, in: Capsule()).clickable()
-                }.accessibilityLabel("Allow this request once")
+                }.accessibilityLabel(request.grants.isEmpty ? "Allow this request once" : "Turn on the permission and allow this request")
             }.buttonStyle(.plain)
         }.padding(MM.Layout.paddingLarge).frame(width: MM.Layout.bookingWidth)
             .foregroundStyle(MM.Colors.textPrimary).background(MM.Colors.background)

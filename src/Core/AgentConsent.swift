@@ -7,6 +7,8 @@ enum AgentConsent {
     static let keys = ["capture": "agentCaptureEnabled", "markup": "agentMarkupEnabled",
                        "recording": "agentRecordingEnabled", "library": "agentLibraryEnabled", "sharing": "agentSharingEnabled",
                        "scheduling_parse": "agentSchedulingParseEnabled", "people_read": "agentPeopleReadEnabled", "control": "agentControlEnabled", "calendar_read": "agentCalendarReadEnabled", "calendar_write": "agentCalendarWriteEnabled", "calendar_propose": "agentCalendarProposeEnabled"]
+    /// Read-only status actions that answer even when a grant is off.
+    static let diagnostic: Set<String> = ["app.status", "app.doctor", "settings.read", "screens.list", "recording.status"]
     static let cleanup: Set<String> = ["timer.pause", "timer.cancel", "reminder.cancel", "recording.stop", "recording.cancel", "recording.pause", "meeting.stop", "meeting.discard", "dictation.stop", "dictation.cancel", "capture.scroll.stop", "capture.scroll.cancel", "capture.scroll.status", "workflow.cancel", "share.revoke"]
     @MainActor static func requirements(_ action: String) -> [String] {
         (AgentActions.catalog["actions"] as? [[String: Any]])?.first(where: { $0["name"] as? String == action })?["permissions"] as? [String] ?? ["library"]
@@ -15,8 +17,7 @@ enum AgentConsent {
         // A revoked grant must never prevent stopping a session; its ID is
         // still checked by the controller before stopping or discarding it.
         if cleanup.contains(action) { return }
-        let diagnostic = ["app.status", "app.doctor", "settings.read", "screens.list", "recording.status"].contains(action)
-        if !diagnostic {
+        if !diagnostic.contains(action) {
             guard defaults.object(forKey: "agentActionsEnabled") as? Bool ?? true else { throw AgentError("AGENT_DISABLED", "Local app actions are disabled in Settings → Agents.") }
             for group in requirements(action) {
                 guard defaults.bool(forKey: keys[group]!) else { throw AgentError("AGENT_DISABLED", "Enable \(group) access in My Man Settings → Agents for this action.") }
