@@ -185,7 +185,25 @@ final class AgentActions {
         }
         return screen.frame
     }
+    /// Resolves an app name, title fragment or window id to one shareable window.
+    /// Several matches are returned as candidates, never picked for the agent.
+    private func windowID(named query: String) async throws -> String {
+        guard CGPreflightScreenCaptureAccess() else { throw AgentError("PERMISSION_REQUIRED", "Grant My Man Screen Recording permission first.") }
+        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        let windows = content.windows.map { AgentWindowMatch.Window(id: String($0.windowID), app: $0.owningApplication?.applicationName ?? "", title: $0.title ?? "") }
+        switch AgentWindowMatch.resolve(query, in: windows) {
+        case .one(let id): return id
+        case .none: throw AgentError("NOT_FOUND", "No shareable window matches \"\(query)\". List them with windows.list.")
+        case .many(let found):
+            throw AgentError("AMBIGUOUS_TARGET", "More than one window matches \"\(query)\". Pass one of these window_id values.",
+                             details: ["candidates": found.map { ["id": $0.id, "app": $0.app, "title": $0.title] as [String: Any] }])
+        }
+    }
     private func capturedImage(_ args: [String: Any]) async throws -> (NSImage, CGRect?, Double, String?) {
+        if let name = args["window"] as? String {
+            guard args["window_id"] == nil, args["display"] == nil, args["region"] == nil, args["coordinates"] == nil else { throw AgentError("INVALID_ARGUMENTS", "Choose window, window_id, or display/region.") }
+            return try await capturedImage(["window_id": try await windowID(named: name)])
+        }
         if let id = args["window_id"] as? String {
             guard args["display"] == nil, args["region"] == nil, args["coordinates"] == nil else { throw AgentError("INVALID_ARGUMENTS", "Choose window-id or display/region.") }
             let (image, scale) = try await CaptureEngine.shared.captureWindowForAgent(id: id)
@@ -364,6 +382,19 @@ final class AgentActions {
             var result = try saveImage(output, capturedAt: date, meetingID: meetingID, clipboard: args["clipboard"] as? Bool ?? false)
             result["scale"] = scale
             result["window_id"] = windowID
+            result["captured_at"] = result["created_at"]
+            // A text sidecar next to the image, unless the caller opts out with ocr: false.
+            if args["ocr"] as? Bool != false {
+                let analysis = await ImageAnalysis.analyze(output)
+                let size = AgentImages.size(output)
+                let regions = AgentMarkup.regions(analysis.observations, size: size)
+                let document = AgentOCRSidecar.document(text: analysis.text, regions: regions, size: size, scale: scale, capturedAt: AgentActions.date(date))
+                let data = try JSONSerialization.data(withJSONObject: document, options: [.sortedKeys, .prettyPrinted])
+                let stem = URL(fileURLWithPath: result["path"] as! String).deletingPathExtension().lastPathComponent
+                let sidecar = try await AgentMediaStore.shared.sidecar(data, name: stem + ".ocr.json", maximum: AgentOCRSidecar.maximumBytes)
+                result["ocr_path"] = sidecar["path"]
+                result["ocr_lines"] = regions.count
+            }
             if let region {
                 result["region"] = [region.minX, region.minY, region.width, region.height]
                 result["display"] = NSScreen.screens.first(where: { $0.frame.contains(region) }).flatMap { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue }

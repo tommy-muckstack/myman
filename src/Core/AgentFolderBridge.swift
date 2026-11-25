@@ -25,7 +25,7 @@ enum AgentFolderBridgePolicy {
     static let maximumRequestBytes = 1024 * 1024
     static let maximumArtifactBytes = 1 << 30
     static let maximumArtifacts = 32
-    static let artifactExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "mp4", "mov", "m4v", "m4a", "wav", "md", "html", "otf", "pdf"]
+    static let artifactExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "mp4", "mov", "m4v", "m4a", "wav", "md", "html", "otf", "pdf", "json"]
 
     struct Request {
         let id: String

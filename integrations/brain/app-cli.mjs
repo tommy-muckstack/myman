@@ -11,8 +11,8 @@ import * as credentials from './agent-credentials.mjs';
 import { bridgeDirectory, bridgeRequested, bridgeStatus, bridgeTransport } from './folder-bridge.mjs';
 
 const fail = message => { throw new BrainError('INVALID_ARGUMENTS', message); };
-const strings = ['timeout','use-model','sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
-const booleans = ['help','json','bridge','offline','wait','wait-ready','no-wait','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only','plain'];
+const strings = ['timeout','window','use-model','sound-enabled','machine','enabled','auto-record-meetings','app','root','mode','request-id','query','kind','id','session-id','title','body','body-file','file','path','ops','ops-file','display','window-id','region','coordinates','mic','system-audio','webcam','format','text','color','background','background-color','corner-radius','expected-updated-at','item-id','target-id','notes','due','name','to','key','value','state','after','before','meeting','theme','limit','offset','wait-timeout'];
+const booleans = ['help','json','bridge','offline','wait','wait-ready','no-wait','ocr','no-ocr','open-editor','save-only','save','clipboard','dry-run','preview','confirm','text-only','image','captured-only','clear-due','unique','pinned-only','plain'];
 const options = Object.fromEntries([...strings.map(key=>[key,{type:'string'}]),...booleans.map(key=>[key,{type:'boolean'}]),...['tag','exclude-tag','participant'].map(key=>[key,{type:'string',multiple:true}])]);
 for(const action of catalog.actions)for(const [key,schema]of Object.entries(action.inputSchema.properties)){
   const flag=key.replaceAll('_','-');if(!options[flag])options[flag]={type:schema.type==='boolean'?'boolean':'string'};
@@ -223,7 +223,7 @@ export async function plan(argv) {
   if(name){
     if(p.length!==consumed)fail('Unexpected positional arguments.');
     const schema=describe(name).inputSchema;
-    const special=[...(schema.properties.body?['body-file','file']:[]),...(schema.properties.annotations?['ops','ops-file','save']:[]),...(schema.properties.open_editor?['save-only','open-editor']:[]),...(schema.properties.microphone?['mic']:[]),...(pair==='capture copy'?['text-only','image']:[]),...(pair==='settings set'?['key','value']:[])];
+    const special=[...(schema.properties.body?['body-file','file']:[]),...(schema.properties.annotations?['ops','ops-file','save']:[]),...(schema.properties.open_editor?['save-only','open-editor']:[]),...(schema.properties.ocr?['no-ocr']:[]),...(schema.properties.microphone?['mic']:[]),...(pair==='capture copy'?['text-only','image']:[]),...(pair==='settings set'?['key','value']:[])];
     allowed(v,[...Object.keys(schema.properties).map(k=>k.replaceAll('_','-')),...special]);
     for(const [key,val] of Object.entries(v)) {
       const target=key.replaceAll('-','_');if(!Object.hasOwn(schema.properties,target))continue;
@@ -234,6 +234,8 @@ export async function plan(argv) {
       else if(type==='array')args[target]=['region','crop','times'].includes(target)?String(val).split(',').map(number):json(val);
       else args[target]=val;
     }
+    // --no-ocr is the spelling for ocr: false, the same as --ocr false.
+    if(v['no-ocr']===true&&schema.properties.ocr)args.ocr=false;
     if(v.region)args.region=schema.properties.region?.type==='object'?json(v.region):v.region.split(',').map(number);
     if(v['body-file']!==undefined || v.file!==undefined){if(v.body!==undefined || (v['body-file']!==undefined&&v.file!==undefined))fail('Choose one body input.');if(!Object.hasOwn(schema.properties,'body'))fail('Body input is not supported.');args.body=await input(v['body-file']??v.file);}
     if(v.ops!==undefined || v['ops-file']!==undefined){

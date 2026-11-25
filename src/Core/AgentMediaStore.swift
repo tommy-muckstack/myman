@@ -55,6 +55,20 @@ import AppKit
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         return ["path": url.path, "mime_type": "text/html", "file_size": data.count, "expires_at": AgentActions.date(Date().addingTimeInterval(3600))]
     }
+    /// A small sidecar stored under a readable name, such as "My Man <id>.ocr.json".
+    /// The name must be a plain file name with a .json suffix; nothing else is accepted.
+    func sidecar(_ data: Data, name: String, mime: String = "application/json", maximum: Int) throws -> [String: Any] {
+        expire()
+        guard data.count <= maximum else { throw AgentError("TOO_LARGE", "Sidecar exceeds \(maximum / 1024 / 1024) MiB.") }
+        guard name.hasSuffix(".json"), !name.contains("/"), !name.hasPrefix("."), name.count <= 200 else { throw AgentError("INVALID_ARGUMENTS", "Invalid sidecar name.") }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard try FileManager.default.contentsOfDirectory(atPath: root.path).count < 256 else { throw AgentError("PREVIEW_LIMIT", "Let older previews expire before exporting more.") }
+        let url = root.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: url)
+        try data.write(to: url, options: .withoutOverwriting)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return ["path": url.path, "mime_type": mime, "file_size": data.count, "expires_at": AgentActions.date(Date().addingTimeInterval(3600))]
+    }
     func file(_ data: Data, extension suffix: String, mime: String, maximum: Int) throws -> [String: Any] {
         expire()
         guard data.count <= maximum, ["md", "png", "mov", "mp4", "m4v"].contains(suffix.lowercased()) else { throw AgentError("TOO_LARGE", "Unsupported or oversized handoff attachment.") }
