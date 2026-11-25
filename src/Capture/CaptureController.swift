@@ -14,6 +14,7 @@ struct Screenshot: Codable, FetchableRecord, PersistableRecord {
 /// save (file + clipboard) → OCR into the shared index → floating thumbnail.
 @MainActor
 final class CaptureController: SelectionOverlayDelegate {
+    private var docCaptureNext = false
     private var overlay: SelectionOverlayCoordinator?
     private var frozenCapture: CompositeCapture?
     var meetingIDProvider: () -> String? = { nil }
@@ -124,15 +125,24 @@ final class CaptureController: SelectionOverlayDelegate {
 
     // MARK: SelectionOverlayDelegate
 
+    /// The next region capture also prepares a Paper doc image, text and alt text.
+    func beginDocCapture() {
+        docCaptureNext = true
+        beginRegionCapture()
+    }
+
     func selectionOverlayDidComplete(with rect: CGRect) {
         overlay?.hideAll()
         overlay = nil
-        guard let cropped = frozenCapture?.crop(to: rect) else { return }
+        guard let cropped = frozenCapture?.crop(to: rect) else { docCaptureNext = false; return }
         frozenCapture = nil
-        save(cropped, rect: rect)
+        let forDoc = docCaptureNext
+        docCaptureNext = false
+        save(cropped, rect: rect, forDoc: forDoc)
     }
 
     func selectionOverlayDidCancel() {
+        docCaptureNext = false
         overlay?.hideAll()
         overlay = nil
         frozenCapture = nil
@@ -141,7 +151,7 @@ final class CaptureController: SelectionOverlayDelegate {
 
     // MARK: Save pipeline
 
-    private func save(_ image: NSImage, rect: CGRect) {
+    private func save(_ image: NSImage, rect: CGRect, forDoc: Bool = false) {
         let result: [String: Any]
         do { result = try saveAgentImage(image, capturedAt: capturedAt, meetingID: capturedMeetingID, clipboard: true) }
         catch { Toast.show("Couldn't save the screenshot file", systemImage: "exclamationmark.triangle"); return }
@@ -165,6 +175,18 @@ final class CaptureController: SelectionOverlayDelegate {
         Analytics.track("screenshot_captured")
         CaptureSoundPlayer.shared.play()
         showThumbnail(image: image, fileURL: url)
+        if forDoc {
+            let id = result["id"] as! String, when = capturedAt, height = displayHeight, scale = NSScreen.main?.backingScaleFactor ?? 1
+            Task { @MainActor in
+                let window = (await windowTask?.value)?.selected(in: rect, mainDisplayHeight: height)
+                do {
+                    _ = try await AgentDocCapture.finish(image: image, id: id, path: url.path, capturedAt: when, scale: Double(scale), window: window)
+                    Toast.show("Saved for a Paper doc", systemImage: "doc.badge.plus")
+                } catch {
+                    Toast.show((error as? AgentError)?.message ?? "Couldn't prepare the doc image", systemImage: "exclamationmark.triangle")
+                }
+            }
+        }
     }
 
     private func showThumbnail(image: NSImage, fileURL: URL) {

@@ -100,7 +100,7 @@ struct HotkeyCombo: Codable, Equatable {
 }
 
 enum HotkeyAction: String, CaseIterable, Identifiable {
-    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record, narration
+    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record, narration, captureForDoc
     var id: String { rawValue }
 
     var label: String {
@@ -114,6 +114,7 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .meeting: return "Record Meeting"
         case .record: return "Record Screen"
         case .narration: return "Record Narration"
+        case .captureForDoc: return "Capture for Paper Doc"
         }
     }
 
@@ -134,6 +135,7 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .meeting: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(optionKey | shiftKey))
         case .record: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey))
         case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: UInt32(optionKey | shiftKey))
+        case .captureForDoc: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_D), carbonModifiers: UInt32(optionKey | shiftKey))
         }
     }
 }
