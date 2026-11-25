@@ -129,6 +129,8 @@ private struct ToastView: View {
                 Button(secondaryLabel, action: secondaryAction)
                     .buttonStyle(.plain)
                     .font(MM.Fonts.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
                     .foregroundStyle(MM.Colors.textSecondary)
                     .clickable(minSize: 24)
             }
@@ -138,6 +140,8 @@ private struct ToastView: View {
                 } label: {
                     Text(actionLabel)
                         .font(MM.Fonts.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
                         .foregroundStyle(MM.Colors.background)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 3)
