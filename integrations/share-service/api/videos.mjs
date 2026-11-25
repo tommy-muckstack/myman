@@ -9,7 +9,7 @@ export default async function handler(req, res) {
     const service = createVideoService({ store: videoStore, media: videoMedia, publisherToken: process.env.MYMAN_SHARE_PUBLISHER_TOKEN,
       issueToken: ticket => generateClientTokenFromReadWriteToken({ token: process.env.BLOB_READ_WRITE_TOKEN, pathname: ticket.pathname, maximumSizeInBytes: ticket.size, allowedContentTypes: [ticket.mime], addRandomSuffix: false, allowOverwrite: false, validUntil: Math.min(ticket.expiresAt, Date.now() + 3600_000) }) });
     const sameOrigin = req.headers.origin === `https://${req.headers.host}` && req.headers['x-myman-viewer'] === '1' && req.headers['content-type']?.startsWith('application/json');
-    const result = await service({ method: req.method, id: req.query.id, action: req.query.action, authorization: req.headers.authorization, body, range: req.headers.range, sameOrigin });
+    const result = await service({ method: req.method, id: req.query.id, action: req.query.action, authorization: req.headers.authorization, body, range: req.headers.range, sameOrigin, origin: req.headers.host ? `https://${req.headers.host}` : '' });
     for (const [name, value] of Object.entries(result.headers)) res.setHeader(name, value);
     res.status(result.status);
     if (result.body instanceof ReadableStream) {
