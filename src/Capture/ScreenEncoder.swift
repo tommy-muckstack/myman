@@ -35,10 +35,14 @@ final class ScreenEncoder {
     private var pendingAudio: [CMSampleBuffer] = []
     /// The most recent picture and its time, so a static screen can be held to the stop time.
     private var lastFrame: (image: CVPixelBuffer, time: CMTime)?
+    /// When set, each picture is put on the framed card before it is written.
+    private let frame: RecordingFrameComposer?
 
-    init(url: URL, width: Int, height: Int, frameRate: Int, includesAudio: Bool) throws {
+    init(url: URL, width: Int, height: Int, frameRate: Int, includesAudio: Bool,
+         frame: RecordingFrameComposer? = nil) throws {
         try? FileManager.default.removeItem(at: url)
         self.url = url
+        self.frame = frame
         frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         video = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -79,9 +83,17 @@ final class ScreenEncoder {
 
     /// Returns false when this frame is skipped because the writer is busy. Skipping is preferable to blocking capture.
     @discardableResult
-    func append(video buffer: CMSampleBuffer) throws -> Bool {
+    func append(video captured: CMSampleBuffer) throws -> Bool {
         guard !finished else { throw Failure.alreadyFinished }
         try checkWriter()
+        let buffer: CMSampleBuffer
+        if let frame {
+            guard let image = CMSampleBufferGetImageBuffer(captured), let framed = frame.compose(image),
+                  let sample = Self.makeSample(image: framed, timing: captured) else { return false }
+            buffer = sample
+        } else {
+            buffer = captured
+        }
         let time = CMSampleBufferGetPresentationTimeStamp(buffer)
         if !sessionStarted {
             // Start the session at the earlier of the first picture and the first held audio, so nothing is before it.
@@ -157,6 +169,20 @@ final class ScreenEncoder {
         try? FileManager.default.removeItem(at: url)
     }
 
+    /// A sample for a new picture, with the same timing as the captured frame it replaces.
+    private static func makeSample(image: CVPixelBuffer, timing captured: CMSampleBuffer) -> CMSampleBuffer? {
+        var format: CMVideoFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: image, formatDescriptionOut: &format)
+        guard let format else { return nil }
+        var timing = CMSampleTimingInfo(duration: CMSampleBufferGetDuration(captured),
+                                        presentationTimeStamp: CMSampleBufferGetPresentationTimeStamp(captured),
+                                        decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: image, formatDescription: format,
+                                                 sampleTiming: &timing, sampleBufferOut: &sample)
+        return sample
+    }
+
     private static func makeSample(image: CVPixelBuffer, time: CMTime, frameDuration: CMTime) throws -> CMSampleBuffer? {
         var format: CMVideoFormatDescription?
         CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: image, formatDescriptionOut: &format)
@@ -180,8 +206,10 @@ final class ScreenSegmentWriter: NSObject, SCStreamOutput, SCStreamDelegate, @un
     /// Called once, on the main actor, when capture or encoding fails mid-segment. The recorder stops the take.
     var onFailure: (@MainActor (String) -> Void)?
 
-    init(url: URL, width: Int, height: Int, frameRate: Int, includesAudio: Bool) throws {
-        encoder = try ScreenEncoder(url: url, width: width, height: height, frameRate: frameRate, includesAudio: includesAudio)
+    init(url: URL, width: Int, height: Int, frameRate: Int, includesAudio: Bool,
+         frame: RecordingFrameComposer? = nil) throws {
+        encoder = try ScreenEncoder(url: url, width: width, height: height, frameRate: frameRate,
+                                    includesAudio: includesAudio, frame: frame)
         super.init()
     }
 
