@@ -579,7 +579,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         agentHideCamera = false; agentSystemAudio = nil; agentWantsCamera = false; agentHideCursor = false
         if let previous = agentPreviousMicrophone { microphoneEnabled = previous; agentPreviousMicrophone = nil }
         dismissPill(); RecordingFramePreview.shared.hide(); borderPanel?.orderOut(nil); borderPanel = nil; activeRegion = nil; activeWindowID = nil
-        WebcamBubble.shared.preferredRegion = nil; WebcamBubble.shared.turnOff(); WebcamBubble.shared.resetPosition()
+        WebcamBubble.shared.preferredRegion = nil; WebcamBubble.shared.turnOff()
         CursorEffects.shared.hide(); micLevelTimer?.invalidate(); micLevelTimer = nil; microphoneLevel = 0
         _ = clickRecorder?.stop(); clickRecorder = nil
         _ = cursorRecorder?.stop(); cursorRecorder = nil
@@ -842,8 +842,10 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         // before committing, while keeping the bubble inside the chosen
         // frame from the first recorded frame.
         WebcamBubble.shared.preferredRegion = region
-        WebcamBubble.shared.resetPosition()
-        if !agentHideCamera, agentWantsCamera,
+        // The bubble shows during the countdown, so it can be placed before
+        // recording starts. It keeps its last spot (see WebcamBubble.begin).
+        if !agentHideCamera,
+           agentWantsCamera || (UserDefaults.standard.object(forKey: "mm.webcamBubble") as? Bool ?? true),
            AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
             WebcamBubble.shared.turnOn()
         }
@@ -921,7 +923,6 @@ extension ScreenRecorder: SelectionOverlayDelegate {
         borderPanel = nil
         WebcamBubble.shared.preferredRegion = nil
         WebcamBubble.shared.turnOff()
-        WebcamBubble.shared.resetPosition()
         isBusy = false
     }
 
@@ -1067,8 +1068,8 @@ final class WebcamBubble: ObservableObject {
         panel.isMovableByWindowBackground = true // drag it anywhere
         panel.contentView = view
 
-        if let lastFrame {
-            panel.setFrame(lastFrame, display: true)
+        if let kept = Self.savedFrame(lastFrame, fitting: region) {
+            panel.setFrame(kept, display: true)
         } else if let region {
             panel.setFrame(
                 NSRect(x: region.minX + 14, y: region.minY + 14,
@@ -1102,9 +1103,16 @@ final class WebcamBubble: ObservableObject {
         panel = nil
     }
 
-    /// Reset only for a new selected recording region. Camera on/off during a
-    /// take deliberately keeps the user's dragged position.
-    func resetPosition() { lastFrame = nil }
+    /// The bubble's last spot, if it still sits mostly inside the region being
+    /// recorded (or anywhere, for a full-screen take). Otherwise nil, and the
+    /// bubble goes to its default corner.
+    static func savedFrame(_ saved: NSRect?, fitting region: NSRect?) -> NSRect? {
+        guard let saved, let region else { return saved }
+        let overlap = saved.intersection(region)
+        guard !overlap.isNull else { return nil }
+        let share = (overlap.width * overlap.height) / max(1, saved.width * saved.height)
+        return share >= 0.6 ? saved : nil
+    }
 
     /// Bubble size on a full-screen recording (points; captured at 2× on Retina).
     static let fullDiameter: CGFloat = 240
