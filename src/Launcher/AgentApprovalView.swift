@@ -120,7 +120,7 @@ struct AgentApprovalView: View {
                     Text(request.grants.isEmpty ? "Allow once" : "Turn on and allow").font(MM.Fonts.body).foregroundStyle(MM.Colors.onAccent)
                         .padding(.horizontal, MM.Layout.paddingLarge).padding(.vertical, MM.Layout.spacing)
                         .background(MM.Colors.accent, in: Capsule()).clickable()
-                }.accessibilityLabel(request.grants.isEmpty ? "Allow this request once" : "Turn on the grant and allow this request")
+                }.accessibilityLabel(request.grants.isEmpty ? "Allow this request once" : "Turn on the permission and allow this request")
             }.buttonStyle(.plain)
         }.padding(MM.Layout.paddingLarge).frame(width: MM.Layout.bookingWidth)
             .foregroundStyle(MM.Colors.textPrimary).background(MM.Colors.background)
