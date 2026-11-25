@@ -1,6 +1,41 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
+export const MAX_CHAPTERS = 8;
+const MAX_CHAPTER_MS = 604_800_000;
+
+/** Chapters from the uploader: [{start_ms, title}], at most 8. Undefined means none; anything malformed is null. */
+export function normalizeChapters(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_CHAPTERS) return null;
+  const out = [];
+  for (const c of value) {
+    if (!c || typeof c !== 'object' || !Number.isSafeInteger(c.start_ms) || c.start_ms < 0 || c.start_ms > MAX_CHAPTER_MS) return null;
+    if (typeof c.title !== 'string' || c.title.trim().length < 1 || c.title.length > 120) return null;
+    out.push({ start_ms: c.start_ms, title: c.title });
+  }
+  return out;
+}
+
+const MAX_POSTER_BYTES = 300_000;
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47];
+
+/** Optional poster PNG (base64). Absent is ''; a malformed or oversized poster is null. */
+export function normalizePoster(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.length === 0 || bytes.length > MAX_POSTER_BYTES || PNG_SIGNATURE.some((b, i) => bytes[i] !== b)) return null;
+  return value;
+}
+
+/** Duration in milliseconds, 0 when unknown. Anything out of range is null. */
+export function normalizeDuration(value) {
+  if (value === undefined || value === null) return 0;
+  return Number.isSafeInteger(value) && value >= 0 && value <= MAX_CHAPTER_MS ? value : null;
+}
+
+const clock = ms => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const idPattern = /^[a-zA-Z0-9_-]{32}$/;
 const noStore = { 'Cache-Control': 'private, no-store, max-age=0', 'CDN-Cache-Control': 'no-store', 'Vercel-CDN-Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow, noarchive', 'Referrer-Policy': 'no-referrer' };
 const reply = (status, value, extra = {}) => ({ status, headers: { ...noStore, 'Content-Type': 'application/json', ...extra }, body: typeof value === 'string' ? value : JSON.stringify(value) });
@@ -21,16 +56,28 @@ export function byteRange(header, size) {
   return { start, end, header: `bytes=${start}-${end}` };
 }
 
-export function watchPage(id, value) {
+export function watchPage(id, value, origin = '') {
   const nonce = randomBytes(18).toString('base64');
-  const page = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escape(value.title)} · My Man</title>
+  // Link preview tags: Slack, iMessage and other unfurlers read these. Absolute URLs need the origin.
+  const description = [value.duration_ms ? clock(value.duration_ms) : null, value.chapters?.length ? `${value.chapters.length} chapters` : null, 'Shared with My Man'].filter(Boolean).join(' · ');
+  const preview = [
+    `<meta name="description" content="${escape(description)}">`,
+    `<meta property="og:title" content="${escape(value.title)}">`,
+    `<meta property="og:description" content="${escape(description)}">`,
+    `<meta property="og:type" content="video.other">`,
+    origin && `<meta property="og:url" content="${escape(`${origin}/s/${id}`)}">`,
+    origin && value.poster && `<meta property="og:image" content="${escape(`${origin}/api/videos?id=${id}&action=poster`)}">`,
+    `<meta name="twitter:card" content="${origin && value.poster ? 'summary_large_image' : 'summary'}">`,
+  ].filter(Boolean).join('');
+  const page = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">${preview}<title>${escape(value.title)} · My Man</title>
   <style>@font-face{font-family:Gellix;src:url('/fonts/Gellix-Regular.ttf')}@font-face{font-family:Gellix;src:url('/fonts/Gellix-SemiBold.ttf');font-weight:600}:root{color-scheme:light dark;--background:#fff;--surface:#f9f9f9;--text:#1f1f26;--secondary:#737380;--border:#e6e6eb;--accent:#ffb84d}@media(prefers-color-scheme:dark){:root{--background:#141414;--surface:#1f1f1f;--text:#f5f5f5;--secondary:#b8b8b8;--border:#383838;--accent:#ffc766}}*{box-sizing:border-box}body{font:16px Gellix,sans-serif;max-width:1000px;margin:40px auto;padding:0 24px;background:var(--background);color:var(--text)}header{font-size:14px;color:var(--secondary);margin-bottom:24px}header strong{color:var(--text)}h1{font-size:30px;font-weight:600;letter-spacing:-.025em}h2{font-size:20px;font-weight:600;margin-top:32px}video{width:100%;max-height:75vh;background:#000;border-radius:12px;border:1px solid var(--border)}button,input,textarea,select{font:inherit;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);padding:10px;margin:6px 6px 6px 0;min-height:40px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}textarea{display:block;width:100%;resize:vertical}small{color:var(--secondary);line-height:1.6}a{color:var(--text)}.comment{border-top:1px solid var(--border);padding:12px 0;overflow-wrap:anywhere}#status{color:var(--secondary)}@media(max-width:560px){body{margin:24px auto;padding:0 16px}h1{font-size:24px}}</style>
   <header><strong>My Man</strong> · Shared recording</header>
   <h1>${escape(value.title)}</h1><video id="video" controls preload="metadata" playsinline src="/api/videos?id=${id}&action=media">${value.captions ? `<track kind="captions" src="/api/videos?id=${id}&action=captions" srclang="und" label="Captions" default>` : ''}</video>
   <div><button id="timestamp">Copy link at this time</button><label>Speed <select id="speed"><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option></select></label></div>
   <p><small>Available until ${escape(new Date(value.expiresAt).toISOString())}. Anyone holding this link can view it. Downloaded copies cannot be revoked.</small></p>
+  ${value.chapters?.length ? `<h2>Chapters</h2><ol>${value.chapters.map(c => `<li><button data-seek="${Math.floor(c.start_ms / 1000)}">${escape(clock(c.start_ms))}</button> ${escape(c.title)}</li>`).join('')}</ol>` : ''}
   ${value.engagement ? '<h2>Conversation</h2><label>Your name <input id="name" maxlength="80"></label><label>Comment at the current time<textarea id="comment" maxlength="2000"></textarea></label><button id="post">Post comment</button><button id="reaction">👍 React at this time</button><div id="events"></div>' : ''}<p id="status" role="status"></p>
-  <script nonce="${nonce}">const video=document.getElementById('video'),status=document.getElementById('status');const seek=Number(new URL(location.href).hash.slice(3));if(location.hash.startsWith('#t=')&&Number.isFinite(seek)&&seek>=0)video.addEventListener('loadedmetadata',()=>{video.currentTime=Math.min(seek,video.duration)},{once:true});document.getElementById('speed').onchange=e=>video.playbackRate=Number(e.target.value);document.getElementById('timestamp').onclick=async()=>{try{const u=new URL(location.href);u.hash='t='+Math.floor(video.currentTime);history.replaceState(null,'',u);await navigator.clipboard.writeText(u.href);status.textContent='Timestamp link copied.'}catch{status.textContent='Copy the address after seeking to your time.'}};
+  <script nonce="${nonce}">const video=document.getElementById('video'),status=document.getElementById('status');const seek=Number(new URL(location.href).hash.slice(3));if(location.hash.startsWith('#t=')&&Number.isFinite(seek)&&seek>=0)video.addEventListener('loadedmetadata',()=>{video.currentTime=Math.min(seek,video.duration)},{once:true});document.getElementById('speed').onchange=e=>video.playbackRate=Number(e.target.value);document.querySelectorAll('[data-seek]').forEach(b=>b.onclick=()=>{video.currentTime=Number(b.dataset.seek);video.play().catch(()=>{})});document.getElementById('timestamp').onclick=async()=>{try{const u=new URL(location.href);u.hash='t='+Math.floor(video.currentTime);history.replaceState(null,'',u);await navigator.clipboard.writeText(u.href);status.textContent='Timestamp link copied.'}catch{status.textContent='Copy the address after seeking to your time.'}};
   ${value.engagement ? `const endpoint='/api/videos?id=${id}&action=events';async function refresh(){const r=await fetch(endpoint,{cache:'no-store'});if(!r.ok)throw Error();const rows=await r.json();const box=document.getElementById('events');box.replaceChildren();for(const event of rows.events){const row=document.createElement('div');row.className='comment';const time=document.createElement('button');time.textContent=Math.floor(event.time)+'s';time.onclick=()=>{video.currentTime=event.time;video.play()};const text=document.createElement('span');text.textContent=event.name+': '+(event.reaction||event.text);row.append(time,text);box.append(row)}}async function post(reaction){try{const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','X-MyMan-Viewer':'1'},body:JSON.stringify({name:document.getElementById('name').value||'Viewer',text:document.getElementById('comment').value,reaction,time:video.currentTime})});if(!r.ok)throw Error();document.getElementById('comment').value='';await refresh()}catch{status.textContent='Could not save. This link may have expired.'}}document.getElementById('post').onclick=()=>post(null);document.getElementById('reaction').onclick=()=>post('👍');refresh().catch(()=>status.textContent='Comments unavailable.');` : ''}</script></html>`;
   return reply(200, page, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; media-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
 }
@@ -39,19 +86,25 @@ export function watchPage(id, value) {
 // is idempotent; it never accepts a client-supplied storage URL or overwrites a
 // revocation tombstone. Private media is streamed, never redirected.
 export function createVideoService({ store, publisherToken, issueToken, media, now = () => Date.now() }) {
-  return async ({ method, id, action, authorization, body, range, sameOrigin = false }) => {
+  return async ({ method, id, action, authorization, body, range, sameOrigin = false, origin = '' }) => {
     if (!idPattern.test(id ?? '')) return reply(404, { error: 'Unknown recording' });
     const publisher = auth(authorization, publisherToken);
     const owner = createHash('sha256').update(publisherToken ?? '').digest('hex');
     if (['begin', 'complete'].includes(action) && (!publisher || method !== 'POST')) return reply(401, { error: 'Unauthorized' });
     if (action === 'begin') {
       if (!body || !Number.isSafeInteger(body.size) || body.size <= 0 || body.size > MAX_VIDEO_BYTES || !['video/mp4', 'video/quicktime'].includes(body.mime) || !Number.isInteger(body.ttl_seconds) || body.ttl_seconds < 60 || body.ttl_seconds > 604800 || typeof body.title !== 'string' || body.title.length > 300 || !/^[a-f0-9]{64}$/.test(body.fingerprint ?? '')) return reply(400, { error: 'Invalid recording metadata' });
+      const chapters = normalizeChapters(body.chapters);
+      if (chapters === null) return reply(400, { error: 'Invalid chapters' });
+      const poster = normalizePoster(body.poster);
+      if (poster === null) return reply(400, { error: 'Invalid poster image' });
+      const durationMs = normalizeDuration(body.duration_ms);
+      if (durationMs === null) return reply(400, { error: 'Invalid duration' });
       const existing = await store.get(id);
       if (existing?.revoked || existing && existing.expiresAt <= now()) return reply(410, { error: 'This share cannot be reused' });
       let ticket = await store.ticket(id);
       if (ticket && (ticket.owner !== owner || ticket.fingerprint !== body.fingerprint || ticket.size !== body.size || ticket.mime !== body.mime)) return reply(409, { error: 'The recording changed; start a new share' });
       if (!ticket) {
-        ticket = { version: 2, id, owner, pathname: `videos/${id}.${body.mime === 'video/mp4' ? 'mp4' : 'mov'}`, fingerprint: body.fingerprint, size: body.size, mime: body.mime, title: body.title, engagement: body.engagement === true, expiresAt: now() + body.ttl_seconds * 1000 };
+        ticket = { version: 2, id, owner, pathname: `videos/${id}.${body.mime === 'video/mp4' ? 'mp4' : 'mov'}`, fingerprint: body.fingerprint, size: body.size, mime: body.mime, title: body.title, chapters, poster, duration_ms: durationMs, engagement: body.engagement === true, expiresAt: now() + body.ttl_seconds * 1000 };
         await store.saveTicket(id, ticket); // create-only; races fail closed
       }
       if (ticket.expiresAt <= now()) return reply(410, { error: 'Upload expired' });
@@ -95,6 +148,20 @@ export function createVideoService({ store, publisherToken, issueToken, media, n
       return { status: selected ? 206 : 200, headers: { ...noStore, 'Content-Type': value.mime, 'Accept-Ranges': 'bytes', 'Content-Length': String(selected ? selected.end - selected.start + 1 : value.size), ...(selected ? { 'Content-Range': `bytes ${selected.start}-${selected.end}/${value.size}` } : {}) }, body: stream };
     }
     if (action === 'captions') return reply(200, method === 'HEAD' ? '' : value.captions ?? 'WEBVTT\n\n', { 'Content-Type': 'text/vtt; charset=utf-8' });
-    const page = watchPage(id, value); if (method === 'HEAD') page.body = ''; return page;
+    if (action === 'poster') {
+      if (!value.poster) return reply(404, { error: 'No poster' });
+      return { status: 200, headers: { ...noStore, 'Content-Type': 'image/png' }, body: method === 'HEAD' ? '' : Buffer.from(value.poster, 'base64') };
+    }
+    if (action === 'embed') {
+      // The player alone, for Slack's inline video. Only Slack may frame it.
+      return { status: 200, headers: { ...noStore, 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors https://*.slack.com", 'X-Robots-Tag': 'noindex' }, body: method === 'HEAD' ? '' : embedPage(id, value) };
+    }
+    const page = watchPage(id, value, origin); if (method === 'HEAD') page.body = ''; return page;
   };
+}
+
+/** The bare player, for an iframe. Escaped title; media and poster come from this same origin. */
+export function embedPage(id, value) {
+  const poster = value.poster ? ` poster="/api/videos?id=${id}&amp;action=poster"` : '';
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escape(value.title)}</title><style>html,body{margin:0;height:100%;background:#000}video{width:100%;height:100%;object-fit:contain}</style><video controls playsinline preload="metadata" src="/api/videos?id=${id}&amp;action=media"${poster}></video></html>`;
 }

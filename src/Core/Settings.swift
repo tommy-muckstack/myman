@@ -100,7 +100,7 @@ struct HotkeyCombo: Codable, Equatable {
 }
 
 enum HotkeyAction: String, CaseIterable, Identifiable {
-    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record, narration, captureForDoc
+    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record, narration, captureForDoc, markZoomPoint
     var id: String { rawValue }
 
     var label: String {
@@ -115,6 +115,7 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .record: return "Record Screen"
         case .narration: return "Record Narration"
         case .captureForDoc: return "Capture for Paper Doc"
+        case .markZoomPoint: return "Mark Zoom Point While Recording"
         }
     }
 
@@ -134,8 +135,10 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .voiceUndo: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(cmdKey | optionKey | shiftKey))
         case .meeting: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(optionKey | shiftKey))
         case .record: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey))
-        case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: UInt32(optionKey | shiftKey))
+        // ⌥⇧K. Narration used ⌥⇧N, the same key as New Note, so one of the two never registered.
+        case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_K), carbonModifiers: UInt32(optionKey | shiftKey))
         case .captureForDoc: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_D), carbonModifiers: UInt32(optionKey | shiftKey))
+        case .markZoomPoint: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(optionKey | shiftKey))
         }
     }
 }
@@ -366,6 +369,14 @@ struct SettingsPanelView: View {
     @State private var query = ""
     @AppStorage(PauseEverything.pausedKey) private var paused = false
     @AppStorage(AgentAccessMigration.noticeSeenKey) private var noticeSeen = false
+    @State private var openAtLogin = LaunchAtLogin.isEnabled
+    @AppStorage(ScreenshotFileName.key) private var screenshotNameTemplate = ""
+    /// What a screenshot would be called today, with the template the person typed (or the default when empty).
+    private var screenshotNamePreview: String {
+        let typed = screenshotNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ScreenshotFileName.render(typed.isEmpty ? ScreenshotFileName.defaultTemplate : typed, date: Date(), id: "preview0000")
+    }
+    @AppStorage(CaptureQuality.key) private var captureQuality = CaptureQuality.balanced.rawValue
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
     @AppStorage("learnDictationCorrections") private var learnDictationCorrections = false
@@ -523,6 +534,16 @@ struct SettingsPanelView: View {
 
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 0) {
+            settingSection("Startup") {
+                Toggle("Open My Man when I log in", isOn: $openAtLogin)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                    .onChange(of: openAtLogin) { _, on in
+                        do { try LaunchAtLogin.set(on) } catch { openAtLogin = LaunchAtLogin.isEnabled; Toast.show("Couldn’t change the login item", systemImage: "exclamationmark.triangle") }
+                    }
+                Text("My Man stays in the menu bar. Turn this off to start it yourself.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
             settingSection("Meetings") {
                 Toggle("Auto record when meeting detected", isOn: $store.autoRecordMeetings)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
@@ -564,6 +585,15 @@ struct SettingsPanelView: View {
 
     private var captureArea: some View {
         VStack(alignment: .leading, spacing: 0) {
+            settingSection("Image quality") {
+                Picker("Image quality", selection: $captureQuality) {
+                    ForEach(CaptureQuality.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                Text(CaptureQuality(rawValue: captureQuality)?.summary ?? "")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
             settingSection("Recording") {
                 RecordingSettingsView()
                 Toggle("Cursor trail, click ripple and shake to highlight", isOn: $store.cursorEffects)
@@ -574,6 +604,15 @@ struct SettingsPanelView: View {
                     .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
+            Divider().overlay(MM.Colors.border)
+            settingSection("Screenshot file names") {
+                TextField(ScreenshotFileName.defaultTemplate, text: $screenshotNameTemplate)
+                    .textFieldStyle(.roundedBorder).font(MM.Fonts.body)
+                Text("Preview: " + screenshotNamePreview + ".png")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+                Text("Use {date}, {time} and {id}. Leave it empty for the default.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
             Divider().overlay(MM.Colors.border)
             settingSection("Screenshot sound") {
                 Picker("Screenshot sound", selection: $store.captureSound) {
@@ -643,6 +682,16 @@ struct SettingsPanelView: View {
             settingSection("Agent permissions outside the presets") { AgentAdvancedSettings() }
             Divider().overlay(MM.Colors.border)
             dictationPage
+            Divider().overlay(MM.Colors.border)
+            settingSection("Settings and logs") {
+                HStack(spacing: 8) {
+                    Button("Export settings…") { SettingsTools.exportSettings() }.clickable()
+                    Button("Show audit log") { SettingsTools.showAuditLog() }.clickable()
+                    Button("Reset to defaults…", role: .destructive) { if SettingsTools.confirmReset() { SettingsTools.reset() } }.clickable()
+                }
+                Text("Export never includes keys or tokens. Reset leaves your Brain folder, credentials and library alone.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
             Divider().overlay(MM.Colors.border)
             AISettingsView()
         }

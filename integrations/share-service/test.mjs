@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createService, MAX_BYTES } from './service.mjs';
@@ -122,4 +123,139 @@ test('comments require same-origin intent and are stored as text', async () => {
   const result = await f.service({ method: 'GET', id: f.id, action: 'events' });
   assert.equal(JSON.parse(result.body).events[0].text, event.text);
   const page = await f.service({ method: 'GET', id: f.id }); assert.match(page.body, /text\.textContent=/);
+});
+
+test('chapters are validated on begin, stored with the share, and shown as seek buttons', async () => {
+  const { normalizeChapters } = await import('./video-service.mjs');
+  assert.deepEqual(normalizeChapters(undefined), []);
+  assert.equal(normalizeChapters([{ start_ms: -1, title: 'x' }]), null);
+  assert.equal(normalizeChapters([{ start_ms: 1, title: '' }]), null);
+  assert.equal(normalizeChapters(Array.from({ length: 9 }, (_, i) => ({ start_ms: i, title: 'x' }))), null);
+  assert.equal(normalizeChapters('nope'), null);
+
+  const f = videoFixture();
+  f.body.chapters = [{ start_ms: 0, title: 'Intro <b>' }, { start_ms: 42_000, title: 'Numbers' }];
+  assert.equal((await f.call('begin')).status, 200);
+  f.upload(); assert.equal((await f.call('complete')).status, 201);
+  const page = await f.service({ method: 'GET', id: f.id });
+  assert.match(page.body, /<h2>Chapters<\/h2>/);
+  assert.match(page.body, /data-seek="42"/);
+  assert.match(page.body, /Intro &lt;b&gt;/);
+  assert.doesNotMatch(page.body, /Intro <b>/);
+});
+
+test('a malformed chapter list is refused before any upload grant is issued', async () => {
+  const f = videoFixture();
+  f.body.chapters = [{ start_ms: 'soon', title: 'x' }];
+  assert.equal((await f.call('begin')).status, 400);
+  assert.equal(f.tickets.size, 0);
+});
+
+test('Slack request signatures: valid passes; wrong secret, stale time, or edited body fail', async () => {
+  const { verifySlackSignature } = await import('./slack-unfurl.mjs');
+  const secret = 's'.repeat(32), body = '{"type":"event_callback"}', ts = '1700000000';
+  const sig = 'v0=' + createHmac('sha256', secret).update(`v0:${ts}:${body}`).digest('hex');
+  const now = Number(ts) * 1000;
+  assert.equal(verifySlackSignature({ signingSecret: secret, timestamp: ts, signature: sig, rawBody: body, now }), true);
+  assert.equal(verifySlackSignature({ signingSecret: 'x'.repeat(32), timestamp: ts, signature: sig, rawBody: body, now }), false);
+  assert.equal(verifySlackSignature({ signingSecret: secret, timestamp: ts, signature: sig, rawBody: body + ' ', now }), false);
+  assert.equal(verifySlackSignature({ signingSecret: secret, timestamp: ts, signature: sig, rawBody: body, now: now + 600_000 }), false);
+});
+
+test('only our own share links on our origin are unfurled', async () => {
+  const { shareIdFromLink } = await import('./slack-unfurl.mjs');
+  const id = 'a'.repeat(32);
+  assert.equal(shareIdFromLink(`https://share.example.com/s/${id}`, 'https://share.example.com'), id);
+  assert.equal(shareIdFromLink(`https://evil.example.org/s/${id}`, 'https://share.example.com'), null);
+  assert.equal(shareIdFromLink(`https://share.example.com/api/videos?id=${id}`, 'https://share.example.com'), null);
+  assert.equal(shareIdFromLink('not a url', 'https://share.example.com'), null);
+});
+
+test('a link_shared event produces a chat.unfurl video block for a live share with a poster', async () => {
+  const { handleSlackEvent } = await import('./slack-unfurl.mjs');
+  const secret = 's'.repeat(32), origin = 'https://share.example.com', id = 'b'.repeat(32), now = 1_700_000_000_000;
+  const poster = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).toString('base64');
+  const shares = new Map([[id, { version: 2, title: 'Rollout walkthrough', poster, duration_ms: 240_000, chapters: [{ start_ms: 0, title: 'a' }], expiresAt: now + 60_000, revoked: false }]]);
+  const store = { get: async key => shares.get(key) };
+  const sign = (raw, ts) => 'v0=' + createHmac('sha256', secret).update(`v0:${ts}:${raw}`).digest('hex');
+  const ts = String(Math.floor(now / 1000));
+  const send = async (payload, fetchImpl) => {
+    const rawBody = JSON.stringify(payload);
+    return handleSlackEvent({ rawBody, timestamp: ts, signature: sign(rawBody, ts), signingSecret: secret, botToken: 'xoxb-test', origin, store, now, fetchImpl });
+  };
+  const verify = await send({ type: 'url_verification', challenge: 'abc' });
+  assert.deepEqual(verify, { status: 200, json: { challenge: 'abc' } });
+
+  const calls = [];
+  const fetchImpl = async (url, init) => { calls.push({ url, init }); return { json: async () => ({ ok: true }) }; };
+  const link = `${origin}/s/${id}`;
+  const result = await send({ type: 'event_callback', event: { type: 'link_shared', channel: 'C1', message_ts: '1.2', links: [{ url: link, domain: 'share.example.com' }] } }, fetchImpl);
+  assert.equal(result.status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://slack.com/api/chat.unfurl');
+  const params = new URLSearchParams(calls[0].init.body);
+  assert.equal(params.get('channel'), 'C1'); assert.equal(params.get('ts'), '1.2');
+  const unfurls = JSON.parse(params.get('unfurls'));
+  assert.equal(unfurls[link].blocks[0].type, 'video');
+  assert.equal(unfurls[link].blocks[0].video_url, `${origin}/api/videos?id=${id}&action=embed`);
+  assert.equal(unfurls[link].blocks[0].thumbnail_url, `${origin}/api/videos?id=${id}&action=poster`);
+  assert.equal(unfurls[link].blocks[0].title.text, 'Rollout walkthrough');
+});
+
+test('revoked, expired, posterless, or foreign links are not unfurled', async () => {
+  const { handleSlackEvent } = await import('./slack-unfurl.mjs');
+  const secret = 's'.repeat(32), origin = 'https://share.example.com', now = 1_700_000_000_000;
+  const poster = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64');
+  const shares = new Map([
+    ['c'.repeat(32), { version: 2, title: 'Revoked', poster, expiresAt: now + 60_000, revoked: true }],
+    ['d'.repeat(32), { version: 2, title: 'Old', poster, expiresAt: now - 1, revoked: false }],
+    ['e'.repeat(32), { version: 2, title: 'No poster', expiresAt: now + 60_000, revoked: false }],
+  ]);
+  const store = { get: async key => shares.get(key) };
+  const ts = String(Math.floor(now / 1000));
+  const payload = { type: 'event_callback', event: { type: 'link_shared', channel: 'C1', message_ts: '1.2', links: [
+    { url: `${origin}/s/${'c'.repeat(32)}` }, { url: `${origin}/s/${'d'.repeat(32)}` }, { url: `${origin}/s/${'e'.repeat(32)}` }, { url: `https://elsewhere.example/s/${'c'.repeat(32)}` },
+  ] } };
+  const rawBody = JSON.stringify(payload);
+  let called = false;
+  const result = await handleSlackEvent({ rawBody, timestamp: ts, signature: 'v0=' + createHmac('sha256', secret).update(`v0:${ts}:${rawBody}`).digest('hex'), signingSecret: secret, botToken: 'x', origin, store, now, fetchImpl: async () => { called = true; return { json: async () => ({ ok: true }) }; } });
+  assert.equal(result.status, 200);
+  assert.equal(called, false);
+});
+
+test('composer links are unfurled by unfurl_id and source', async () => {
+  const { handleSlackEvent } = await import('./slack-unfurl.mjs');
+  const secret = 's'.repeat(32), origin = 'https://share.example.com', id = 'f'.repeat(32), now = 1_700_000_000_000;
+  const poster = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64');
+  const store = { get: async key => key === id ? { version: 2, title: 'T', poster, expiresAt: now + 60_000, revoked: false } : null };
+  const ts = String(Math.floor(now / 1000));
+  const rawBody = JSON.stringify({ type: 'event_callback', event: { type: 'link_shared', source: 'composer', unfurl_id: 'U1', links: [{ url: `${origin}/s/${id}` }] } });
+  const calls = [];
+  await handleSlackEvent({ rawBody, timestamp: ts, signature: 'v0=' + createHmac('sha256', secret).update(`v0:${ts}:${rawBody}`).digest('hex'), signingSecret: secret, botToken: 'x', origin, store, now, fetchImpl: async (u, init) => { calls.push(init.body); return { json: async () => ({ ok: true }) }; } });
+  const params = new URLSearchParams(calls[0]);
+  assert.equal(params.get('unfurl_id'), 'U1'); assert.equal(params.get('source'), 'composer'); assert.equal(params.get('channel'), null);
+});
+
+test('a poster must be a PNG of bounded size; a duration must be a sane integer', async () => {
+  const { normalizePoster, normalizeDuration } = await import('./video-service.mjs');
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0]).toString('base64');
+  assert.equal(normalizePoster(png), png);
+  assert.equal(normalizePoster(undefined), '');
+  assert.equal(normalizePoster(Buffer.from('not a png').toString('base64')), null);
+  assert.equal(normalizePoster('not base64!'), null);
+  assert.equal(normalizePoster(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(300_001)]).toString('base64')), null);
+  assert.equal(normalizeDuration(240_000), 240_000);
+  assert.equal(normalizeDuration(-1), null);
+  assert.equal(normalizeDuration(1.5), null);
+});
+
+test('the watch page carries link-preview tags with absolute URLs and the poster', async () => {
+  const id = 'g'.repeat(32);
+  const f = videoFixture();
+  const poster = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64');
+  f.shares.set(id, { version: 2, title: 'Preview & <test>', poster, duration_ms: 90_000, expiresAt: 1e15, revoked: false, chapters: [] });
+  const page = await f.service({ method: 'GET', id, origin: 'https://share.example.com' });
+  assert.match(page.body, /<meta property="og:title" content="Preview &amp; &lt;test&gt;">/);
+  assert.match(page.body, /og:image" content="https:\/\/share\.example\.com\/api\/videos\?id=g+&amp;action=poster"/);
+  assert.match(page.body, /twitter:card" content="summary_large_image"/);
 });

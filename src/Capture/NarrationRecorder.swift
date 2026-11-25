@@ -20,6 +20,7 @@ final class NarrationRecorder: ObservableObject {
     private var cancelled = false
     private var autoStop: Task<Void, Never>?
     private var label: String?
+    private var profile: NarrationPlan.Profile = NarrationPlan.personal
 
     var isActive: Bool { phase != .idle }
     /// True while the camera and microphone are running. The menu bar shows a red dot for this.
@@ -27,8 +28,9 @@ final class NarrationRecorder: ObservableObject {
 
     /// Starts after a 3-2-1 countdown, so the person can switch to the page they are narrating.
     /// Returns once the camera and microphone are running and the first frame has arrived.
-    func start(label: String? = nil) async throws -> String {
+    func start(label: String? = nil, profile: NarrationPlan.Profile = NarrationPlan.personal) async throws -> String {
         guard phase == .idle else { throw AgentError("BUSY", "A narration is already running. Stop it first.") }
+        self.profile = profile
         if let label, !AgentDelivery.isValidLabel(label) { throw AgentError("INVALID_ARGUMENTS", "label takes letters, numbers, dots, dashes and underscores, up to 80 characters. Use the doc section id.") }
         self.label = label
         try await ensureDevicesAllowed()
@@ -40,10 +42,14 @@ final class NarrationRecorder: ObservableObject {
         }
         let id = UUID().uuidString
         let url = try Self.destination(id: id)
-        let sink = try NarrationSink(url: url)
-        let capture = try Self.makeSession(sink: sink)
+        // The camera decides the output size for personal recordings, so resolve it before the writer is built.
+        let effective = try Self.resolvedProfile(profile)
+        self.profile = effective
+        let sink = try NarrationSink(url: url, profile: effective)
+        let capture = try Self.makeSession(sink: sink, profile: effective)
         self.sink = sink; self.session = capture; self.outputURL = url; self.sessionID = id
         capture.startRunning()
+        NarrationBubble.show(session: capture)
         phase = .recording
         // Wait for the first video frame so the start time is real before anything returns.
         for _ in 0 ..< 200 where sink.startedAtEpochMs == nil { try await Task.sleep(for: .milliseconds(25)) }
@@ -59,10 +65,12 @@ final class NarrationRecorder: ObservableObject {
     /// Stops and finalizes. Re-encodes at a lower bitrate if the take is over the cap, then reports the final size.
     func stop() async throws -> [String: Any] {
         guard let sink, let capture = session, let url = outputURL, let id = sessionID else {
+            NarrationBubble.close()
             if case .countingDown = phase { cancelled = true }
             throw AgentError("NOT_RECORDING", "No narration is running.")
         }
         autoStop?.cancel(); autoStop = nil
+        NarrationBubble.close()
         phase = .finishing
         let startedAt = sink.startedAtEpochMs ?? Int64(Date().timeIntervalSince1970 * 1000)
         // Stop the devices off the main thread; stopRunning blocks.
@@ -71,7 +79,7 @@ final class NarrationRecorder: ObservableObject {
         let durationMs = Int(Int64(Date().timeIntervalSince1970 * 1000) - startedAt)
         var bytes = Self.size(of: url)
         var reencoded: Int?
-        if let bitrate = NarrationPlan.reencodeVideoBitrate(durationSeconds: Double(durationMs) / 1000, bytes: bytes) {
+        if let bitrate = NarrationPlan.reencodeVideoBitrate(durationSeconds: Double(durationMs) / 1000, bytes: bytes, profile: profile) {
             let smaller = url.deletingLastPathComponent().appendingPathComponent(id + ".small.mp4")
             try await NarrationReencoder.reencode(source: url, destination: smaller, videoBitrate: bitrate)
             try FileManager.default.removeItem(at: url)
@@ -81,7 +89,7 @@ final class NarrationRecorder: ObservableObject {
         }
         session = nil; self.sink = nil; outputURL = nil; sessionID = nil
         phase = .idle
-        var result = NarrationPlan.result(id: id, startedAtEpochMs: startedAt, durationMs: durationMs, path: url.path, bytes: bytes, reencodedVideoBitrate: reencoded)
+        var result = NarrationPlan.result(id: id, startedAtEpochMs: startedAt, durationMs: durationMs, path: url.path, bytes: bytes, reencodedVideoBitrate: reencoded, profile: profile)
         result["label"] = label ?? NSNull()
         let resultURL = try AgentDelivery.writeResult(result, id: id, folder: url.deletingLastPathComponent())
         result["result_path"] = resultURL.path
@@ -100,7 +108,7 @@ final class NarrationRecorder: ObservableObject {
     // MARK: Agent entry points
 
     func startForAgent(label: String? = nil) async throws -> [String: Any] {
-        let id = try await start(label: label)
+        let id = try await start(label: label, profile: NarrationPlan.agent)
         return ["id": id, "started": true, "countdown_seconds": NarrationPlan.countdownSeconds, "max_duration_seconds": NarrationPlan.maximumDurationSeconds]
     }
 
@@ -125,15 +133,71 @@ final class NarrationRecorder: ObservableObject {
         }
     }
 
+    /// Personal recordings take an external camera (an iPhone through Continuity Camera counts) when one is connected.
+    /// Agent takes always use the built-in front camera, as before.
+    static func preferredCamera(for profile: NarrationPlan.Profile) -> AVCaptureDevice? {
+        if profile.camera == .highest {
+            // Continuity Camera (an iPhone) is found by its flag, because without the Info.plist opt-in it reports as a built-in camera.
+            // Anything that is not the front camera counts as external, so the Mac's own camera is never picked here.
+            let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: [.continuityCamera, .external, .builtInWideAngleCamera], mediaType: .video, position: .unspecified)
+            if let external = discovery.devices.first(where: { $0.isContinuityCamera || $0.deviceType == .external || $0.position != .front }) {
+                NSLog("My Man [Narration] using external camera: \(external.localizedName)")
+                return external
+            }
+            NSLog("My Man [Narration] no external camera found; using the front camera")
+        }
+        return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+    }
+
+    /// The profile with its output size and bitrate fitted to the camera that will be used. Other profiles are unchanged.
+    static func resolvedProfile(_ base: NarrationPlan.Profile) throws -> NarrationPlan.Profile {
+        guard base.camera == .highest else { return base }
+        guard let camera = preferredCamera(for: base), let format = largestFormat(camera) else { return base }
+        let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        return NarrationPlan.squareProfile(from: base, sensorWidth: Int(d.width), sensorHeight: Int(d.height))
+    }
+
+    /// The camera's largest format that can run at 30 fps, or nil if none can.
+    static func largestFormat(_ camera: AVCaptureDevice) -> AVCaptureDevice.Format? {
+        func pixels(_ format: AVCaptureDevice.Format) -> Int {
+            let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            return Int(d.width) * Int(d.height)
+        }
+        let candidates = camera.formats.filter { format in
+            format.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
+        }
+        return candidates.max(by: { pixels($0) < pixels($1) })
+    }
+
+    /// Switches the camera to its largest format that can run at 30 fps. Leaves the camera as it was if none fits.
+    static func useLargestFormat(_ camera: AVCaptureDevice) {
+        guard let best = largestFormat(camera) else { return }
+        do {
+            try camera.lockForConfiguration()
+            camera.activeFormat = best
+            let thirty = CMTime(value: 1, timescale: 30)
+            camera.activeVideoMinFrameDuration = thirty
+            camera.activeVideoMaxFrameDuration = thirty
+            camera.unlockForConfiguration()
+        } catch {
+            NSLog("My Man [Narration] could not select the largest camera format: \(error)")
+        }
+    }
+
     private static func permissionError(_ type: AVMediaType) -> AgentError {
         let device = type == .video ? "Camera" : "Microphone"
         return AgentError("PERMISSION_REQUIRED", "Allow \(device) for My Man in Privacy, then try again.")
     }
 
-    private static func makeSession(sink: NarrationSink) throws -> AVCaptureSession {
+    private static func makeSession(sink: NarrationSink, profile: NarrationPlan.Profile) throws -> AVCaptureSession {
         let capture = AVCaptureSession()
-        capture.sessionPreset = .vga640x480
-        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
+        // .highest sets no preset (inputPriority is iOS-only), so the camera format chosen below is what the session uses.
+        switch profile.camera {
+        case .highest: break
+        case .hd1280x720: capture.sessionPreset = capture.canSetSessionPreset(.hd1280x720) ? .hd1280x720 : .vga640x480
+        case .vga640x480: capture.sessionPreset = .vga640x480
+        }
+        guard let camera = preferredCamera(for: profile),
               let microphone = AVCaptureDevice.default(for: .audio) else {
             throw AgentError("DEVICE_UNAVAILABLE", "No front camera or microphone is available on this Mac.")
         }
@@ -143,6 +207,7 @@ final class NarrationRecorder: ObservableObject {
             throw AgentError("DEVICE_UNAVAILABLE", "The camera or microphone could not be added.")
         }
         capture.addInput(cameraInput); capture.addInput(microphoneInput)
+        if profile.camera == .highest { Self.useLargestFormat(camera) }
         let video = AVCaptureVideoDataOutput()
         video.alwaysDiscardsLateVideoFrames = true
         video.setSampleBufferDelegate(sink, queue: sink.queue)
@@ -178,17 +243,17 @@ final class NarrationSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private var started = false
     private(set) var startedAtEpochMs: Int64?
 
-    init(url: URL) throws {
+    init(url: URL, profile: NarrationPlan.Profile) throws {
         writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         video = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: NarrationPlan.width,
-            AVVideoHeightKey: NarrationPlan.height,
+            AVVideoWidthKey: profile.width,
+            AVVideoHeightKey: profile.height,
             AVVideoScalingModeKey: AVVideoScalingModeResizeAspectFill,
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: NarrationPlan.videoBitrate, AVVideoProfileLevelKey: AVVideoProfileLevelH264MainAutoLevel],
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: profile.videoBitrate, AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel],
         ])
         audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-            AVFormatIDKey: kAudioFormatMPEG4AAC, AVNumberOfChannelsKey: 1, AVSampleRateKey: 44_100, AVEncoderBitRateKey: NarrationPlan.audioBitrate,
+            AVFormatIDKey: kAudioFormatMPEG4AAC, AVNumberOfChannelsKey: 1, AVSampleRateKey: 44_100, AVEncoderBitRateKey: profile.audioBitrate,
         ])
         video.expectsMediaDataInRealTime = true
         audio.expectsMediaDataInRealTime = true

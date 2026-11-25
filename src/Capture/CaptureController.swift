@@ -95,7 +95,7 @@ final class CaptureController: SelectionOverlayDelegate {
     func saveAgentImage(_ image: NSImage, capturedAt: Date = Date(), meetingID: String? = nil, clipboard: Bool = false) throws -> [String: Any] {
         let png = try AgentImages.png(image)
         let id = UUID().uuidString
-        let url = Self.saveFolder.appendingPathComponent("My Man \(id).png")
+        let url = ScreenshotFileName.url(in: Self.saveFolder, template: ScreenshotFileName.template(), date: capturedAt, id: id)
         try FileManager.default.createDirectory(at: Self.saveFolder, withIntermediateDirectories: true)
         try png.write(to: url, options: .withoutOverwriting)
         do {
@@ -176,16 +176,25 @@ final class CaptureController: SelectionOverlayDelegate {
         CaptureSoundPlayer.shared.play()
         showThumbnail(image: image, fileURL: url)
         if forDoc {
+            // Markup first: the editor's Done saves the marked-up image, and only then is the doc image made.
             let id = result["id"] as! String, when = capturedAt, height = displayHeight, scale = NSScreen.main?.backingScaleFactor ?? 1
-            Task { @MainActor in
-                let window = (await windowTask?.value)?.selected(in: rect, mainDisplayHeight: height)
-                do {
-                    _ = try await AgentDocCapture.finish(image: image, id: id, path: url.path, capturedAt: when, scale: Double(scale), window: window)
-                    Toast.show("Saved for a Paper doc", systemImage: "doc.badge.plus")
-                } catch {
-                    Toast.show((error as? AgentError)?.message ?? "Couldn't prepare the doc image", systemImage: "exclamationmark.triangle")
+            let finishDoc: (NSImage, URL) -> Void = { edited, editedURL in
+                Task { @MainActor in
+                    let window = (await windowTask?.value)?.selected(in: rect, mainDisplayHeight: height)
+                    do {
+                        _ = try await AgentDocCapture.finish(image: edited, id: id, path: editedURL.path, capturedAt: when, scale: Double(scale), window: window)
+                        Toast.show("Saved for a Paper doc", systemImage: "doc.badge.plus")
+                    } catch {
+                        Toast.show((error as? AgentError)?.message ?? "Couldn't prepare the doc image", systemImage: "exclamationmark.triangle")
+                    }
                 }
             }
+            // The editor saves over the file it opens, so keep the unmarked capture beside it first.
+            let original = url.deletingPathExtension().appendingPathExtension("original.png")
+            try? FileManager.default.removeItem(at: original)
+            try? FileManager.default.copyItem(at: url, to: original)
+            // Runs once: with the marked-up image on Done, or the unmarked one if the window closes unsaved.
+            editor.open(image: image, fileURL: url, completion: finishDoc)
         }
     }
 

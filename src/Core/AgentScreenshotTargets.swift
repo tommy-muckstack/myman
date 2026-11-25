@@ -78,12 +78,19 @@ enum AgentAltText {
 enum AgentDocImage {
     static let maximumWidth: CGFloat = 2400
     static let maximumBytes = 4 * 1024 * 1024
-    static let widths: [CGFloat] = [2400, 2000, 1600, 1200, 900]
+    /// Widths to try, largest first, for the chosen quality. Balanced keeps the 2400 px limit from the doc rules.
+    static func widths(for quality: CaptureQuality) -> [CGFloat] {
+        switch quality {
+        case .small: return [1200, 900, 600]
+        case .balanced: return [2400, 2000, 1600, 1200, 900]
+        case .best: return [2400, 2000, 1600, 1200, 900]
+        }
+    }
 
     /// Returns the width used and the PNG bytes, or nil when even the smallest step is too large.
-    static func fit(width: Int, height: Int, encode: (CGFloat) -> Data?) -> (width: Int, data: Data)? {
+    static func fit(width: Int, height: Int, quality: CaptureQuality = CaptureQuality.current(), encode: (CGFloat) -> Data?) -> (width: Int, data: Data)? {
         guard width > 0, height > 0 else { return nil }
-        for target in widths {
+        for target in widths(for: quality) {
             let scale = min(1, target / CGFloat(width))
             let outWidth = max(1, Int((CGFloat(width) * scale).rounded()))
             guard let data = encode(CGFloat(outWidth)), data.count <= maximumBytes else { continue }

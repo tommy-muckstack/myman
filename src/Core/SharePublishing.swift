@@ -1,10 +1,31 @@
 import AppKit
+import AVFoundation
 import Combine
 import Security
 import CryptoKit
 
 private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+}
+
+/// The first Share click asks once: anyone with a link can open it until it expires.
+enum ShareFirstUse {
+    static let key = "shareFirstUseConfirmed"
+
+    static func confirmed(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: key)
+    }
+
+    @MainActor static func askToTurnOn(_ defaults: UserDefaults = .standard) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Turn on sharing?"
+        alert.informativeText = "A shared link can be opened by anyone who has it until it expires. Only what you choose to share is uploaded. You can turn sharing off in Settings at any time."
+        alert.addButton(withTitle: "Turn On and Share")
+        alert.addButton(withTitle: "Not Now")
+        let allowed = alert.runModal() == .alertFirstButtonReturn
+        if allowed { defaults.set(true, forKey: key) }
+        return allowed
+    }
 }
 
 @MainActor final class SharePublishing: ObservableObject {
@@ -81,6 +102,10 @@ private final class ShareRedirectPolicy: NSObject, URLSessionTaskDelegate, @unch
     }
     func publish(item: CaptureItem, seconds: Int, human: Bool = true) async throws -> Receipt {
         guard !item.excluded, CaptureIndex.item(item.id)?.revision == item.revision else { throw AgentError("EDIT_CONFLICT", "Read the current capture before sharing.") }
+        // Sharing is off until the first Share click. That click asks once, and the answer is remembered.
+        if human, !ShareFirstUse.confirmed() {
+            guard ShareFirstUse.askToTurnOn() else { throw AgentError("USER_DENIED", "Sharing stays off. Nothing was published.") }
+        }
         if human && item.kind == "recording" { return try await publishVideo(item: item, seconds: seconds, human: human) }
         let endpoint = try Self.validEndpoint(endpoint)
         _ = try token(for: endpoint)
@@ -183,6 +208,31 @@ extension SharePublishing {
         try save(receipt)
         return try await uploadVideo(receipt, seconds: seconds, human: human)
     }
+    /// A small PNG frame for link previews (base64, at most 300 KB), and the length in milliseconds.
+    static func previewPoster(for url: URL) async -> (base64: String?, durationMs: Int) {
+        let asset = AVURLAsset(url: url)
+        let seconds = (try? await asset.load(.duration).seconds) ?? 0
+        let durationMs = seconds.isFinite && seconds > 0 ? Int(seconds * 1000) : 0
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        let moment = CMTime(seconds: min(0.5, max(0, seconds / 2)), preferredTimescale: 600)
+        for edge in [640.0, 480.0, 320.0] {
+            generator.maximumSize = CGSize(width: edge, height: edge)
+            guard let frame = try? await generator.image(at: moment).image,
+                  let png = NSBitmapImageRep(cgImage: frame).representation(using: .png, properties: [:]),
+                  png.count <= 300_000 else { continue }
+            return (png.base64EncodedString(), durationMs)
+        }
+        return (nil, durationMs)
+    }
+
+    /// Chapter markers from the recording's transcript, for the watch page. Empty when there is no transcript.
+    static func chapterPayload(for url: URL) -> [[String: Any]] {
+        guard let transcript = RecordingTranscript.load(for: url) else { return [] }
+        return RecordingChapters.make(from: transcript.segments).prefix(RecordingChapters.maximumChapters).map {
+            ["start_ms": $0.startMs, "title": String($0.title.prefix(120))] as [String: Any]
+        }
+    }
     func retryVideo(_ id: String) async throws -> Receipt {
         guard let receipt = receipts.first(where: { $0.id == id }), receipt.videoPath != nil,
               ["upload_interrupted", "uploading", "unconfirmed"].contains(receipt.state), receipt.expiresAt > Date() else { throw AgentError("NOT_FOUND", "This upload cannot be resumed. Start a new share.") }
@@ -208,8 +258,11 @@ extension SharePublishing {
                 let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 let mime = url.pathExtension.lowercased() == "mov" ? "video/quicktime" : "video/mp4"
                 var state = receipt; state.state = "uploading"; try save(state)
+                let preview = await Self.previewPoster(for: url)
+                var fields: [String: Any] = ["size": size, "mime": mime, "ttl_seconds": seconds, "title": String(receipt.title.prefix(300)), "fingerprint": fingerprint, "engagement": receipt.engagement ?? false, "chapters": Self.chapterPayload(for: url), "duration_ms": preview.durationMs]
+                if let poster = preview.base64 { fields["poster"] = poster }
                 let grant = try await request(endpoint: receipt.endpoint, method: "POST", id: id,
-                    body: ["size": size, "mime": mime, "ttl_seconds": seconds, "title": String(receipt.title.prefix(300)), "fingerprint": fingerprint, "engagement": receipt.engagement ?? false], videoAction: "begin")
+                    body: fields, videoAction: "begin")
                 if grant["published"] as? Bool != true && grant["uploaded"] as? Bool != true {
                     guard let token = grant["clientToken"] as? String, let pathname = grant["pathname"] as? String,
                           pathname == "videos/\(id).\(mime == "video/mp4" ? "mp4" : "mov")" else { throw AgentError("UPLOAD_FAILED", "The upload grant did not match this recording.") }

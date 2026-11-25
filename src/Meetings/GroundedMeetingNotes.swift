@@ -651,7 +651,7 @@ enum GroundedMeetingNotes {
         let promised = Set(actions.map { MeetingSource.normalized($0.quote) })
         let selected = selectFacts(facts.filter { fact in
             !promised.contains { $0.contains(MeetingSource.normalized(fact.quote)) || MeetingSource.normalized(fact.quote).contains($0) }
-        })
+        }, limit: MeetingNoteGate.factLimit(characters: MeetingNoteGate.characterCount(of: spokenText)))
         var overview = ""
         if let hostedOverview, meeting.captureKind != .listening, !selected.isEmpty {
             overview = validatedOverview(hostedOverview, facts: selected, sources: sources)
@@ -727,7 +727,7 @@ enum GroundedMeetingNotes {
 
     /// Distinct facts, spread across the whole conversation so the closing
     /// minutes get the same chance as the opening ones.
-    static func selectFacts(_ facts: [MeetingFact]) -> [MeetingFact] {
+    static func selectFacts(_ facts: [MeetingFact], limit: Int = 12) -> [MeetingFact] {
         var kept: [MeetingFact] = []
         for fact in facts.sorted(by: { $0.sourceID < $1.sourceID }) {
             // Two notes citing the same passage are one note. Similar
@@ -740,10 +740,10 @@ enum GroundedMeetingNotes {
             }
             if !duplicate { kept.append(fact) }
         }
-        guard kept.count > 12 else { return kept }
+        guard kept.count > limit else { return kept }
         // Preserve coverage across the whole conversation, not just its opening.
-        return (0..<12).compactMap { bucket in
-            let start = bucket * kept.count / 12, end = (bucket + 1) * kept.count / 12
+        return (0..<limit).compactMap { bucket in
+            let start = bucket * kept.count / limit, end = (bucket + 1) * kept.count / limit
             return kept[start..<end].max {
                 ($0.importance, MeetingNoteSections.salience($0.quote)) < ($1.importance, MeetingNoteSections.salience($1.quote))
             }

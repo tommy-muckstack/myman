@@ -30,4 +30,42 @@ final class NarrationPlanTests: XCTestCase {
     func testCountdownIsThreeTwoOne() {
         XCTAssertEqual(NarrationPlan.countdownSeconds, [3, 2, 1])
     }
+
+    func testPersonalProfileHasNoSizeCapAndNeverReencodes() {
+        XCTAssertNil(NarrationPlan.personal.maximumBytes)
+        XCTAssertNil(NarrationPlan.reencodeVideoBitrate(durationSeconds: 300, bytes: 900_000_000, profile: NarrationPlan.personal))
+    }
+
+    func testAgentProfileKeepsItsFifteenMegabyteCap() {
+        XCTAssertEqual(NarrationPlan.agent.maximumBytes, 15_000_000)
+        XCTAssertEqual(NarrationPlan.agent.width, 480)
+        XCTAssertNotNil(NarrationPlan.reencodeVideoBitrate(durationSeconds: 300, bytes: 900_000_000, profile: NarrationPlan.agent))
+    }
+
+    func testPersonalResultReportsTheHighQualitySettings() {
+        let result = NarrationPlan.result(id: "n2", startedAtEpochMs: 1, durationMs: 1000, path: "/x", bytes: 900_000_000, reencodedVideoBitrate: nil, profile: NarrationPlan.personal)
+        XCTAssertEqual(result["width"] as? Int, 1080)
+        XCTAssertEqual(result["video_bitrate"] as? Int, 8_000_000)
+        XCTAssertEqual(result["within_limit"] as? Bool, true)
+    }
+
+    func testFourKSensorGivesA2160SquareAtTheBitrateCeiling() {
+        let p = NarrationPlan.squareProfile(from: NarrationPlan.personal, sensorWidth: 3840, sensorHeight: 2160)
+        XCTAssertEqual(p.width, 2160); XCTAssertEqual(p.height, 2160)
+        XCTAssertEqual(p.videoBitrate, NarrationPlan.maximumPersonalBitrate)
+    }
+
+    func testOneTwentyPSensorKeepsTheBaseSettings() {
+        let p = NarrationPlan.squareProfile(from: NarrationPlan.personal, sensorWidth: 1920, sensorHeight: 1080)
+        XCTAssertEqual(p.width, 1080); XCTAssertEqual(p.videoBitrate, 8_000_000)
+    }
+
+    func testSmallSensorNeverGoesBelowTheBaseBitrate() {
+        let p = NarrationPlan.squareProfile(from: NarrationPlan.personal, sensorWidth: 1280, sensorHeight: 720)
+        XCTAssertEqual(p.width, 720); XCTAssertEqual(p.videoBitrate, 8_000_000)
+    }
+
+    func testAgentProfilePassesThroughUnchanged() {
+        XCTAssertEqual(NarrationPlan.squareProfile(from: NarrationPlan.agent, sensorWidth: 3840, sensorHeight: 2160), NarrationPlan.agent)
+    }
 }

@@ -202,6 +202,8 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <string>My Man reads your calendar for meeting notes and availability, and saves events only after you review them and press Book.</string>
     <key>NSCameraUsageDescription</key>
     <string>My Man shows your webcam bubble in screen recordings.</string>
+    <key>NSCameraUseContinuityCameraDeviceType</key>
+    <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>My Man pauses your music while a meeting records.</string>
     <key>SUFeedURL</key><string>$APPCAST_URL</string>
@@ -224,7 +226,6 @@ inject_plist_key() {
         echo "WARNING: $key not set — release build will ship without it"
     fi
 }
-inject_plist_key MMAmplitudeKey "${MM_AMPLITUDE_KEY:-}"
 inject_plist_key MMSentryDSN "${MM_SENTRY_DSN:-}"
 
 echo "==> Code signing with Developer ID + hardened runtime..."

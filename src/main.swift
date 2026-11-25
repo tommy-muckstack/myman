@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu-bar apps get NO working ⌘C/⌘V/⌘A unless a main menu exists to
         // route the key equivalents — invisible, but load-bearing.
         installMainMenu()
+        LaunchAtLogin.seedDefaultOnce()
         CrashReporting.setup()
         MM.Fonts.registerFonts()
         SettingsStore.shared.theme.apply()
@@ -240,6 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "cancel-meeting": meetings.discardRecording()
         case "record": ScreenRecorder.shared.toggle()
         case "captureForDoc": capture.beginDocCapture()
+        case "markZoomPoint": ScreenRecorder.shared.markZoomPoint()
         case "narration": Task { @MainActor in if NarrationRecorder.shared.isActive { _ = try? await NarrationRecorder.shared.stop() } else { _ = try? await NarrationRecorder.shared.start() } }
         case "settings": SettingsController.shared.show(page: page)
         default:
