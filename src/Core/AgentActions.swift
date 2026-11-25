@@ -519,6 +519,12 @@ final class AgentActions {
         case "narration.pause": return try NarrationRecorder.shared.pauseForAgent()
         case "narration.resume": return try NarrationRecorder.shared.resumeForAgent()
         case "narration.restart": return try await NarrationRecorder.shared.restartForAgent()
+        case "narration.chunk":
+            guard let id = args["id"] as? String, let index = (args["index"] as? NSNumber)?.intValue else { throw AgentError("INVALID_ARGUMENTS", "Give id and index.") }
+            return try NarrationRecorder.shared.chunkForAgent(id: id, index: index)
+        case "narration.discard":
+            guard let id = args["id"] as? String else { throw AgentError("INVALID_ARGUMENTS", "Give id.") }
+            return try NarrationRecorder.shared.discardFinishedForAgent(id: id)
         case "recording.start":
             try audioIdle()
             guard #available(macOS 15.0, *) else { throw AgentError("UNSUPPORTED", "Screen recording requires macOS 15 or later.") }

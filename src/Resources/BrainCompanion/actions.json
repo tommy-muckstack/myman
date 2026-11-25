@@ -4566,6 +4566,51 @@
       ]
     },
     {
+      "name": "narration.chunk",
+      "description": "Read one 256 KB piece of a narration take that was stopped in this session. Returns index, chunkCount and base64.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id returned by narration.stop."
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Chunk number from 0 to chunkCount minus 1. Each chunk is 256 KB before base64."
+          }
+        },
+        "required": ["id", "index"],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "narration.discard",
+      "description": "Delete a narration take that was stopped in this session.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id returned by narration.stop."
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
       "name": "narration.status",
       "description": "Whether narration is counting down, recording or finishing.",
       "inputSchema": {

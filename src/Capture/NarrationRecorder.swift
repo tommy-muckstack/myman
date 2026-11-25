@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import Foundation
 
 /// Narration: the front camera and the microphone, written straight to an mp4. No screen is captured.
@@ -23,6 +24,9 @@ final class NarrationRecorder: ObservableObject {
     private var autoStop: Task<Void, Never>?
     private var label: String?
     private var profile: NarrationPlan.Profile = NarrationPlan.personal
+    /// Takes stopped in this session. Only these can be read or discarded through the agent, so no other file is reachable.
+    private var finishedIDs: [String] = []
+    static let chunkBytes = 256 * 1024
 
     var isActive: Bool { phase != .idle }
     /// True while the camera and microphone are running. The menu bar shows a red dot for this.
@@ -167,6 +171,13 @@ final class NarrationRecorder: ObservableObject {
         phase = .idle
         var result = NarrationPlan.result(id: id, startedAtEpochMs: startedAt, durationMs: durationMs, path: url.path, bytes: bytes, reencodedVideoBitrate: reencoded, profile: profile)
         result["label"] = label ?? NSNull()
+        // The digest and chunk count let a reader check the transfer without trusting it.
+        let digest = SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
+        result["sha256"] = digest
+        result["chunkBytes"] = Self.chunkBytes
+        result["chunkCount"] = max(1, (bytes + Self.chunkBytes - 1) / Self.chunkBytes)
+        finishedIDs.append(id)
+        if finishedIDs.count > 5 { finishedIDs.removeFirst() }
         let resultURL = try AgentDelivery.writeResult(result, id: id, folder: url.deletingLastPathComponent())
         result["result_path"] = resultURL.path
         try? AgentChangeLog.append(kind: "narration", id: id, paths: ["video": url.path, "result": resultURL.path], at: AgentActions.date(Date()))
@@ -185,7 +196,36 @@ final class NarrationRecorder: ObservableObject {
 
     func startForAgent(label: String? = nil) async throws -> [String: Any] {
         let id = try await start(label: label, profile: NarrationPlan.agent)
-        return ["id": id, "started": true, "countdown_seconds": NarrationPlan.countdownSeconds, "max_duration_seconds": NarrationPlan.maximumDurationSeconds]
+        return ["id": id, "started": true, "startedAtEpochMs": sink?.startedAtEpochMs ?? NSNull(),
+                "countdown_seconds": NarrationPlan.countdownSeconds, "max_duration_seconds": NarrationPlan.maximumDurationSeconds]
+    }
+
+    /// One 256 KB piece of a take that was just stopped. Base64 keeps each tool result small.
+    func chunkForAgent(id: String, index: Int) throws -> [String: Any] {
+        let url = try readableFile(id: id)
+        let size = Self.size(of: url)
+        let count = max(1, (size + Self.chunkBytes - 1) / Self.chunkBytes)
+        guard index >= 0, index < count else { throw AgentError("INVALID_ARGUMENTS", "index must be from 0 to \(count - 1) for this take.") }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: UInt64(index * Self.chunkBytes))
+        let data = try handle.read(upToCount: Self.chunkBytes) ?? Data()
+        return ["index": index, "chunkCount": count, "base64": data.base64EncodedString()]
+    }
+
+    /// Deletes a take that was just stopped. Takes outside this session cannot be named.
+    func discardFinishedForAgent(id: String) throws -> [String: Any] {
+        let url = try readableFile(id: id)
+        try FileManager.default.removeItem(at: url)
+        finishedIDs.removeAll { $0 == id }
+        return ["id": id, "discarded": true]
+    }
+
+    private func readableFile(id: String) throws -> URL {
+        guard finishedIDs.contains(id) else { throw AgentError("NOT_FOUND", "Only a narration stopped in this session can be read here.") }
+        let url = try Self.destination(id: id)
+        guard FileManager.default.fileExists(atPath: url.path) else { throw AgentError("NOT_FOUND", "That narration file is gone.") }
+        return url
     }
 
     func stopForAgent() async throws -> [String: Any] { try await stop() }

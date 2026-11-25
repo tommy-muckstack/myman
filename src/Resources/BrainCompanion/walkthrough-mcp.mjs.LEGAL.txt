@@ -1,0 +1,8 @@
+Bundled license information:
+
+@modelcontextprotocol/server/dist/src-CX2iR2pK.mjs:
+  /*!
+  * content-type
+  * Copyright(c) 2015 Douglas Christopher Wilson
+  * MIT Licensed
+  */
