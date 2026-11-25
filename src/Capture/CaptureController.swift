@@ -194,6 +194,10 @@ final class CaptureController: SelectionOverlayDelegate {
                     }
                 }
             }
+            // The editor saves over the file it opens, so keep the unmarked capture beside it first.
+            let original = url.deletingPathExtension().appendingPathExtension("original.png")
+            try? FileManager.default.removeItem(at: original)
+            try? FileManager.default.copyItem(at: url, to: original)
             editor.open(image: image, fileURL: url)
         }
     }
