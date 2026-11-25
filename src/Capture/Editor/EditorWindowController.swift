@@ -10,8 +10,16 @@ final class EditorWindowController {
         self.onSaved = onSaved
     }
 
-    func open(image: NSImage, fileURL: URL) {
+    /// Runs at most once per editor window: with the saved image when Done saves it, or with the
+    /// unmarked image when the window is closed without saving. Doc captures rely on this.
+    func open(image: NSImage, fileURL: URL, completion: ((NSImage, URL) -> Void)? = nil) {
         let model = EditorModel(image: image, fileURL: fileURL)
+        let once = OnceFlag()
+        let finish: (NSImage, URL) -> Void = { img, url in
+            guard !once.fired else { return }
+            once.fired = true
+            completion?(img, url)
+        }
         let window = NSWindow(
             contentRect: .zero,
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
@@ -29,7 +37,16 @@ final class EditorWindowController {
 
         let view = EditorView(model: model, onDone: { [weak self, weak window] in
             if let window { self?.close(window) }
-        }, onSaved: onSaved)
+        }, onSaved: { [onSaved] img, url in
+            finish(img, url)
+            onSaved(img, url)
+        })
+        if completion != nil {
+            // The red close button skips Done, so finish with the unmarked image here.
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+                finish(image, fileURL)
+            }
+        }
         let host = NSHostingView(rootView: view)
         // The resizable window owns its bounds. Reflowing the toolbar must
         // not turn a narrow fitting-size query into a taller window minimum.
@@ -48,6 +65,8 @@ final class EditorWindowController {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
+
+    private final class OnceFlag { var fired = false }
 
     private func close(_ window: NSWindow) {
         window.orderOut(nil)

@@ -366,6 +366,7 @@ struct SettingsPanelView: View {
     @State private var query = ""
     @AppStorage(PauseEverything.pausedKey) private var paused = false
     @AppStorage(AgentAccessMigration.noticeSeenKey) private var noticeSeen = false
+    @State private var openAtLogin = LaunchAtLogin.isEnabled
     @AppStorage(CaptureQuality.key) private var captureQuality = CaptureQuality.balanced.rawValue
     @State private var recordingAction: HotkeyAction?
     @State private var vocabularyText = ""
@@ -524,6 +525,16 @@ struct SettingsPanelView: View {
 
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 0) {
+            settingSection("Startup") {
+                Toggle("Open My Man when I log in", isOn: $openAtLogin)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
+                    .onChange(of: openAtLogin) { _, on in
+                        do { try LaunchAtLogin.set(on) } catch { openAtLogin = LaunchAtLogin.isEnabled; Toast.show("Couldn’t change the login item", systemImage: "exclamationmark.triangle") }
+                    }
+                Text("My Man stays in the menu bar. Turn this off to start it yourself.")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
+            }
+            Divider().overlay(MM.Colors.border)
             settingSection("Meetings") {
                 Toggle("Auto record when meeting detected", isOn: $store.autoRecordMeetings)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)

@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu-bar apps get NO working ⌘C/⌘V/⌘A unless a main menu exists to
         // route the key equivalents — invisible, but load-bearing.
         installMainMenu()
+        LaunchAtLogin.seedDefaultOnce()
         CrashReporting.setup()
         MM.Fonts.registerFonts()
         SettingsStore.shared.theme.apply()

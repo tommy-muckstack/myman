@@ -23,12 +23,7 @@ final class CaptureController: SelectionOverlayDelegate {
     private var windowsTask: Task<CaptureWindowSnapshot, Never>?
     private var captureMainDisplayHeight: CGFloat = 0
     private var thumbnail: ThumbnailPanel?
-    /// Set by a doc capture: runs once when the editor's Done saves the marked-up image.
-    private var docFinish: ((NSImage, URL) -> Void)?
     private lazy var editor = EditorWindowController { [weak self] image, fileURL in
-        let finish = self?.docFinish
-        self?.docFinish = nil
-        finish?(image, fileURL)
         self?.showThumbnail(image: image, fileURL: fileURL)
     }
 
@@ -183,7 +178,7 @@ final class CaptureController: SelectionOverlayDelegate {
         if forDoc {
             // Markup first: the editor's Done saves the marked-up image, and only then is the doc image made.
             let id = result["id"] as! String, when = capturedAt, height = displayHeight, scale = NSScreen.main?.backingScaleFactor ?? 1
-            docFinish = { edited, editedURL in
+            let finishDoc: (NSImage, URL) -> Void = { edited, editedURL in
                 Task { @MainActor in
                     let window = (await windowTask?.value)?.selected(in: rect, mainDisplayHeight: height)
                     do {
@@ -198,7 +193,8 @@ final class CaptureController: SelectionOverlayDelegate {
             let original = url.deletingPathExtension().appendingPathExtension("original.png")
             try? FileManager.default.removeItem(at: original)
             try? FileManager.default.copyItem(at: url, to: original)
-            editor.open(image: image, fileURL: url)
+            // Runs once: with the marked-up image on Done, or the unmarked one if the window closes unsaved.
+            editor.open(image: image, fileURL: url, completion: finishDoc)
         }
     }
 
