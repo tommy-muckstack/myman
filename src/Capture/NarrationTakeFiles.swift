@@ -57,6 +57,18 @@ enum NarrationTakeFiles {
         }
     }
 
+    /// Finished takes' metadata, newest first.
+    static func list(in folder: URL = folder, limit: Int = keep) -> [[String: Any]] {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return [] }
+        let takes: [[String: Any]] = files
+            .filter { $0.pathExtension == "json" && $0.lastPathComponent != "latest.json" && $0.lastPathComponent != "current.json" }
+            .compactMap { url -> [String: Any]? in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            }
+        return Array(takes.sorted { ($0["startedAtEpochMs"] as? Int64 ?? 0) > ($1["startedAtEpochMs"] as? Int64 ?? 0) }.prefix(limit))
+    }
+
     private static func modified(_ url: URL) -> Date {
         (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
     }

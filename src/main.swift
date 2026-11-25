@@ -556,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A narration take that is capturing always shows a red dot, whatever else is armed.
         if NarrationRecorder.shared.isCapturing {
             statusItem?.button?.attributedTitle = NSAttributedString(string: " ●", attributes: [.foregroundColor: NSColor.systemRed])
-            statusItem?.button?.toolTip = "My Man is recording narration. Press Option+Shift+N to stop."
+            statusItem?.button?.toolTip = "My Man is recording narration. Press Control+Option+Command+N to stop."
             return
         }
         statusItem?.button?.title = armed ? " •" : ""

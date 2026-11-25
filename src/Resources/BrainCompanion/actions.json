@@ -4581,7 +4581,10 @@
             "description": "Chunk number from 0 to chunkCount minus 1. Each chunk is 256 KB before base64."
           }
         },
-        "required": ["id", "index"],
+        "required": [
+          "id",
+          "index"
+        ],
         "additionalProperties": false
       },
       "readOnly": true,
@@ -4601,7 +4604,9 @@
             "description": "The id returned by narration.stop."
           }
         },
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "additionalProperties": false
       },
       "readOnly": false,
@@ -4613,6 +4618,39 @@
     {
       "name": "narration.status",
       "description": "Whether narration is counting down, recording or finishing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "narration.list",
+      "description": "Finished narration takes, newest first, with the same fields as each take's json file (id, label, request, startedAtEpochMs, durationMs, bytes, mimeType, width, height, stoppedBy, stopReason).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "How many takes to return. Default 20."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
+    },
+    {
+      "name": "narration.latest",
+      "description": "The newest finished narration take's metadata, the same as its latest.json file.",
       "inputSchema": {
         "type": "object",
         "properties": {},
