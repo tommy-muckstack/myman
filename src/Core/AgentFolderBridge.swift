@@ -11,17 +11,43 @@ struct AgentApprovalRequest: Sendable {
     let detail: String
     let group: String
     let requester: String
-    /// Deletes are asked every time; other groups may be allowed for 30 minutes.
+    /// Deletes are asked every time; other groups may be always allowed, until revoked in Settings.
     let canRemember: Bool
 }
-enum AgentApprovalDecision: Sendable { case deny, allowOnce, allowForSession, expired }
+enum AgentApprovalDecision: Sendable { case deny, allowOnce, allowAlways, expired }
 
 /// Pure rules for the folder bridge, kept apart from file watching so they can
 /// be tested without an app, a Brain folder or a person.
 enum AgentFolderBridgePolicy {
     static let staleAfter: TimeInterval = 600
-    /// How long "Allow for 30 minutes" lasts. Kept in memory only, so it ends when the app quits.
-    static let sessionGrant: TimeInterval = 1800
+    /// Groups the person chose "Always allow" for. Stored in preferences, so they
+    /// last across launches until revoked in Settings → Agents. Never includes delete.
+    static let alwaysAllowedKey = "agentFolderBridgeAlwaysGroups"
+    static let askedEveryTimeGroups: Set<String> = ["delete"]
+    static func parseAlways(_ raw: String) -> [String] {
+        raw.split(separator: ",").map(String.init).filter { !$0.isEmpty && !askedEveryTimeGroups.contains($0) }
+    }
+    static func alwaysAllowed(_ defaults: UserDefaults = .standard) -> [String] {
+        parseAlways(defaults.string(forKey: alwaysAllowedKey) ?? "")
+    }
+    static func withAlways(_ group: String, in raw: String) -> String {
+        var groups = parseAlways(raw)
+        if !groups.contains(group), !askedEveryTimeGroups.contains(group) { groups.append(group) }
+        return groups.joined(separator: ",")
+    }
+    static func withoutAlways(_ group: String, in raw: String) -> String {
+        parseAlways(raw).filter { $0 != group }.joined(separator: ",")
+    }
+    static func groupTitle(_ group: String) -> String {
+        switch group {
+        case "capture": return "Looking at your screen"
+        case "recording": return "Recording and meetings"
+        case "control": return "Mouse and keyboard"
+        case "clipboard": return "Clipboard"
+        case "sharing": return "Publishing shared links"
+        default: return group
+        }
+    }
     static let maximumRequestBytes = 1024 * 1024
     static let maximumArtifactBytes = 1 << 30
     static let maximumArtifacts = 32
@@ -289,7 +315,6 @@ enum AgentFolderBridgePolicy {
     private var ticks = 0
     private var active = Set<String>()
     private var seen = Set<String>()
-    private var allowedUntil: [String: Date] = [:]
     private var keys: [String: [String: Any]] = [:]
     private var signature = ""
     private var observers: [NSObjectProtocol] = []
@@ -372,7 +397,6 @@ enum AgentFolderBridgePolicy {
         let wasRunning = running
         running = false
         source?.cancel(); source = nil; timer?.invalidate(); timer = nil
-        allowedUntil.removeAll()
         if wasRunning { hooks.dismissApprovals() }
         // Say why nothing answers, but never create the folder while off.
         guard isOwnedDirectory(root) else { return }
@@ -490,9 +514,9 @@ enum AgentFolderBridgePolicy {
                          "failure": ["ok": false, "error": ["code": "stable code", "message": "what happened", "hint": "what to do next"]] as [String: Any],
                          "waiting": "pending is true while the code is AWAITING_USER. Read the file again; do not resend."] as [String: Any],
             "tiers": ["read": "Reads state or saved items. Runs when its permissions are on.", "write": "Creates or changes notes, tasks and library items. Runs when its permissions are on.",
-                      "capture": "Looks at the screen, records, uses the clipboard or shares. Needs its permissions, and My Man asks the person each time or for 30 minutes.",
+                      "capture": "Looks at the screen, records, uses the clipboard or shares. Needs its permissions, and My Man asks the person each time, or keeps an \"always allow\" the person chose until they revoke it.",
                       "destructive": "Deletes. Needs its permissions and confirm, and My Man asks the person every time."],
-            "session_grants": Dictionary(uniqueKeysWithValues: allowedUntil.filter { $0.value > hooks.now() }.map { ($0.key, AgentActions.date($0.value)) }),
+            "always_allowed": AgentFolderBridgePolicy.alwaysAllowed(defaults),
             "async": "Every request is asynchronous: write it, then poll outbox/<id>.json. Nothing blocks the sender.",
             "files": ["heartbeat": "heartbeat.json", "audit": "audit.log", "artifacts": "artifacts/<id>/"],
             "actions": AgentFolderBridgePolicy.manifestActions(hooks.catalog(), grants: AgentConsent.status(defaults)),
@@ -589,7 +613,7 @@ enum AgentFolderBridgePolicy {
             try? writeJSON(keys, to: root.appendingPathComponent(".idempotency.json"))
         }
 
-        if let group = AgentFolderBridgePolicy.approvalGroup(action: request.action, info: details, args: request.args), (allowedUntil[group] ?? .distantPast) <= hooks.now() {
+        if let group = AgentFolderBridgePolicy.approvalGroup(action: request.action, info: details, args: request.args), !AgentFolderBridgePolicy.alwaysAllowed(defaults).contains(group) {
             try writeJSON(["ok": false, "pending": true, "id": request.id, "action": request.action, "artifacts": [String](),
                            "error": AgentFolderBridgePolicy.withHint(["code": "AWAITING_USER", "message": "Waiting for the person to allow or deny this in My Man."])], to: outbox.appendingPathComponent(name))
             audit("awaiting_user", id: request.id, ["action": request.action, "group": group])
@@ -599,11 +623,11 @@ enum AgentFolderBridgePolicy {
             switch decision {
             case .deny: audit("denied", id: request.id, ["action": request.action]); throw AgentError("USER_DENIED", "The person did not allow this request.")
             case .expired: audit("expired", id: request.id, ["action": request.action]); throw AgentError("APPROVAL_EXPIRED", "Nobody answered the prompt in time, so nothing ran.")
-            case .allowForSession where ask.canRemember:
-                allowedUntil[group] = hooks.now().addingTimeInterval(AgentFolderBridgePolicy.sessionGrant)
-                audit("approved", id: request.id, ["action": request.action, "group": group, "for_seconds": Int(AgentFolderBridgePolicy.sessionGrant)])
+            case .allowAlways where ask.canRemember:
+                defaults.set(AgentFolderBridgePolicy.withAlways(group, in: defaults.string(forKey: AgentFolderBridgePolicy.alwaysAllowedKey) ?? ""), forKey: AgentFolderBridgePolicy.alwaysAllowedKey)
+                audit("approved", id: request.id, ["action": request.action, "group": group, "always": true])
                 writeManifest()
-            case .allowOnce, .allowForSession: audit("approved", id: request.id, ["action": request.action, "group": group])
+            case .allowOnce, .allowAlways: audit("approved", id: request.id, ["action": request.action, "group": group])
             }
         }
         guard running, enabled else { throw AgentError("BRIDGE_DISABLED", "The Brain folder bridge was turned off before this ran.") }

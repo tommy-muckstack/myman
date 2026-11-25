@@ -46,8 +46,8 @@ import SwiftUI
         timer?.invalidate(); timer = nil
         closing = true; window?.close(); window = nil; closing = false
         pending.continuation.resume(returning: decision)
-        // "For 30 minutes" also answers requests of the same kind already waiting.
-        if decision == .allowForSession {
+        // "Always allow" also answers requests of the same kind already waiting.
+        if decision == .allowAlways {
             while let next = queue.first, next.request.group == pending.request.group, next.request.canRemember {
                 queue.removeFirst(); next.continuation.resume(returning: .allowOnce)
             }
@@ -98,8 +98,8 @@ struct AgentApprovalView: View {
                 Button("Deny") { decide(.deny) }.keyboardShortcut(.cancelAction).clickable()
                 Spacer()
                 if request.canRemember {
-                    Button("Allow for 30 minutes") { decide(.allowForSession) }.clickable()
-                        .accessibilityHint("Allows requests of this kind from the Brain folder for 30 minutes without asking again.")
+                    Button("Always allow") { decide(.allowAlways) }.clickable()
+                        .accessibilityHint("Allows requests of this kind from the Brain folder without asking again. You can revoke it in Settings → Agents.")
                 }
                 Button { decide(.allowOnce) } label: {
                     Text("Allow once").font(MM.Fonts.body).foregroundStyle(MM.Colors.onAccent)
