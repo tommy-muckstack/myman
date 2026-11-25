@@ -5,8 +5,7 @@ import SwiftUI
 
 enum RecordingDevices {
     static var camera: AVCaptureDevice? {
-        let uid = UserDefaults.standard.string(forKey: "recordingCameraUID") ?? ""
-        return AVCaptureDevice.devices(for: .video).first { $0.uniqueID == uid } ?? AVCaptureDevice.default(for: .video)
+        CameraSelection.selectedDevice() ?? AVCaptureDevice.default(for: .video)
     }
 }
 
