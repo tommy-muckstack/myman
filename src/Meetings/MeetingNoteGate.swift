@@ -1,0 +1,20 @@
+import Foundation
+
+/// Decides whether a meeting has enough speech to write notes from. Below this, a model
+/// only invents content, so notes are not written. Thresholds follow anarlog's summary eligibility
+/// (5 words and 160 characters of speech), which it uses before it calls a model.
+enum MeetingNoteGate {
+    static let minimumWords = 5
+    static let minimumCharacters = 160
+
+    static let tooShortMessage = "Not enough speech was recorded to write notes. Notes appear once there is a few sentences of conversation."
+
+    static func isEnoughSpeech(words: Int, characters: Int) -> Bool {
+        words >= minimumWords && characters >= minimumCharacters
+    }
+
+    /// Normalized character count: whitespace runs count as one space, matching the word counts above.
+    static func characterCount(of text: String) -> Int {
+        Array(text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")).count
+    }
+}
