@@ -100,7 +100,7 @@ struct HotkeyCombo: Codable, Equatable {
 }
 
 enum HotkeyAction: String, CaseIterable, Identifiable {
-    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record
+    case launcher, screenshot, note, voice, voiceEdit, voiceUndo, meeting, record, narration
     var id: String { rawValue }
 
     var label: String {
@@ -113,6 +113,7 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .voiceUndo: return "Undo Voice Edit"
         case .meeting: return "Record Meeting"
         case .record: return "Record Screen"
+        case .narration: return "Record Narration"
         }
     }
 
@@ -132,6 +133,7 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .voiceUndo: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(cmdKey | optionKey | shiftKey))
         case .meeting: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(optionKey | shiftKey))
         case .record: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey))
+        case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: UInt32(optionKey | shiftKey))
         }
     }
 }
@@ -386,6 +388,7 @@ struct SettingsPanelView: View {
                             PauseEverything.pause(.standard)
                             // A recording in progress stops now; a paused recording is not resumed on its own.
                             if ScreenRecorder.shared.isRecording { ScreenRecorder.shared.stop() }
+                            NarrationRecorder.shared.emergencyStop()
                         } else { PauseEverything.resume(.standard) }
                         paused = on
                     })) {

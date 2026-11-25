@@ -239,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "meeting": meetings.toggle()
         case "cancel-meeting": meetings.discardRecording()
         case "record": ScreenRecorder.shared.toggle()
+        case "narration": Task { @MainActor in if NarrationRecorder.shared.isActive { _ = try? await NarrationRecorder.shared.stop() } else { _ = try? await NarrationRecorder.shared.start() } }
         case "settings": SettingsController.shared.show(page: page)
         default:
             NSLog("My Man: ignored unknown automation command: \(command)")

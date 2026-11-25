@@ -4481,6 +4481,49 @@
         "calendar_read",
         "calendar_write"
       ]
+    },
+    {
+      "name": "narration.start",
+      "description": "Record narration: front camera and microphone, no screen. Counts down 3-2-1, then records until narration.stop (max 300 s). Returns startedAtEpochMs, the wall-clock time of the first video frame.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "narration.stop",
+      "description": "Stop narration and return the mp4 path, bytes, durationMs and startedAtEpochMs. Re-encodes at a lower bitrate if the take is over 15 MB.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "destructive": false,
+      "permissions": [
+        "recording"
+      ]
+    },
+    {
+      "name": "narration.status",
+      "description": "Whether narration is counting down, recording or finishing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "destructive": false,
+      "permissions": []
     }
   ]
 }
