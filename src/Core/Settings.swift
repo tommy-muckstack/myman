@@ -339,7 +339,9 @@ final class SettingsStore: ObservableObject {
 @MainActor
 final class SettingsController {
     static let shared = SettingsController()
+    static let originKey = "settingsPanelOrigin"
     private var panel: FloatingPanel?
+    private var moveObserver: NSObjectProtocol?
 
     /// `page` is a lowercase page name such as "agents"; unknown values open General.
     func show(page: String = "") {
@@ -348,10 +350,25 @@ final class SettingsController {
             onDismiss: { [weak self] in self?.panel?.dismiss() },
             initialPage: page
         ))
-        settingsPanel.onDismiss = { [weak self] in self?.panel = nil }
+        settingsPanel.onDismiss = { [weak self] in
+            if let token = self?.moveObserver { NotificationCenter.default.removeObserver(token) }
+            self?.moveObserver = nil
+            self?.panel = nil
+        }
         panel = settingsPanel
-        settingsPanel.present()
+        settingsPanel.present(at: Self.savedOrigin())
+        // Remember where it was dragged, so the next open is in the same place.
+        moveObserver = NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: settingsPanel, queue: .main) { note in
+            guard let window = note.object as? NSWindow else { return }
+            UserDefaults.standard.set([Double(window.frame.origin.x), Double(window.frame.origin.y)], forKey: Self.originKey)
+        }
         Analytics.track("settings_opened")
+    }
+
+    private static func savedOrigin() -> NSPoint? {
+        guard let xy = UserDefaults.standard.array(forKey: originKey) as? [Double], xy.count == 2,
+              xy.allSatisfy({ $0.isFinite }) else { return nil }
+        return NSPoint(x: xy[0], y: xy[1])
     }
 }
 
@@ -417,6 +434,7 @@ struct SettingsPanelView: View {
             }
             .padding(.horizontal, MM.Layout.paddingLarge)
             .padding(.vertical, MM.Layout.padding)
+            .background(WindowDragHandle())
 
             TextField("Search settings: record, camera, folder, agent", text: $query)
                 .textFieldStyle(.roundedBorder)
@@ -540,8 +558,6 @@ struct SettingsPanelView: View {
                     .onChange(of: openAtLogin) { _, on in
                         do { try LaunchAtLogin.set(on) } catch { openAtLogin = LaunchAtLogin.isEnabled; Toast.show("Couldn’t change the login item", systemImage: "exclamationmark.triangle") }
                     }
-                Text("My Man stays in the menu bar. Turn this off to start it yourself.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Meetings") {
@@ -549,22 +565,17 @@ struct SettingsPanelView: View {
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
                 Toggle("Show related past context while recording", isOn: $store.meetingContextStream)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent)
-                Text("Past meetings, notes and Brainz notes that match the people on the call and what is being discussed appear under the Notes tab.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Launcher") {
                 Toggle("Listen when the launcher opens", isOn: $automaticListening)
                     .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
-                Text("Your microphone choice is remembered. Typing stops listening for the current request.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
             }
             Divider().overlay(MM.Colors.border)
             settingSection("Appearance") {
                 Picker("Interface text size", selection: $interfaceTextScale) {
                     Text("Standard").tag(1.0); Text("Larger").tag(1.25); Text("Largest").tag(1.5)
                 }.clickable()
-                Text("Reopen other windows to apply the new text size.").font(MM.Fonts.metadata)
                 HStack(spacing: 6) {
                     let selected = store.theme
                     ForEach(AppTheme.allCases) { option in
@@ -585,45 +596,6 @@ struct SettingsPanelView: View {
 
     private var captureArea: some View {
         VStack(alignment: .leading, spacing: 0) {
-            settingSection("Image quality") {
-                Picker("Image quality", selection: $captureQuality) {
-                    ForEach(CaptureQuality.allCases) { Text($0.title).tag($0.rawValue) }
-                }
-                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
-                Text(CaptureQuality(rawValue: captureQuality)?.summary ?? "")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
-            settingSection("Recording") {
-                RecordingSettingsView()
-                Toggle("Cursor trail, click ripple and shake to highlight", isOn: $store.cursorEffects)
-                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
-                Toggle("Record the cursor separately so Polish can smooth and resize it", isOn: $store.recordCursorSeparately)
-                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
-                Text("Off: the cursor is baked into the recording. On: the raw recording has no cursor; Polish draws one.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
-            Divider().overlay(MM.Colors.border)
-            settingSection("Screenshot file names") {
-                TextField(ScreenshotFileName.defaultTemplate, text: $screenshotNameTemplate)
-                    .textFieldStyle(.roundedBorder).font(MM.Fonts.body)
-                Text("Preview: " + screenshotNamePreview + ".png")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-                Text("Use {date}, {time} and {id}. Leave it empty for the default.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
-            settingSection("Screenshot sound") {
-                Picker("Screenshot sound", selection: $store.captureSound) {
-                    ForEach(CaptureSound.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
-                .onChange(of: store.captureSound) { _, sound in CaptureSoundPlayer.shared.play(sound) }
-                Text("Plays when a screenshot is captured. Pick one to hear it.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
-            }
-            Divider().overlay(MM.Colors.border)
             settingSection("Screenshots") {
                 HStack(spacing: MM.Layout.spacing) {
                     Text(store.screenshotFolderPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
@@ -635,8 +607,28 @@ struct SettingsPanelView: View {
                         .background(Capsule().fill(MM.Colors.surface))
                         .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
                 }
+                Picker("Quality", selection: $captureQuality) {
+                    ForEach(CaptureQuality.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                Picker("Sound", selection: $store.captureSound) {
+                    ForEach(CaptureSound.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                .onChange(of: store.captureSound) { _, sound in CaptureSoundPlayer.shared.play(sound) }
+                TextField(ScreenshotFileName.defaultTemplate, text: $screenshotNameTemplate)
+                    .textFieldStyle(.roundedBorder).font(MM.Fonts.body)
+                Text(screenshotNamePreview + ".png")
+                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
+            settingSection("Recording") {
+                RecordingSettingsView()
+                Toggle("Cursor trail and click highlight", isOn: $store.cursorEffects)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+                Toggle("Record the cursor separately", isOn: $store.recordCursorSeparately)
+                    .font(MM.Fonts.body).toggleStyle(.switch).controlSize(.small).tint(MM.Colors.accent).clickable()
+            }
             Divider().overlay(MM.Colors.border)
             CapturePrivacySettings()
         }
@@ -662,8 +654,6 @@ struct SettingsPanelView: View {
                         .font(MM.Fonts.secondary)
                         .foregroundStyle(MM.Colors.textPrimary)
                 }
-                Text("Agents and scripts can open My Man’s normal capture UI — they never bypass permissions or confirmation.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
                 HStack(spacing: 8) {
                     Text("myman screenshot · note · dictation · meeting")
                         .font(.system(size: 10, design: .monospaced)).lineLimit(1)
@@ -674,8 +664,6 @@ struct SettingsPanelView: View {
                         .background(Capsule().fill(MM.Colors.surface))
                         .overlay(Capsule().strokeBorder(MM.Colors.border, lineWidth: 1))
                 }
-                Text("Copy setup installs the helper in ~/.local/bin. Direct URL commands also work: myman://screenshot")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
             Divider().overlay(MM.Colors.border)
@@ -686,11 +674,10 @@ struct SettingsPanelView: View {
             settingSection("Settings and logs") {
                 HStack(spacing: 8) {
                     Button("Export settings…") { SettingsTools.exportSettings() }.clickable()
+                        .help("Export never includes keys or tokens. Reset leaves your Brain folder, credentials and library alone.")
                     Button("Show audit log") { SettingsTools.showAuditLog() }.clickable()
                     Button("Reset to defaults…", role: .destructive) { if SettingsTools.confirmReset() { SettingsTools.reset() } }.clickable()
                 }
-                Text("Export never includes keys or tokens. Reset leaves your Brain folder, credentials and library alone.")
-                    .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textTertiary)
             }
             Divider().overlay(MM.Colors.border)
             AISettingsView()

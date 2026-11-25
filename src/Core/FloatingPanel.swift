@@ -108,19 +108,38 @@ final class FloatingPanel: NSPanel {
         return (size.width > 1 && size.height > 1) ? size : frame.size
     }
 
-    func present() {
+    func present(at remembered: NSPoint? = nil) {
         layoutIfNeeded()
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
             ?? NSScreen.main
         guard let screen else { return }
         let size = contentIdeal
         let visible = screen.visibleFrame
-        let origin = NSPoint(
+        var origin = NSPoint(
             x: visible.midX - size.width / 2,
             y: visible.minY + visible.height * 0.62 - size.height / 2
         )
+        // Use the remembered place only if the panel still fits on a connected screen.
+        if let remembered {
+            let frame = NSRect(origin: remembered, size: size)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) { origin = remembered }
+        }
         setFrame(NSRect(origin: origin, size: size), display: true)
         makeKeyAndOrderFront(nil)
+    }
+}
+
+/// A strip that moves its window when dragged. SwiftUI and hosting views take mouse-down events, so
+/// `isMovableByWindowBackground` alone does not move a panel whose content is SwiftUI. Put this behind a header.
+struct WindowDragHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragHandleView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragHandleView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
     }
 }
 
