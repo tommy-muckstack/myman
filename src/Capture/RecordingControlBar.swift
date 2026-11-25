@@ -15,6 +15,7 @@ struct RecordingControlBar: View {
     var onDraw: (AnnotationTool) -> Void = { _ in }
     var onStop: () -> Void
     var onRestart: () -> Void
+    @State private var backdropColor = Color(nsColor: PolishOptions.savedCustomColor())
 
     var body: some View {
         HStack(spacing: MM.Layout.spacing) {
@@ -44,6 +45,20 @@ struct RecordingControlBar: View {
                     .accessibilityLabel(microphoneEnabled ? "Mute microphone" : "Include microphone")
                 drawButton(.pen, icon: .write, label: "Draw")
                 drawButton(.box, icon: .checklistUnchecked, label: "Box")
+                ColorPicker("Background color", selection: Binding(
+                    get: { backdropColor },
+                    set: { color in
+                        backdropColor = color
+                        let nsColor = NSColor(color)
+                        // Saved for the Polish step; choosing a color also selects the Custom backdrop.
+                        PolishOptions.saveCustomColor(nsColor)
+                        PolishOptions.saveBackdropStyle(.custom)
+                    }
+                ), supportsOpacity: false)
+                    .labelsHidden()
+                    .help("Background color for the recording (applied when you polish it)")
+                    .accessibilityLabel("Background color")
+                    .frame(width: 28, height: 28)
                 Button(action: onStop) {
                     Text("Stop").font(MM.Fonts.secondary)
                         .foregroundStyle(MM.Colors.background)

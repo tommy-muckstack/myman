@@ -357,19 +357,31 @@ struct CursorEffectsView: View {
             Canvas { canvas, _ in
                 let now = context.date
                 drawHighlight(in: &canvas, now: now)
-                // Trail: dots along the recent path, newest largest, all
-                // fading out — reads as motion, never obscures content.
-                for point in model.trail {
+                // Trail: a tapered comet tail along the recent path. The newest
+                // part is thick and bright, and it thins and fades behind the
+                // cursor. It reads as motion and never covers content.
+                let live: [(point: CGPoint, fade: Double)] = model.trail.compactMap { point in
                     let age = now.timeIntervalSince(point.time)
                     let life = CursorEffectsModel.trailLife
-                    guard age >= 0, age < life else { continue }
-                    let fade = 1 - age / life
-                    let radius = 3 + 5 * fade
-                    let local = localPoint(point.position)
+                    guard age >= 0, age < life else { return nil }
+                    return (localPoint(point.position), 1 - age / life)
+                }
+                if live.count > 1 {
+                    for index in 1 ..< live.count {
+                        var segment = Path()
+                        segment.move(to: live[index - 1].point)
+                        segment.addLine(to: live[index].point)
+                        let fade = live[index].fade
+                        canvas.stroke(segment, with: .color(MM.Colors.flame.opacity(0.6 * fade)),
+                                      style: StrokeStyle(lineWidth: 1.5 + 3.5 * fade, lineCap: .round, lineJoin: .round))
+                    }
+                }
+                if let head = live.last {
+                    let radius: CGFloat = 3.5
                     canvas.fill(
-                        Path(ellipseIn: CGRect(x: local.x - radius, y: local.y - radius,
+                        Path(ellipseIn: CGRect(x: head.point.x - radius, y: head.point.y - radius,
                                                width: radius * 2, height: radius * 2)),
-                        with: .color(MM.Colors.flame.opacity(0.30 * fade)))
+                        with: .color(MM.Colors.flame.opacity(0.85 * head.fade)))
                 }
                 // Ripple: one ring expanding out from the click point.
                 for ripple in model.ripples {

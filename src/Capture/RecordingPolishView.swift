@@ -82,9 +82,21 @@ struct RecordingPolishView: View {
             }
             section("Backdrop") {
                 Picker("Backdrop", selection: $options.backdrop) {
-                    ForEach(BackdropStyle.allCases.filter { $0 != .custom }) { Text($0.rawValue).tag($0) }
+                    ForEach(BackdropStyle.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented).labelsHidden().controlSize(.small).clickable()
+                if options.backdrop == .custom {
+                    ColorPicker("Background color", selection: Binding(
+                        get: { Color(nsColor: options.customColor) },
+                        set: { color in
+                            let nsColor = NSColor(color)
+                            options.customColor = nsColor
+                            PolishOptions.saveCustomColor(nsColor)
+                        }
+                    ), supportsOpacity: false).font(MM.Fonts.body).clickable()
+                    Text("Your color is saved for future recordings.")
+                        .font(MM.Fonts.metadata).foregroundStyle(MM.Colors.textSecondary)
+                }
             }
             section("Zoom") {
                 Toggle(clicks.isEmpty ? "Zoom toward clicks — no clicks were recorded" : "Zoom toward clicks (\(clicks.count) recorded)", isOn: $options.zoomOnClicks)

@@ -125,10 +125,36 @@ enum ZoomTimeline {
 }
 
 struct PolishOptions: Equatable {
+    /// The custom backdrop color, remembered between recordings (separate from the screenshot color).
+    static let customColorKey = "recordingCustomBackdropRGB"
+
+    static func savedCustomColor(_ defaults: UserDefaults = .standard) -> NSColor {
+        if let rgb = defaults.array(forKey: customColorKey) as? [Double], rgb.count == 3,
+           rgb.allSatisfy({ $0.isFinite && (0...1).contains($0) }) {
+            return NSColor(srgbRed: rgb[0], green: rgb[1], blue: rgb[2], alpha: 1)
+        }
+        return BackdropStyle.ocean.colors![0]
+    }
+
+    static func saveCustomColor(_ color: NSColor, _ defaults: UserDefaults = .standard) {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return }
+        defaults.set([Double(rgb.redComponent), Double(rgb.greenComponent), Double(rgb.blueComponent)], forKey: customColorKey)
+    }
+
+    static let backdropStyleKey = "recordingBackdropStyle"
+
+    static func savedBackdropStyle(_ defaults: UserDefaults = .standard) -> BackdropStyle {
+        BackdropStyle(rawValue: defaults.string(forKey: backdropStyleKey) ?? "") ?? .ocean
+    }
+
+    static func saveBackdropStyle(_ style: BackdropStyle, _ defaults: UserDefaults = .standard) {
+        defaults.set(style.rawValue, forKey: backdropStyleKey)
+    }
+
     var trimStart: Double = 0
     var trimEnd: Double? = nil
-    var backdrop: BackdropStyle = .ocean
-    var customColor: NSColor = BackdropStyle.ocean.colors![0]
+    var backdrop: BackdropStyle = PolishOptions.savedBackdropStyle()
+    var customColor: NSColor = PolishOptions.savedCustomColor()
     var zoomOnClicks = true
     var zoomScale: CGFloat = 1.8
     var cornerRadius: CGFloat = 18
