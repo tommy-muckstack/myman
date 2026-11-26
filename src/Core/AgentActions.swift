@@ -522,6 +522,11 @@ final class AgentActions {
         case "narration.chunk":
             guard let id = args["id"] as? String, let index = (args["index"] as? NSNumber)?.intValue else { throw AgentError("INVALID_ARGUMENTS", "Give id and index.") }
             return try NarrationRecorder.shared.chunkForAgent(id: id, index: index)
+        case "narration.list":
+            return ["takes": NarrationTakeFiles.list(limit: min(max(args["limit"] as? Int ?? NarrationTakeFiles.keep, 1), NarrationTakeFiles.keep))]
+        case "narration.latest":
+            guard let take = NarrationTakeFiles.list(limit: 1).first else { throw AgentError("NOT_FOUND", "No narration takes are saved yet.") }
+            return take
         case "narration.discard":
             guard let id = args["id"] as? String else { throw AgentError("INVALID_ARGUMENTS", "Give id.") }
             return try NarrationRecorder.shared.discardFinishedForAgent(id: id)

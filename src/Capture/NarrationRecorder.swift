@@ -24,6 +24,9 @@ final class NarrationRecorder: ObservableObject {
     private var autoStop: Task<Void, Never>?
     private var label: String?
     private var profile: NarrationPlan.Profile = NarrationPlan.personal
+    /// Who started the take ("user-panel", "hotkey", "url", "bridge") and the page's request id, if it gave one.
+    private(set) var startedBy = "user-panel"
+    private(set) var requestID: String?
     /// Takes stopped in this session. Only these can be read or discarded through the agent, so no other file is reachable.
     private var finishedIDs: [String] = []
     static let chunkBytes = 256 * 1024
@@ -34,24 +37,28 @@ final class NarrationRecorder: ObservableObject {
 
     /// Starts after a 3-2-1 countdown, so the person can switch to the page they are narrating.
     /// Returns once the camera and microphone are running and the first frame has arrived.
-    func start(label: String? = nil, profile: NarrationPlan.Profile = NarrationPlan.personal) async throws -> String {
+    func start(label: String? = nil, profile: NarrationPlan.Profile = NarrationPlan.personal,
+               startedBy: String = "user-panel", request: String? = nil,
+               countdown: [Int] = NarrationPlan.countdownSeconds) async throws -> String {
         guard phase == .idle else { throw AgentError("BUSY", "A narration is already running. Stop it first.") }
         NarrationControlPanel.show(recorder: self)
+        self.startedBy = startedBy
+        requestID = request
         do {
-            return try await beginTake(label: label, profile: profile)
+            return try await beginTake(label: label, profile: profile, countdown: countdown)
         } catch {
             NarrationControlPanel.close()
             throw error
         }
     }
 
-    private func beginTake(label: String?, profile: NarrationPlan.Profile) async throws -> String {
+    private func beginTake(label: String?, profile: NarrationPlan.Profile, countdown: [Int]) async throws -> String {
         self.profile = profile
         if let label, !AgentDelivery.isValidLabel(label) { throw AgentError("INVALID_ARGUMENTS", "label takes letters, numbers, dots, dashes and underscores, up to 80 characters. Use the doc section id.") }
         self.label = label
         try await ensureDevicesAllowed()
         cancelled = false
-        for count in NarrationPlan.countdownSeconds {
+        for count in countdown {
             phase = .countingDown(count)
             try await Task.sleep(for: .seconds(1))
             if cancelled { phase = .idle; throw AgentError("CANCELLED", "Narration was stopped before it started.") }
@@ -69,7 +76,12 @@ final class NarrationRecorder: ObservableObject {
         phase = .recording
         // Wait for the first video frame so the start time is real before anything returns.
         for _ in 0 ..< 200 where sink.startedAtEpochMs == nil { try await Task.sleep(for: .milliseconds(25)) }
-        guard sink.startedAtEpochMs != nil else { _ = try? await stop(); throw AgentError("CAPTURE_FAILED", "The camera did not send a frame. Check Camera access in Privacy.") }
+        guard sink.startedAtEpochMs != nil else {
+            _ = try? await stop(stoppedBy: "error", stopReason: "The camera did not send a frame.")
+            throw AgentError("CAPTURE_FAILED", "The camera did not send a frame. Check Camera access in Privacy.")
+        }
+        NarrationTakeFiles.writeCurrent(id: id, label: label, request: requestID, state: "recording",
+                                        startedAtEpochMs: sink.startedAtEpochMs)
         startTicker()
         return id
     }
@@ -85,7 +97,7 @@ final class NarrationRecorder: ObservableObject {
                 self.elapsedMs = ms
                 if ms >= NarrationPlan.maximumDurationSeconds * 1000 {
                     // Its own task, so the stop is not cancelled along with this loop.
-                    Task { _ = try? await self.stop() }
+                    Task { _ = try? await self.stop(stoppedBy: "max-duration", stopReason: "The 5-minute limit was reached.") }
                     return
                 }
             }
@@ -97,12 +109,14 @@ final class NarrationRecorder: ObservableObject {
         guard phase == .recording, let sink else { throw AgentError("NOT_RECORDING", "No narration is recording, so there is nothing to pause.") }
         sink.setPaused(true)
         phase = .paused
+        if let sessionID { NarrationTakeFiles.writeCurrent(id: sessionID, label: label, request: requestID, state: "paused", startedAtEpochMs: sink.startedAtEpochMs) }
     }
 
     func resume() throws {
         guard phase == .paused, let sink else { throw AgentError("NOT_PAUSED", "The narration is not paused.") }
         sink.setPaused(false)
         phase = .recording
+        if let sessionID { NarrationTakeFiles.writeCurrent(id: sessionID, label: label, request: requestID, state: "recording", startedAtEpochMs: sink.startedAtEpochMs) }
     }
 
     /// Throws away the take and counts down again. Keeps the label. The panel asks first when the take is longer than 5 seconds.
@@ -139,7 +153,7 @@ final class NarrationRecorder: ObservableObject {
     }
 
     /// Stops and finalizes. Re-encodes at a lower bitrate if the take is over the cap, then reports the final size.
-    func stop() async throws -> [String: Any] {
+    func stop(stoppedBy: String = "user-panel", stopReason: String = "") async throws -> [String: Any] {
         guard let sink, let capture = session, let url = outputURL, let id = sessionID else {
             NarrationBubble.close()
             NarrationControlPanel.close()
@@ -169,8 +183,14 @@ final class NarrationRecorder: ObservableObject {
         }
         session = nil; self.sink = nil; outputURL = nil; sessionID = nil
         phase = .idle
+        NarrationTakeFiles.clearCurrent()
         var result = NarrationPlan.result(id: id, startedAtEpochMs: startedAt, durationMs: durationMs, path: url.path, bytes: bytes, reencodedVideoBitrate: reencoded, profile: profile)
         result["label"] = label ?? NSNull()
+        result["request"] = requestID ?? NSNull()
+        result["stoppedBy"] = stoppedBy
+        result["stopReason"] = stopReason
+        result["startedBy"] = startedBy
+        result["mimeType"] = "video/mp4"
         // The digest and chunk count let a reader check the transfer without trusting it.
         let digest = SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
         result["sha256"] = digest
@@ -180,8 +200,14 @@ final class NarrationRecorder: ObservableObject {
         if finishedIDs.count > 5 { finishedIDs.removeFirst() }
         let resultURL = try AgentDelivery.writeResult(result, id: id, folder: url.deletingLastPathComponent())
         result["result_path"] = resultURL.path
-        try? AgentChangeLog.append(kind: "narration", id: id, paths: ["video": url.path, "result": resultURL.path], at: AgentActions.date(Date()))
+        // Plain files for agents and docs, then the audit entry with why the take ended.
+        try? NarrationTakeFiles.publish(movie: url, metadata: result)
+        try? AgentChangeLog.append(kind: "narration", id: id,
+                                   paths: ["video": url.path, "result": resultURL.path, "startedBy": startedBy,
+                                           "stoppedBy": stoppedBy, "stopReason": stopReason],
+                                   at: AgentActions.date(Date()))
         label = nil
+        requestID = nil
         return result
     }
 
@@ -189,13 +215,13 @@ final class NarrationRecorder: ObservableObject {
     func emergencyStop() {
         if case .countingDown = phase { cancelled = true; return }
         guard phase == .recording || phase == .finishing else { return }
-        Task { _ = try? await self.stop() }
+        Task { _ = try? await self.stop(stoppedBy: "pause-everything", stopReason: "Pause everything was turned on.") }
     }
 
     // MARK: Agent entry points
 
     func startForAgent(label: String? = nil) async throws -> [String: Any] {
-        let id = try await start(label: label, profile: NarrationPlan.agent)
+        let id = try await start(label: label, profile: NarrationPlan.agent, startedBy: "bridge")
         return ["id": id, "started": true, "startedAtEpochMs": sink?.startedAtEpochMs ?? NSNull(),
                 "countdown_seconds": NarrationPlan.countdownSeconds, "max_duration_seconds": NarrationPlan.maximumDurationSeconds]
     }
@@ -228,7 +254,7 @@ final class NarrationRecorder: ObservableObject {
         return url
     }
 
-    func stopForAgent() async throws -> [String: Any] { try await stop() }
+    func stopForAgent() async throws -> [String: Any] { try await stop(stoppedBy: "bridge", stopReason: "Stopped through the Brain folder bridge.") }
 
     func pauseForAgent() throws -> [String: Any] { try pause(); return statusForAgent() }
     func resumeForAgent() throws -> [String: Any] { try resume(); return statusForAgent() }

@@ -136,7 +136,7 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         case .meeting: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(optionKey | shiftKey))
         case .record: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(optionKey | shiftKey))
         // ⌥⇧K. Narration used ⌥⇧N, the same key as New Note, so one of the two never registered.
-        case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_K), carbonModifiers: UInt32(optionKey | shiftKey))
+        case .narration: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: UInt32(controlKey | optionKey | cmdKey))
         case .captureForDoc: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_D), carbonModifiers: UInt32(optionKey | shiftKey))
         case .markZoomPoint: return HotkeyCombo(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(optionKey | shiftKey))
         }

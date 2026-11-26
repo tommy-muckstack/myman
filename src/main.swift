@@ -224,10 +224,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// confirmation UI.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme?.lowercased() == "myman" {
+            if url.host?.lowercased() == "narration" {
+                handleNarrationURL(url)
+                continue
+            }
             // myman://settings/agents opens the Agents page; the page path only
             // selects what to show and never changes a setting.
             let page = url.host == nil ? "" : url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
             performAutomationCommand(url.host?.lowercased() ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased(), page: page)
+        }
+    }
+
+    /// myman://narration/start, /stop or /toggle, with optional label, request and countdown=0 (no 3-2-1).
+    /// A start or stop from a page is the person's own action, so there is no approval prompt.
+    private func handleNarrationURL(_ url: URL) {
+        let action = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+        // The request id is a UUID; anything else is ignored rather than written into the take's files.
+        let request = value("request").flatMap { candidate -> String? in
+            candidate.count <= 64 && candidate.allSatisfy { $0.isHexDigit || $0 == "-" } ? candidate : nil
+        }
+        let label = value("label")
+        let countdown = value("countdown") == "0" ? [] : NarrationPlan.countdownSeconds
+        Task { @MainActor in
+            let recorder = NarrationRecorder.shared
+            switch action {
+            case "start":
+                guard !recorder.isActive else { return }
+                _ = try? await recorder.start(label: label, startedBy: "url", request: request, countdown: countdown)
+            case "stop":
+                guard recorder.isActive, request == nil || request == recorder.requestID else { return }
+                _ = try? await recorder.stop(stoppedBy: "url", stopReason: "Stopped by myman://narration/stop.")
+            case "toggle":
+                if recorder.isActive { _ = try? await recorder.stop(stoppedBy: "url", stopReason: "Toggled by myman://narration/toggle.") }
+                else { _ = try? await recorder.start(label: label, startedBy: "url", request: request, countdown: countdown) }
+            default:
+                NSLog("My Man: ignored unknown narration command: \(action)")
+            }
         }
     }
 
@@ -242,7 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "record": ScreenRecorder.shared.toggle()
         case "captureForDoc": capture.beginDocCapture()
         case "markZoomPoint": ScreenRecorder.shared.markZoomPoint()
-        case "narration": Task { @MainActor in if NarrationRecorder.shared.isActive { _ = try? await NarrationRecorder.shared.stop() } else { _ = try? await NarrationRecorder.shared.start() } }
+        case "narration": Task { @MainActor in if NarrationRecorder.shared.isActive { _ = try? await NarrationRecorder.shared.stop(stoppedBy: "hotkey", stopReason: "Stopped by the narration hotkey.") } else { _ = try? await NarrationRecorder.shared.start(startedBy: "hotkey") } }
         case "settings": SettingsController.shared.show(page: page)
         default:
             NSLog("My Man: ignored unknown automation command: \(command)")
@@ -522,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A narration take that is capturing always shows a red dot, whatever else is armed.
         if NarrationRecorder.shared.isCapturing {
             statusItem?.button?.attributedTitle = NSAttributedString(string: " ●", attributes: [.foregroundColor: NSColor.systemRed])
-            statusItem?.button?.toolTip = "My Man is recording narration. Press Option+Shift+N to stop."
+            statusItem?.button?.toolTip = "My Man is recording narration. Press Control+Option+Command+N to stop."
             return
         }
         statusItem?.button?.title = armed ? " •" : ""
